@@ -1,0 +1,1 @@
+3601607f8bd7e4919738d8ccd3bfd99212526560a46771a7b9df880d0bae25d5  assets/monster_details.json.gz

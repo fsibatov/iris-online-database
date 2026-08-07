@@ -1,0 +1,1 @@
+7e5113eb7d75879614b7768750fe08d8ae9c11ca5fabe5a3708c8d0851f05351  assets/item_abilities.json.gz

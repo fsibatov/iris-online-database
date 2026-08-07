@@ -1,0 +1,1 @@
+b789ee576e4a006d1a5ddfe1addaf9e1fed334703c841f6be36282ef95839673  assets/set_effects.json.gz
