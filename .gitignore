@@ -1,0 +1,10 @@
+/dist/
+*.exe
+*.log
+*.tmp
+*.zip
+.env
+profile.json
+pending-delete.json
+__pycache__/
+*.pyc
