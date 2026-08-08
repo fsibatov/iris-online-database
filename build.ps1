@@ -9,6 +9,10 @@ if ($IsDiagnostic -and $env:IRIS_ALLOW_UNSUPPORTED_GO -ne "1") {
     throw "Требуется $ExpectedGo, обнаружен $ActualGo. Для диагностической сборки задайте IRIS_ALLOW_UNSUPPORTED_GO=1."
 }
 
+if (-not $IsDiagnostic -and $env:IRIS_SKIP_CHECKS -eq "1") {
+    throw "IRIS_SKIP_CHECKS=1 разрешён только для диагностической сборки. Публикационная сборка должна пройти все проверки."
+}
+
 $EnvironmentNames = @("CGO_ENABLED", "GOOS", "GOARCH", "GOAMD64", "GO386")
 $SavedEnvironment = @{}
 foreach ($Name in $EnvironmentNames) {

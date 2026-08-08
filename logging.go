@@ -32,6 +32,9 @@ func newRotatingLogWriter(path string, maxBytes int64, backups int) (*rotatingLo
 }
 
 func (w *rotatingLogWriter) open() error {
+	if !safeOwnedFilePath(w.path) {
+		return errUnsafeDestructivePath
+	}
 	file, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err

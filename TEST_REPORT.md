@@ -1,6 +1,6 @@
 # Iris Online 1.0 — TEST_REPORT
 
-Дата проверки: 2026-08-07.
+Дата проверки: 2026-08-08.
 
 Отчёт описывает текущее состояние исходного проекта Iris Online 1.0. Публикационная Windows-сборка должна выполняться Go из `.go-version` (`go1.26.5`). Проверочные EXE в этой среде собраны Go 1.23.2 только как diagnostic build.
 
@@ -43,6 +43,10 @@ Read-only raw audit повторно выполнен для Kiss/Original. Об
 
 ## Lifecycle adversarial audit
 
+Single-instance дополнительно защищён межпроцессным OS-level lock, который берётся после разрешения app-owned paths, но до maintenance, логов и профиля. Поэтому второй Iris Online с тем же data-root не может запуститься на другом `-addr` и стать конкурирующим writer. Same-port health probe сохраняется для удобного повторного открытия той же сборки. Lock освобождается ОС при закрытии/аварийном завершении; immediate reuse проверен.
+
+Startup health probe не следует HTTP redirects: автоматическая проверка уже запущенной копии остаётся строго loopback и не может быть перенаправлена внешним локальным процессом на удалённый URL. `openBrowser()` также сам валидирует plain `http://` loopback target до вызова системного launcher.
+
 Исправлен сценарий `active → heartbeat expiry → direct close`: heartbeat-expired session переносится в bounded tombstone storage, поэтому поздний explicit close того же подтверждённого ID остаётся авторитетным. Произвольный неизвестный ID shutdown вызвать не может.
 
 Инварианты:
@@ -58,6 +62,8 @@ Read-only raw audit повторно выполнен для Kiss/Original. Об
 - tombstone hard limit: PASS (`256` IDs);
 - concurrent open/heartbeat/expire/close under race detector: PASS;
 - 10 последовательных start/stop cycles, port release и immediate restart: PASS.
+- одинаковый data-root + разные loopback ports: PASS, второй процесс отклонён до profile/log maintenance.
+- health-probe redirect: PASS, redirect target не запрашивается.
 
 Tombstone TTL: 6 часов. Это жёстко ограничивает память: забытая session после TTL удаляется; при полном отсутствии иных sessions backend затем может штатно завершиться.
 
@@ -89,6 +95,7 @@ Tombstone TTL: 6 часов. Это жёстко ограничивает пам
 Windows-specific hardening проверяет generic `FILE_ATTRIBUTE_REPARSE_POINT`, а не только `ModeSymlink`. Windows-only regression создаёт настоящий NTFS junction через `mklink /J`, но **нативно на Windows в этой Linux-среде он не запускался**. Windows test binary с этим тестом успешно cross-compiled для amd64, 386 и arm64.
 
 Аудит всех runtime `Remove`, `RemoveAll`, `Rename`, `CreateTemp`, `OpenFile`, `MkdirAll`, `Abs/Rel/EvalSymlinks` выполнен. Предсказуемый backup `*.tmp` заменён на `CreateTemp` в проверенном app-owned directory. Maintenance не принимает пользовательские profile/history строки как filesystem paths.
+Pending-delete control file также fail-closed: symlink/reparse вместо `pending-delete.json` игнорируется и не читается как внешний файл. Rotating log writer повторно валидирует app-owned log path перед каждым reopen после ротации; symlink substitution test сохраняет внешний target неизменным.
 
 ## HTTP/security regression
 
@@ -123,15 +130,15 @@ Source scan runtime behavior:
 
 RSS smoke: 1 200 mixed API requests после прогрева.
 
-- RSS before: `81 113 088` bytes;
-- RSS after: `81 600 512` bytes;
-- delta: `+487 424` bytes.
+- RSS before: `77 570 048` bytes;
+- RSS after: `78 077 952` bytes;
+- delta: `+507 904` bytes.
 
 Короткий stress-тест не выявил runaway memory growth. Это не доказательство отсутствия всех возможных утечек.
 
-UI smoke сохраняет bounded переходы между item/set/monster pages, server switches и lazy drop open/close, проверяет stale AbortController behavior и cleanup DOM. Новых polling/`setInterval` механизмов не добавлено. Выпадающий поиск на главной проверяется отдельно: `.home-primary` больше не обрезает `#searchSuggestions`, а нижняя часть списка остаётся кликабельной за границей основной карточки.
+UI smoke сохраняет bounded переходы между item/set/monster pages, server switches и lazy drop open/close, проверяет stale AbortController behavior и cleanup DOM. Новых polling/`setInterval` механизмов не добавлено. Переключение `Предметы ↔ Монстры` сохраняет текущий каталог до готовности следующего ответа и выполняет один DOM commit; regression test с задержанным API запрещает промежуточный full-page loading state/исчезновение `.catalog-page`. Выпадающий поиск на главной проверяется отдельно: `.home-primary` больше не обрезает `#searchSuggestions`, а нижняя часть списка остаётся кликабельной за границей основной карточки.
 
-Warmed local endpoint benchmark в adversarial run оставался субмиллисекундным (median примерно 0.2–0.3 ms для `/health`, `/search`, `/items`, item detail, `/monsters`, monster detail); hardening не добавляет преобразование игровой базы на каждый route.
+Warmed local endpoint benchmark после hardening: `/health` median 0.242 ms / p95 0.357 ms; `/search` 0.218/0.322 ms; `/items` 0.191/0.315 ms; item detail 0.227/0.316 ms; `/monsters` 0.341/0.403 ms; monster detail 0.345/0.411 ms. Hardening не добавляет преобразование игровой базы на каждый route.
 
 ## Windows build / icon / reproducibility
 
@@ -146,6 +153,7 @@ Warmed local endpoint benchmark в adversarial run оставался субми
 - перед `go test -race` проверяется C compiler (`CC` или `gcc`), затем временно ставится `CGO_ENABLED=1`;
 - при отсутствии компилятора выдаётся понятное сообщение `Для go test -race требуется GCC/CGO.`;
 - финальные Windows EXE всегда собираются с `CGO_ENABLED=0`;
+- `IRIS_SKIP_CHECKS=1` разрешён только для diagnostic build; публикационная release-сборка fail-closed и обязана пройти проверки;
 - release marker: `IrisOnlineRelease/1.0`;
 - unsupported diagnostic marker: `IrisOnlineDiagnostic/1.0/<go-version>`;
 - x64: `GOAMD64=v1`; x86: `GO386=softfloat`; ARM64: native arm64 target.
@@ -156,9 +164,9 @@ Application icon + manifest входят в source tree. Сеть и `go-winres`
 
 Diagnostic Go 1.23.2 был независимо собран дважды из этого source tree с одинаковыми flags. Byte-for-byte reproducibility: PASS.
 
-- x64 SHA-256: `4f8ab1781851e04712702d9c3d3e20fe307df4f7d3c58677365cce02a2ed89f4`
-- x86 SHA-256: `a786fa1c8a358ac0d1c67b011b4b6bc032711a40c210a8d6b68dab42c29e71df`
-- ARM64 SHA-256: `70f79e72b58718b4ba4b62bfed52116000ac4625966839e91362715fbe905334`
+- x64 SHA-256: `aabdb93ac34661c12b63d3ad43118b5cd2fe276c60fa4adf4805f856c5e20fcf`
+- x86 SHA-256: `dcff03c81ad280236857d72769310a4174a67e11fa6da75b0785dec8450b1296`
+- ARM64 SHA-256: `2a02e48d0cc6484d951967145e51c675a0d5c7f6130a2c3fc4b9c8b05f8aca42`
 
 `go version -m`/metadata verification: PASS для всех трёх, marker `IrisOnlineDiagnostic/1.0/go1.23.2`.
 
@@ -172,9 +180,10 @@ PE resource verification:
 
 ## Финальные автоматические проверки
 
-- `go test -count=1 ./...`: PASS — 114 test case pass events (108 top-level + 6 subtests в Linux run).
-- `go test -race -count=1 ./...`: PASS — 11.661 s package time в финальном полном run.
+- `go test -count=1 ./...`: PASS — 117 test case pass events после добавления regression-тестов ротации логов.
+- `go test -race -count=1 ./...`: PASS — 11.316 s package time в финальном полном run.
 - `go vet ./...`: PASS.
+- ротация логов `backups=0`, `backups=1`, `backups>1`: PASS; проверены текущий файл и цепочка `.1/.2/.3`.
 - `node --check web/app.js`: PASS.
 - `python3 -m unittest discover -s tools -p "test_*.py"`: PASS — 60 tests.
 - Windows Node stdout UTF-8 regression: PASS — Node JSON output is decoded explicitly as UTF-8, independent of the Windows ANSI code page.
@@ -191,6 +200,8 @@ PE resource verification:
 - diagnostic rebuild reproducibility: PASS x64/x86/ARM64.
 
 ## Известные ограничения
+
+Браузерный `localStorage` содержит низкочувствительные игровые настройки/избранное/историю/recently-viewed и временную pending-копию профиля. После успешной синхронизации pending-копия удаляется, но legacy/fallback keys остаются в browser profile и не удаляются простым удалением EXE. В проекте нет installer/uninstaller/logout flow, поэтому автоматическое удаление browser-origin storage при uninstall не проверяется.
 
 1. Нативный Windows NTFS junction regression не запускался в Linux; Windows-only test входит в source и успешно cross-compiles для x64/x86/ARM64. Generic reparse-point detection и PE resources проверены кросс-сборкой.
 2. Windows PowerShell 5.1 parser недоступен в этой среде; `build.ps1` прошёл статические regression checks, BOM-проверку и фактический Windows cross-build из Linux.

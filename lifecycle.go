@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -377,6 +378,10 @@ func (a *application) shutdown() error {
 }
 
 func openBrowser(target string) error {
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil || !validRequestHost(parsed.Host) || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("небезопасный адрес браузера")
+	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
@@ -417,7 +422,12 @@ type existingInstanceInfo struct {
 }
 
 func probeExistingInstance(address string) existingInstanceInfo {
-	client := &http.Client{Timeout: 1200 * time.Millisecond}
+	client := &http.Client{
+		Timeout: 1200 * time.Millisecond,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	response, err := client.Get("http://" + address + "/api/health")
 	if err != nil {
 		return existingInstanceInfo{}

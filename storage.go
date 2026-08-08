@@ -533,6 +533,9 @@ func runMaintenance(paths appPaths, currentExecutable string, logger interface{ 
 }
 
 func processPendingDeletes(listPath string, allowedRoots []string, currentExecutable string, logger interface{ Printf(string, ...any) }) {
+	if !safeOwnedFilePath(listPath) {
+		return
+	}
 	data, err := readLimitedFile(listPath, maxPendingListBytes)
 	if err != nil {
 		return
@@ -561,7 +564,7 @@ func processPendingDeletes(listPath string, allowedRoots []string, currentExecut
 }
 
 func appendPendingDeletes(listPath string, paths []string, allowedRoots []string, currentExecutable string, logger interface{ Printf(string, ...any) }) {
-	if len(paths) == 0 {
+	if len(paths) == 0 || !safeOwnedFilePath(listPath) {
 		return
 	}
 	combined := make([]string, 0, len(paths)+8)

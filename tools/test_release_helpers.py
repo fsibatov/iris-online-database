@@ -31,6 +31,7 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn('$env:CGO_ENABLED = "1"', text)
         self.assertIn('$env:CGO_ENABLED = "0"', text)
         self.assertIn("Для go test -race требуется GCC/CGO", text)
+        self.assertIn("IRIS_SKIP_CHECKS=1 разрешён только для диагностической сборки", text)
         self.assertIn("$SavedEnvironment", text)
         self.assertIn("finally", text)
         powershell = shutil.which("powershell.exe") or shutil.which("powershell")
@@ -49,6 +50,7 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn('VERSION="1.0"', sh)
         for text in (ps, sh):
             self.assertIn("IrisOnlineRelease/", text)
+            self.assertIn("IRIS_SKIP_CHECKS=1 разрешён только для диагностической сборки", text)
             self.assertIn("IrisOnlineDiagnostic/", text)
             self.assertIn("diagnostic-", text)
             legacy_versions = tuple(f"{1}.{1}.{patch}" for patch in range(7))
@@ -83,6 +85,8 @@ class ReleaseHelperTests(unittest.TestCase):
         }
         names = {path.name for path in ROOT.iterdir()}
         self.assertFalse(names & forbidden_names)
+        self.assertFalse((ROOT / "iris-online-database").exists(), "Linux build artifact must not be packaged in source")
+        self.assertFalse(any(path.suffix.lower() == ".exe" for path in ROOT.rglob("*.exe")), "Windows EXE must not be packaged in source")
         for path in ROOT.rglob("*"):
             if "__pycache__" in path.parts:
                 continue

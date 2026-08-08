@@ -24,7 +24,7 @@ def main() -> None:
     with RunningApp(binary, ["-no-browser"]) as app:
         app.wait_ready()
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(executable_path="/usr/bin/chromium", headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+            browser = playwright.chromium.launch(headless=True)
             page = browser.new_page(viewport={"width": 375, "height": 900})
             def proxy_request(route):
                 request = route.request
@@ -32,6 +32,8 @@ def main() -> None:
                 target = app.base_url + parsed.path + (("?" + parsed.query) if parsed.query else "")
                 if parsed.path.startswith("/api/items/"):
                     time.sleep(0.015)
+                if parsed.path in {"/api/items", "/api/monsters"}:
+                    time.sleep(0.04)
                 headers = {"Accept": request.headers.get("accept", "*/*")}
                 if request.headers.get("content-type"):
                     headers["Content-Type"] = request.headers["content-type"]
@@ -79,6 +81,35 @@ def main() -> None:
             assert page.locator('.home-resources a[href="https://vk.ru/board59626511"]').count() == 1
             assert page.locator(".home-resources", has_text="Официальный статус этих площадок не подтверждён").count() == 1
             assert page.locator(".quick-links", has_text="Быстрый переход").count() == 0
+
+            # Catalog-to-catalog navigation must keep the current useful page visible
+            # until the next local API response is ready. A full-page loading state
+            # here causes a visible flash/jump when switching the desktop tabs.
+            page.set_viewport_size({"width": 1024, "height": 900})
+            page.evaluate("location.hash = 'items'")
+            page.wait_for_selector('.catalog-page[data-catalog-kind="items"]')
+            page.evaluate("""() => {
+              window.__irisCatalogTransitionAudit = {stateMessages: 0, catalogMissing: 0};
+              const host = document.querySelector('main');
+              window.__irisCatalogTransitionObserver = new MutationObserver(() => {
+                if (host.querySelector('.state-message')) window.__irisCatalogTransitionAudit.stateMessages += 1;
+                if (!host.querySelector('.catalog-page')) window.__irisCatalogTransitionAudit.catalogMissing += 1;
+              });
+              window.__irisCatalogTransitionObserver.observe(host, {childList: true, subtree: true});
+            }""")
+            for target in ("monsters", "items") * 5:
+                page.locator(f'#sectionTabs a[href="#{target}"]').click()
+                page.wait_for_selector(f'.catalog-page[data-catalog-kind="{target}"]')
+            catalog_transition_audit = page.evaluate("""() => {
+              const result = {...window.__irisCatalogTransitionAudit};
+              window.__irisCatalogTransitionObserver?.disconnect();
+              return result;
+            }""")
+            assert catalog_transition_audit['stateMessages'] == 0, catalog_transition_audit
+            assert catalog_transition_audit['catalogMissing'] == 0, catalog_transition_audit
+            page.evaluate("location.hash = 'home'")
+            page.wait_for_selector('.home-page')
+            page.set_viewport_size({"width": 375, "height": 900})
             home_widths = page.evaluate("""() => {
               const primary = document.querySelector('.home-primary').getBoundingClientRect();
               const activity = document.querySelector('.home-activity').getBoundingClientRect();

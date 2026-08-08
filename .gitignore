@@ -1,4 +1,5 @@
 /dist/
+dist/
 *.exe
 *.log
 *.tmp
@@ -6,5 +7,6 @@
 .env
 profile.json
 pending-delete.json
+/iris-online-database
 __pycache__/
 *.pyc

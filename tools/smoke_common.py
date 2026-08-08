@@ -75,6 +75,8 @@ class RunningApp:
             "HOME": str(root / "home"),
             "XDG_CONFIG_HOME": str(root / "config"),
             "XDG_CACHE_HOME": str(root / "cache"),
+            "APPDATA": str(root / "config"),
+            "LOCALAPPDATA": str(root / "cache"),
         })
         if self.env:
             process_env.update(self.env)
@@ -84,6 +86,8 @@ class RunningApp:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="strict",
             env=process_env,
         )
 

@@ -1297,8 +1297,11 @@
     const raw = decodeRouteHash();
     const targetPath = raw.split('?')[0];
     const visibleDetail = main.querySelector('.detail-page');
+    const visibleCatalog = main.querySelector('.catalog-page');
     const preserveItemDetail = Boolean(visibleDetail?.dataset.route?.startsWith('item/') && targetPath.startsWith('item/'));
-    const visibleRoute = visibleDetail?.dataset.route || previousRoute;
+    const preserveCatalogPage = Boolean(visibleCatalog && ['items', 'monsters'].includes(targetPath));
+    const preserveVisiblePage = preserveItemDetail || preserveCatalogPage;
+    const visibleRoute = visibleDetail?.dataset.route || visibleCatalog?.dataset.catalogKind || previousRoute;
 
     state.routeController?.abort();
     state.catalogController?.abort();
@@ -1306,8 +1309,11 @@
     if (!preserveItemDetail) {
       state.sourceSections = [];
       state.monsterDrops = null;
-    } else {
-      visibleDetail.setAttribute('aria-busy', 'true');
+    }
+    if (preserveItemDetail) visibleDetail.setAttribute('aria-busy', 'true');
+    if (preserveCatalogPage) {
+      visibleCatalog.setAttribute('aria-busy', 'true');
+      visibleCatalog.setAttribute('inert', '');
     }
     const controller = new AbortController();
     state.routeController = controller;
@@ -1316,7 +1322,7 @@
     if (targetPath === 'favorites' && previousBase !== 'favorites') state.favoritePage = 1;
     state.route = raw;
     renderNavigation();
-    if (!preserveItemDetail) loadingPage();
+    if (!preserveVisiblePage) loadingPage();
     try {
       if (!state.meta) {
         state.meta = await api('/api/meta', { signal: controller.signal });
@@ -1354,12 +1360,14 @@
     } catch (error) {
       if (error?.name === 'AbortError') return;
       if (requestId !== state.requestId) return;
-      if (preserveItemDetail) {
+      if (preserveVisiblePage) {
         visibleDetail?.removeAttribute('aria-busy');
+        visibleCatalog?.removeAttribute('aria-busy');
+        visibleCatalog?.removeAttribute('inert');
         state.route = visibleRoute;
         history.replaceState(null, '', `#${visibleRoute}`);
         renderNavigation();
-        showToast('Не удалось открыть предмет. Повторите переход.');
+        showToast(preserveItemDetail ? 'Не удалось открыть предмет. Повторите переход.' : 'Не удалось открыть каталог. Повторите переход.');
         return;
       }
       errorPage(error);

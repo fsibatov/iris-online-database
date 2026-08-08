@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -454,5 +455,40 @@ func TestConcurrentMaintenanceCannotEscapeRoot(t *testing.T) {
 	wg.Wait()
 	if _, err := os.Stat(keep); err != nil {
 		t.Fatalf("concurrent maintenance changed outside victim: %v", err)
+	}
+}
+
+func TestPendingDeleteListSymlinkIsIgnored(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation may require Windows developer mode; reparse paths are covered separately")
+	}
+	base := t.TempDir()
+	root := filepath.Join(base, "Cache")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(root, "victim")
+	if err := os.MkdirAll(victim, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outsideList := filepath.Join(t.TempDir(), "outside-pending.json")
+	payload := []byte(fmt.Sprintf(`{"paths":[%q]}`, victim))
+	if err := os.WriteFile(outsideList, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	listPath := filepath.Join(base, "pending-delete.json")
+	if err := os.Symlink(outsideList, listPath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	processPendingDeletes(listPath, []string{root}, "", log.New(io.Discard, "", 0))
+	if _, err := os.Stat(victim); err != nil {
+		t.Fatalf("symlinked pending list triggered deletion: %v", err)
+	}
+	data, err := os.ReadFile(outsideList)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(payload) {
+		t.Fatalf("outside pending list was modified: %q", data)
 	}
 }

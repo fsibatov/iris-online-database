@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -717,6 +719,29 @@ func TestSecurityHeadersRejectForeignHost(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusForbidden || called {
 		t.Fatalf("foreign host was not rejected: status=%d called=%v", recorder.Code, called)
+	}
+}
+
+func TestSecurityHeadersSetStrictBrowserProtections(t *testing.T) {
+	handler := withSecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8765/", nil)
+	request.Host = "127.0.0.1:8765"
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status=%d", recorder.Code)
+	}
+	csp := recorder.Header().Get("Content-Security-Policy")
+	for _, required := range []string{"default-src 'self'", "script-src 'self'", "style-src 'self'", "connect-src 'self'", "object-src 'none'", "frame-ancestors 'none'"} {
+		if !strings.Contains(csp, required) {
+			t.Fatalf("CSP missing %q: %s", required, csp)
+		}
+	}
+	if strings.Contains(csp, "'unsafe-inline'") || strings.Contains(csp, "'unsafe-eval'") {
+		t.Fatalf("CSP contains unsafe script/style policy: %s", csp)
+	}
+	if recorder.Header().Get("X-Frame-Options") != "DENY" || recorder.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatal("browser hardening headers are incomplete")
 	}
 }
 
@@ -2195,5 +2220,73 @@ func TestExistingInstanceRequiresExactVersionAndMarker(t *testing.T) {
 	info = probeExistingInstance(strings.TrimPrefix(server.URL, "http://"))
 	if !sameApplicationBuild(info) {
 		t.Fatalf("same build was not recognized: %#v", info)
+	}
+}
+
+func TestInstanceLockPreventsSecondProcessAcrossPorts(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "IrisOnlineDatabase")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	paths := appPaths{LocalRoot: root}
+	first, err := acquireInstanceLock(paths)
+	if err != nil {
+		t.Fatalf("first instance lock: %v", err)
+	}
+	defer first.Close()
+
+	second, err := acquireInstanceLock(paths)
+	if second != nil {
+		_ = second.Close()
+	}
+	if !errors.Is(err, errInstanceAlreadyRunning) {
+		t.Fatalf("second lock error = %v, want errInstanceAlreadyRunning", err)
+	}
+
+	if err := first.Close(); err != nil {
+		t.Fatalf("release first lock: %v", err)
+	}
+	third, err := acquireInstanceLock(paths)
+	if err != nil {
+		t.Fatalf("lock was not immediately reusable: %v", err)
+	}
+	if err := third.Close(); err != nil {
+		t.Fatalf("release third lock: %v", err)
+	}
+}
+
+func TestExistingInstanceProbeNeverFollowsRedirects(t *testing.T) {
+	var redirectedHits atomic.Int32
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectedHits.Add(1)
+		writeJSON(w, map[string]any{"status": "ok", "application": applicationID, "version": appVersion, "release": releaseMarker})
+	}))
+	defer redirectTarget.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL+"/api/health", http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	info := probeExistingInstance(strings.TrimPrefix(redirector.URL, "http://"))
+	if info.Found {
+		t.Fatalf("redirect response was accepted as Iris Online instance: %#v", info)
+	}
+	if got := redirectedHits.Load(); got != 0 {
+		t.Fatalf("health probe followed redirect %d time(s)", got)
+	}
+}
+
+func TestBrowserLaunchTargetMustBePlainLoopbackHTTP(t *testing.T) {
+	for _, target := range []string{
+		"https://example.com/",
+		"http://example.com/",
+		"http://127.0.0.1:8765/?next=https://example.com",
+		"http://127.0.0.1:8765/#external",
+		"http://user:pass@127.0.0.1:8765/",
+	} {
+		if err := openBrowser(target); err == nil {
+			t.Fatalf("unsafe browser target was accepted: %s", target)
+		}
 	}
 }

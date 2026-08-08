@@ -13,6 +13,11 @@ if [[ "$ACTUAL_GO" != "$EXPECTED_GO" ]]; then
   fi
 fi
 
+if [[ "$DIAGNOSTIC" == "0" && "${IRIS_SKIP_CHECKS:-}" == "1" ]]; then
+  echo "IRIS_SKIP_CHECKS=1 разрешён только для диагностической сборки. Публикационная сборка должна пройти все проверки." >&2
+  exit 1
+fi
+
 if [[ "${IRIS_SKIP_CHECKS:-}" != "1" ]]; then
   go test -count=1 ./...
   go test -race -count=1 ./...
