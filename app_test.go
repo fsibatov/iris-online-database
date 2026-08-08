@@ -210,41 +210,54 @@ func TestSpikyOwlBattleLeggingsBaseAttemptChance(t *testing.T) {
 	t.Fatal("Поножи со следами битв not found in Шипастая сова drop model")
 }
 
-func TestItemDropSourcesAreSortedByBaseAttemptChanceDescending(t *testing.T) {
+func TestItemDropSourcesUseRequestedSourceAndMonsterOrder(t *testing.T) {
 	drops := []ItemDrop{
-		{Monster: "Бета", MonsterID: 20, Source: "Выпадение монстра", GroupChanceKnown: true, BaseAttemptChance: 12.5},
-		{Monster: "Гамма", MonsterID: 30, Source: "Мировое выпадение", GroupChanceKnown: true, BaseAttemptChance: 75},
-		{Monster: "Альфа", MonsterID: 10, Source: "Квестовое выпадение", ItemBaseChance: 25},
-		{Monster: "Альфа", MonsterID: 5, Source: "Выпадение монстра", GroupChanceKnown: true, BaseAttemptChance: 25},
+		{Monster: "Бета", MonsterID: 20, MonsterLevel: 30, Source: "Выпадение монстра", GroupChanceKnown: true, BaseAttemptChance: 25},
+		{Monster: "Гамма", MonsterID: 30, MonsterLevel: 10, Source: "Выпадение монстра", GroupChanceKnown: true, BaseAttemptChance: 75},
+		{Monster: "Альфа", MonsterID: 10, MonsterLevel: 20, Source: "Выпадение монстра", GroupChanceKnown: true, BaseAttemptChance: 25},
+		{Monster: "Аарон", MonsterID: 5, MonsterLevel: 20, Source: "Выпадение монстра", GroupChanceKnown: true, BaseAttemptChance: 25},
+		{Monster: "Мировой", Source: "Мировое выпадение", GroupChanceKnown: true, BaseAttemptChance: 99},
+		{Container: "Сундук", ContainerID: 808094, Source: "Сундук", ItemBaseChance: 100},
+		{Quest: "Квест", Source: "Квестовое выпадение", ItemBaseChance: 100},
 	}
 
 	sortItemDropSources(drops)
-	wantChance := []float64{75, 25, 25, 12.5}
-	wantID := []int{30, 5, 10, 20}
-	for index := range drops {
-		if got := itemDropSortChance(drops[index]); got != wantChance[index] {
-			t.Fatalf("source %d chance=%v want=%v", index, got, wantChance[index])
-		}
-		if drops[index].MonsterID != wantID[index] {
-			t.Fatalf("source %d monster id=%d want=%d", index, drops[index].MonsterID, wantID[index])
+	want := []struct {
+		source string
+		id     int
+	}{
+		{"Выпадение монстра", 30},
+		{"Выпадение монстра", 5},
+		{"Выпадение монстра", 10},
+		{"Выпадение монстра", 20},
+		{"Мировое выпадение", 0},
+		{"Сундук", 0},
+		{"Квестовое выпадение", 0},
+	}
+	for index := range want {
+		if drops[index].Source != want[index].source || drops[index].MonsterID != want[index].id {
+			t.Fatalf("source %d=%q monster=%d want=%q/%d", index, drops[index].Source, drops[index].MonsterID, want[index].source, want[index].id)
 		}
 	}
 }
 
-func TestItemSourceInterfacePreservesChanceOrder(t *testing.T) {
+func TestItemSourceInterfacePreservesBackendOrder(t *testing.T) {
 	data, err := os.ReadFile("web/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
 	script := string(data)
 	for _, marker := range []string{
-		"sort((a, b) => baseAttemptChance(b) - baseAttemptChance(a))",
+		"const drops = [...(data.drops || [])]",
 		"buildSourceSections(drops)",
 		"section.rows.slice(0, section.shown)",
 	} {
 		if !strings.Contains(script, marker) {
-			t.Fatalf("source chance sorting marker is missing: %s", marker)
+			t.Fatalf("source order marker is missing: %s", marker)
 		}
+	}
+	if strings.Contains(script, "sort((a, b) => baseAttemptChance(b) - baseAttemptChance(a))") {
+		t.Fatal("UI re-sorts sources globally and can break source-type ordering")
 	}
 }
 
@@ -254,16 +267,28 @@ func TestItemInterfaceShowsAllSourcesGroupedByType(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(data)
-	for _, expected := range []string{
-		"Обычная добыча с монстров",
-		"Мировая добыча",
-		"Квестовые источники",
-		"Квестовый дроп",
-		"SOURCE_BATCH",
-		"data-source-more",
-	} {
-		if !strings.Contains(script, expected) {
+	sectionStart := strings.Index(script, "function buildSourceSections")
+	sectionEnd := strings.Index(script[sectionStart:], "function chestSourceDetails")
+	if sectionStart < 0 || sectionEnd < 0 {
+		t.Fatal("buildSourceSections function is missing")
+	}
+	sectionCode := script[sectionStart : sectionStart+sectionEnd]
+	positions := make([]int, 0, 4)
+	for _, expected := range []string{"Точные монстры", "Мировая добыча", "Сундуки", "Квестовые источники"} {
+		position := strings.Index(sectionCode, expected)
+		if position < 0 {
 			t.Fatalf("source group marker is missing: %s", expected)
+		}
+		positions = append(positions, position)
+	}
+	for i := 1; i < len(positions); i++ {
+		if positions[i] <= positions[i-1] {
+			t.Fatalf("source groups are not in requested order: %#v", positions)
+		}
+	}
+	for _, expected := range []string{"Квестовый дроп", "SOURCE_BATCH", "data-source-more", "data-world-source"} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("source UI marker is missing: %s", expected)
 		}
 	}
 	if !strings.Contains(script, "drops || []") {
@@ -275,12 +300,8 @@ func TestItemEndpointReturnsEveryComputedSource(t *testing.T) {
 	if err := ensureLoaded(); err != nil {
 		t.Fatal(err)
 	}
-	// The embedded dataset hash is pinned separately. Item 809012 is the
-	// regression fixture with the largest confirmed source list in that dataset;
-	// a fixed fixture avoids an O(items × groups × monsters) brute-force scan
-	// that becomes disproportionately expensive under the race detector.
 	const itemID = 809012
-	const want = 469
+	const want = 471
 	request := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/items/%d?server=kiss", itemID), nil)
 	recorder := httptest.NewRecorder()
 	handleItem(recorder, request)
@@ -308,7 +329,7 @@ func TestPlayerFacingDropTerminologyExplainsIndependentAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 	combined := strings.ToLower(string(mainSource) + string(interfaceSource))
-	for _, expected := range []string{"отдельная попытка выпадения", "сервер берёт случайное число", "накопительным весам"} {
+	for _, expected := range []string{"отдельная попытка выпадения", "Шанс группы", "оба шага сработают подряд"} {
 		if !strings.Contains(combined, strings.ToLower(expected)) {
 			t.Fatalf("drop explanation marker is missing: %s", expected)
 		}
@@ -930,7 +951,7 @@ func TestDropProbabilitiesAreAlwaysVisibleWithoutHiddenMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(data)
-	for _, expected := range []string{"formatChance(choice.baseSelectionChance)", "Шанс выбрать группу", "за одну основную попытку", "Как работает выпадение"} {
+	for _, expected := range []string{"formatChance(choice.baseSelectionChance)", "Шанс группы", "за одну основную попытку", "Как работает выпадение"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("probability marker is missing: %s", expected)
 		}
@@ -960,7 +981,7 @@ func TestDropInterfaceIsConciseAndOpensSlotsToGroupLevel(t *testing.T) {
 			t.Fatalf("obsolete drop label remains: %s", forbidden)
 		}
 	}
-	for _, expected := range []string{"Актуальность данных", "data-monster-drops-host", "data-drop-group", "Шанс выбрать группу", "Вариант добычи"} {
+	for _, expected := range []string{"Актуальность данных", "data-monster-drops-host", "data-drop-group", "Шанс группы", "Вариант добычи"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("updated drop marker is missing: %s", expected)
 		}
@@ -979,7 +1000,7 @@ func TestFrontendRecoversHeartbeat(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(data)
-	for _, expected := range []string{"scheduleHeartbeat(2000)", "visibilitychange", "openApplicationSession()"} {
+	for _, expected := range []string{"setTimeout(openApplicationSession, 2000)", "visibilitychange", "openApplicationSession()"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("heartbeat recovery marker is missing: %s", expected)
 		}
@@ -1770,6 +1791,80 @@ func TestFrontendLifecycleAndLazyRenderingMarkers(t *testing.T) {
 	}
 }
 
+func TestFrontendSessionCloseCoversOpenRace(t *testing.T) {
+	data, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	for _, marker := range []string{
+		"if (!state.sessionId) state.sessionId = newSessionID()",
+		"sessionOpenController = new AbortController()",
+		"sessionOpenController?.abort()",
+		"pendingOpen: Boolean(pendingOpen)",
+		"queueSessionClose(state.sessionId, pendingOpen)",
+	} {
+		if !strings.Contains(script, marker) {
+			t.Fatalf("session open/close race marker is missing: %s", marker)
+		}
+	}
+	if strings.Contains(script, "state.sessionId = '';\n      scheduleHeartbeat(2000)") {
+		t.Fatal("heartbeat failure still discards the close-authoritative session ID")
+	}
+}
+
+func TestSearchStartsEmptyAndRecentlyViewedCanBeCleared(t *testing.T) {
+	data, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	for _, marker := range []string{
+		"state.itemFilters.q = ''",
+		"state.monsterFilters.q = ''",
+		"globalSearch.value = ''",
+		"key !== 'page' && key !== 'q'",
+		"data-action=\"clear-recently-viewed\"",
+		"function clearRecentlyViewed()",
+	} {
+		if !strings.Contains(script, marker) {
+			t.Fatalf("startup-search/recent-view marker is missing: %s", marker)
+		}
+	}
+}
+
+func TestPlayerFacingDropHelpHidesInternalGameFileDetails(t *testing.T) {
+	data, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ToLower(string(data))
+	for _, forbidden := range []string{"item_change", "накопительным весам", "вес в исходной таблице", ".txt"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("internal/technical drop detail remains in player-facing UI: %s", forbidden)
+		}
+	}
+	for _, expected := range []string{"шанс группы", "если группа выбрана", "оба шага сработают подряд", "шанс при открытии"} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("simple drop explanation marker is missing: %s", expected)
+		}
+	}
+}
+
+func TestQuestSourceNameIsNotRepeatedInDetails(t *testing.T) {
+	data, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	if strings.Contains(script, "isQuest ? [drop.quest, drop.context]") {
+		t.Fatal("quest source still repeats drop.quest in both title and details")
+	}
+	if !strings.Contains(script, "isQuest ? [drop.context]") {
+		t.Fatal("quest source details are not separated from the source title")
+	}
+}
+
 func TestMorePopoverUsesNativeTabOrderInsteadOfPartialMenuARIA(t *testing.T) {
 	page, err := os.ReadFile("web/index.html")
 	if err != nil {
@@ -2202,7 +2297,7 @@ func TestLegacyProfilePreservesSafeUnknownTopLevelData(t *testing.T) {
 
 func TestExistingInstanceRequiresExactVersionAndMarker(t *testing.T) {
 	oldVersion, oldMarker := appVersion, releaseMarker
-	appVersion, releaseMarker = "1.0", "IrisOnlineDiagnostic/1.0/go1.23.2"
+	appVersion, releaseMarker = "1.0", "IrisOnlineDiagnostic/1.0.1/go1.23.2"
 	defer func() { appVersion, releaseMarker = oldVersion, oldMarker }()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

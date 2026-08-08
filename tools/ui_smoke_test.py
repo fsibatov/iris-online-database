@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
 
-from smoke_common import RunningApp, require_binary
+from smoke_common import RunningApp, json_request, require_binary
 
 
 def main() -> None:
@@ -23,6 +23,12 @@ def main() -> None:
 
     with RunningApp(binary, ["-no-browser"]) as app:
         app.wait_ready()
+        status, seeded_profile = json_request(app.base_url, "/api/user-data")
+        assert status == 200, seeded_profile
+        seeded_profile["itemFilters"] = {"q": "старый поиск", "sort": "name"}
+        seeded_profile["monsterFilters"] = {"q": "старый монстр", "sort": "name"}
+        status, _ = json_request(app.base_url, "/api/user-data", method="PUT", payload=seeded_profile)
+        assert status == 200
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page(viewport={"width": 375, "height": 900})
@@ -59,6 +65,10 @@ def main() -> None:
                 },
               });
             }""")
+            page.evaluate("""() => {
+              localStorage.setItem('iris-item-filters', JSON.stringify({q:'локальный старый поиск', sort:'name'}));
+              localStorage.setItem('iris-monster-filters', JSON.stringify({q:'локальный старый монстр', sort:'name'}));
+            }""")
             with urllib.request.urlopen(app.base_url + "/", timeout=10) as response:
                 html = response.read().decode("utf-8")
             html = html.replace("<head>", '<head><base href="http://iris.test/">', 1)
@@ -73,12 +83,14 @@ def main() -> None:
               location.hash = link.getAttribute('href').slice(1);
             }, true)""")
             page.wait_for_selector("#globalSearch")
+            assert page.locator("#globalSearch").input_value() == "", "global search was restored from a previous launch"
 
             assert page.locator(".home-resources", has_text="Ресурсы Iris Online").count() == 1
             assert page.locator('.home-resources a[href="https://irisonline.ru/"]').count() == 1
             assert page.locator('.home-resources a[href="https://wiki.irisonline.ru/"]').count() == 1
             assert page.locator('.home-resources a[href="https://vk.com/irisonru"]').count() == 1
             assert page.locator('.home-resources a[href="https://vk.ru/board59626511"]').count() == 1
+            assert page.locator('.home-resources a[href="https://github.com/fsibatov/iris-online-database"]').count() == 1
             assert page.locator(".home-resources", has_text="Официальный статус этих площадок не подтверждён").count() == 1
             assert page.locator(".quick-links", has_text="Быстрый переход").count() == 0
 
@@ -88,6 +100,7 @@ def main() -> None:
             page.set_viewport_size({"width": 1024, "height": 900})
             page.evaluate("location.hash = 'items'")
             page.wait_for_selector('.catalog-page[data-catalog-kind="items"]')
+            assert page.locator('[data-catalog-search]').input_value() == "", "item catalog search persisted across launch"
             page.evaluate("""() => {
               window.__irisCatalogTransitionAudit = {stateMessages: 0, catalogMissing: 0};
               const host = document.querySelector('main');
@@ -172,11 +185,47 @@ def main() -> None:
             about_text = page.locator("#infoDialogBody").inner_text()
             assert "неофициальное фанатское приложение" in about_text
             assert "не связан с разработчиками, издателями или правообладателями" in about_text
+            assert "Хоуп (Original)" in about_text
+            for forbidden in ("item_change", ".txt", ".json", "файлы игры", "файлах игры"):
+                assert forbidden not in about_text.lower(), f"about dialog exposes internal game file detail: {forbidden}"
+            assert page.locator('#infoDialogBody a[href="https://github.com/fsibatov/iris-online-database"]').count() == 1
             about_link = page.locator('#infoDialogBody a[href="https://irisonline.ru/"]')
             assert about_link.count() == 1
             assert about_link.get_attribute("rel") == "noopener noreferrer"
             page.keyboard.press("Escape")
             assert page.locator("#infoDialog").is_hidden()
+
+            # Quest source title must not be repeated in its detail line, and
+            # player-facing drop help must avoid internal table/file terminology.
+            page.evaluate("location.hash = 'item/870003'")
+            page.wait_for_selector('.detail-page[data-route="item/870003"]')
+            sources = page.locator('.item-sources')
+            assert sources.count() == 1
+            sources.locator('summary').click()
+            quest_section = page.locator('.source-section', has_text='Квестовые источники')
+            assert quest_section.count() == 1
+            quest_row = quest_section.locator('.source-row').first
+            assert quest_row.locator(':scope > span:nth-child(2) > strong').inner_text().strip() == 'Поленьи поленья'
+            assert quest_row.locator(':scope > span:nth-child(2) > small').inner_text().strip() == 'Квест'
+            sources.locator('[data-dialog="chance"]').click()
+            chance_text = page.locator('#infoDialogBody').inner_text()
+            for expected in ('Шанс группы', 'Если группа выбрана', 'оба шага'):
+                assert expected.lower() in chance_text.lower(), f"simple chance explanation missing: {expected}"
+            for forbidden in ('накопительн', 'item_change', '.txt', 'вес в исходной таблице'):
+                assert forbidden not in chance_text.lower(), f"technical chance wording remains: {forbidden}"
+            page.keyboard.press("Escape")
+
+            # Recently viewed must be clearable and stay cleared in persisted profile.
+            page.evaluate("location.hash = 'home'")
+            page.wait_for_selector('.home-page')
+            page.wait_for_selector('[data-action="clear-recently-viewed"]')
+            page.locator('[data-action="clear-recently-viewed"]').click()
+            assert page.locator('.recent-viewed-list').count() == 0
+            assert 'Здесь появятся открытые предметы и монстры.' in page.locator('.recently-viewed').inner_text()
+            page.wait_for_timeout(650)
+            status, cleared_profile = json_request(app.base_url, "/api/user-data")
+            assert status == 200
+            assert cleared_profile.get('recentlyViewed') == [], cleared_profile.get('recentlyViewed')
 
             footer = page.locator(".app-footer")
             assert footer.count() == 1
@@ -462,6 +511,61 @@ def main() -> None:
             page.set_viewport_size({"width": 320, "height": 900})
             assert not item_heading.evaluate("element => element.scrollWidth > element.clientWidth"), "item heading overflows at 320px"
 
+            # Chest reverse-source and chest contents use the same computed chance.
+            page.evaluate("location.hash = 'item/101402'")
+            page.wait_for_selector('.detail-page[data-route="item/101402"]')
+            sources = page.locator('details.item-sources')
+            sources.locator(':scope > summary').click()
+            chest_section = page.locator('.source-section', has_text='Сундуки')
+            assert chest_section.count() == 1
+            labyrinth_chest = chest_section.locator('a.source-row[href="#item/808094"]')
+            assert labyrinth_chest.count() == 1
+            assert '15,204%' in labyrinth_chest.inner_text(), labyrinth_chest.inner_text()
+            labyrinth_chest.click()
+            page.wait_for_selector('.detail-page[data-route="item/808094"]')
+            chest_contents = page.locator('.chest-contents')
+            assert chest_contents.count() == 1
+            silk_hat = chest_contents.locator('a.chest-content-row[href="#item/101402"]')
+            assert silk_hat.count() == 1
+            assert '15,204%' in silk_hat.inner_text(), silk_hat.inner_text()
+            assert not page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"), "chest contents overflow the mobile viewport"
+
+            # Item-change containers outside the catalog category "Сундук" are retained.
+            page.evaluate("location.hash = 'item/873063'")
+            page.wait_for_selector('.detail-page[data-route="item/873063"]')
+            assert page.locator('.chest-contents .chest-content-row').count() > 0
+
+            # A malformed/unsupported changerate profile keeps its contents but does not
+            # invent a percentage that cannot be justified from the published table.
+            page.evaluate("location.hash = 'item/873079'")
+            page.wait_for_selector('.detail-page[data-route="item/873079"]')
+            anomalous_contents = page.locator('.chest-contents')
+            assert anomalous_contents.count() == 1
+            assert anomalous_contents.locator('.source-chance').count() == 0, anomalous_contents.inner_text()
+
+            # Unknown output IDs remain visible but are not rendered as broken item links.
+            page.evaluate("location.hash = 'item/211112017'")
+            page.wait_for_selector('.detail-page[data-route="item/211112017"]')
+            unknown_output = page.locator('.chest-contents .chest-content-row', has_text='Неизвестный предмет (ID 11122017)')
+            assert unknown_output.count() == 1
+            assert unknown_output.evaluate("element => element.tagName") == 'DIV'
+
+            # World sources expand lazily into concrete level/type candidates.
+            page.evaluate("location.hash = 'item/1055001'")
+            page.wait_for_selector('.detail-page[data-route="item/1055001"]')
+            sources = page.locator('details.item-sources')
+            sources.locator(':scope > summary').click()
+            world_source = page.locator('details[data-world-source]').first
+            assert world_source.count() == 1
+            assert world_source.locator('.world-monster-row').count() == 0, "world candidates rendered before opening"
+            world_source.locator(':scope > summary').click()
+            page.wait_for_selector('.world-monster-row')
+            initial_world = world_source.locator('.world-monster-row').count()
+            assert 0 < initial_world <= 50, initial_world
+            assert 'нет подтверждённой привязки конкретного монстра к типу карты' in world_source.inner_text()
+            assert '%' in world_source.locator('.world-monster-row').first.inner_text()
+            assert not page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"), "expanded world source overflows the mobile viewport"
+
             page.evaluate("location.hash = 'items'")
             page.wait_for_selector("[data-catalog-sort]")
             select_classes = page.locator("select").evaluate_all("elements => elements.map(element => element.classList.contains('control-select'))")
@@ -508,6 +612,31 @@ def main() -> None:
             assert '0,0000035%' in owl_drop_text, owl_drop_text
             assert '1 из 28,6 млн' in owl_drop_text, owl_drop_text
             assert '0,0000%' not in owl_drop_text, owl_drop_text
+
+            # World drops must also be discoverable from the monster page, not
+            # only by opening an item source. This regression is based on the
+            # level-50 hostile spirit case: both records are present in the
+            # embedded world-drop rules and were previously invisible here.
+            page.evaluate("location.hash = 'monster/85'")
+            page.wait_for_selector('.detail-page[data-route="monster/85"]')
+            hostile_world = page.locator('details.lazy-monster-world-drops')
+            assert hostile_world.count() == 1, "Враждебный дух has no world-drop accordion"
+            assert hostile_world.locator('[data-monster-world-drop-group]').count() == 0, "world drops were rendered before opening"
+            hostile_world.locator(':scope > summary').click()
+            page.wait_for_selector('[data-monster-world-drop-group]')
+            beads_group = hostile_world.locator('[data-monster-world-drop-group][data-group-id="44"]')
+            chest_group = hostile_world.locator('[data-monster-world-drop-group][data-group-id="9999918"]')
+            assert beads_group.count() == 1, "soul beads world group is missing"
+            assert chest_group.count() == 1, "golden desert weapon chest world group is missing"
+            beads_group.locator(':scope > summary').click()
+            chest_group.locator(':scope > summary').click()
+            page.wait_for_timeout(80)
+            hostile_world_text = hostile_world.inner_text()
+            assert 'Четки души' in hostile_world_text, hostile_world_text
+            assert 'Сундук с оружием из золотой пустыни' in hostile_world_text, hostile_world_text
+            assert '0,36%' in hostile_world_text, hostile_world_text
+            assert 'по уровню и типу' in hostile_world_text.lower(), hostile_world_text
+            assert 'тип локации' in hostile_world_text.lower(), hostile_world_text
 
             page.evaluate("location.hash = 'monster/10042'")
             page.wait_for_selector("details.lazy-monster-drops")

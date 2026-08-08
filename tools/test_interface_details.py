@@ -101,6 +101,8 @@ class InterfaceDetailTests(unittest.TestCase):
         self.assertIn("Недавно просмотренные", home)
         self.assertIn("Обсуждения", home)
         self.assertIn("https://vk.ru/board59626511", home)
+        self.assertIn("https://github.com/fsibatov/iris-online-database", home)
+        self.assertIn("GitHub проекта", home)
         self.assertIn("Сообщества", home)
         self.assertIn("Официальный статус этих площадок не подтверждён", home)
         self.assertNotIn("Быстрый переход", home)
@@ -158,8 +160,8 @@ if (formatChance(0.0000000001) !== '0,0000000001%') process.exit(4);
 if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
 """
         subprocess.run(["node", "-e", probe], check=True)
-        self.assertIn("Шанс выбрать группу:", self.script)
-        self.assertIn("Внутри группы:", self.script)
+        self.assertIn("Шанс группы:", self.script)
+        self.assertIn("Если группа выбрана:", self.script)
         self.assertIn("за одну основную попытку:", self.script)
         self.assertNotIn("Вес предмета:", self.script)
 
@@ -169,8 +171,8 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         for stale in ("IrisOnline" + "Preview", "audited", *legacy_versions):
             self.assertNotIn(stale, combined)
         self.assertNotIn(" preview", self.html.lower())
-        self.assertIn("const APP_VERSION = '1.0'", self.script)
-        self.assertIn("Версия 1.0", self.html)
+        self.assertIn("const APP_VERSION = '1.0.1'", self.script)
+        self.assertIn("Версия 1.0.1", self.html)
 
     def test_selects_share_control_class(self):
         self.assertIn('class="control-select control-select--server"', self.html)
@@ -182,9 +184,46 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
 
     def test_no_new_periodic_or_duplicate_event_mechanisms(self):
         self.assertEqual(self.script.count("setInterval("), 0)
-        self.assertEqual(self.script.count("setTimeout("), 8)
+        self.assertEqual(self.script.count("setTimeout("), 10)
         self.assertEqual(self.script.count("addEventListener("), 27)
-        self.assertEqual(self.script.count("api("), 13)
+        self.assertEqual(self.script.count("api("), 15)
+
+    def test_chest_contents_and_sources_are_visible_on_both_sides(self):
+        self.assertIn("function chestContentsHTML(chest)", self.script)
+        self.assertIn("Содержимое сундука", self.script)
+        self.assertIn("Шанс при открытии", self.script)
+        self.assertIn("data.chest", self.script)
+        self.assertIn("drop.containerId", self.script)
+        self.assertIn("{ title: 'Сундуки', sources: ['Сундук'] }", self.script)
+        self.assertIn(".chest-content-list", self.styles)
+
+    def test_world_sources_expand_lazily_without_claiming_map_mapping(self):
+        self.assertIn("data-world-source", self.script)
+        self.assertIn("renderWorldSourceMonsters(details)", self.script)
+        self.assertIn("/api/world-source-monsters", self.script)
+        self.assertIn("data?.contextMatchKnown !== false", self.script)
+        self.assertIn("нет подтверждённой привязки конкретного монстра к типу карты", self.script)
+
+    def test_monster_world_drops_expand_lazily_without_claiming_location_mapping(self):
+        self.assertIn("lazy-monster-world-drops", self.script)
+        self.assertIn("renderMonsterWorldDropShell()", self.script)
+        self.assertIn("/api/monster-world-drops", self.script)
+        self.assertIn("по уровню и типу", self.script)
+        self.assertIn("тип локации", self.script)
+        self.assertIn("choicePosition", self.script)
+        self.assertIn(".world-monster-list", self.styles)
+
+    def test_sources_use_requested_section_order(self):
+        block = self.script[self.script.index("function buildSourceSections"):self.script.index("function chestSourceDetails")]
+        labels = ["Точные монстры", "Мировая добыча", "Сундуки", "Квестовые источники"]
+        positions = [block.index(label) for label in labels]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("sort((a, b) => baseAttemptChance(b) - baseAttemptChance(a))", self.script)
+
+    def test_about_shows_author_and_github(self):
+        about = self.script[self.script.index("if (type === 'about')"):self.script.index("} else if (type === 'data')")]
+        self.assertIn("Хоуп (Original)", about)
+        self.assertIn("https://github.com/fsibatov/iris-online-database", about)
 
     def test_descriptions_remain_conditional(self):
         self.assertIn("meaningfulDescription(item.tooltip, item.name)", self.script)

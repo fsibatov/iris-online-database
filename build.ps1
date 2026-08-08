@@ -1,6 +1,6 @@
 ﻿$ErrorActionPreference = "Stop"
 
-$Version = "1.0"
+$Version = "1.0.1"
 $ExpectedGo = "go$((Get-Content (Join-Path $PSScriptRoot '.go-version') -Raw).Trim())"
 $ActualGo = ((& go version) -split '\s+')[2]
 $IsDiagnostic = $ActualGo -ne $ExpectedGo

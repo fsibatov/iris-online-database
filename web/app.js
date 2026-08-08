@@ -1,11 +1,12 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.0';
+  const APP_VERSION = '1.0.1';
   const PAGE_SIZE = 24;
   const FAVORITES_PAGE_SIZE = 24;
   const SOURCE_BATCH = 20;
   const DROP_BATCH = 30;
+  const WORLD_SOURCE_BATCH = 50;
   const SEARCH_DEBOUNCE = 270;
   const REQUEST_TIMEOUT = 15000;
   const PROFILE_DEBOUNCE = 400;
@@ -40,6 +41,7 @@
     sourceSections: [],
     favoritePage: 1,
     monsterDrops: null,
+    monsterWorldDrops: null,
     sessionId: '',
   };
 
@@ -257,8 +259,9 @@
         throw new Error('Не удалось связаться с локальным приложением. Попробуйте ещё раз.');
       }
       if (!response.ok) {
-        if (response.status === 404) throw new Error('Запись не найдена.');
-        throw new Error(`Не удалось выполнить запрос (код ${response.status}).`);
+        const error = new Error(response.status === 404 ? 'Запись не найдена.' : `Не удалось выполнить запрос (код ${response.status}).`);
+        error.status = response.status;
+        throw error;
       }
       if (response.status === 204) return null;
       try {
@@ -329,11 +332,19 @@
     if (state.profileLoaded) scheduleProfileSave(0);
   }
 
+  function clearRecentlyViewed() {
+    state.recentlyViewed = [];
+    localStorage.setItem(RECENT_VIEWED_KEY, '[]');
+    if (state.profileLoaded) scheduleProfileSave(0);
+    if (routeBase() === 'home') homePage();
+    showToast('Недавно просмотренные очищены.');
+  }
+
   function homePage() {
     const viewed = recentViewedEntries().slice(0, 6);
     const serverLabel = serverName(activeServerMeta());
     const recentlyViewed = viewed.length
-      ? `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><div class="recent-viewed-list">${viewed.map(entry => `<a href="#${entry.type}/${entry.id}"><span class="recent-viewed-icon">${icons[entry.type]}</span><span><strong>${escapeHTML(entry.name)}</strong><small>${entry.type === 'item' ? 'Предмет' : 'Монстр'}</small></span>${icons.chevron}</a>`).join('')}</div></section>`
+      ? `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><div class="home-section-heading"><h2 id="viewedTitle">Недавно просмотренные</h2><button class="text-button compact-button" type="button" data-action="clear-recently-viewed" aria-label="Очистить недавно просмотренные">Очистить</button></div><div class="recent-viewed-list">${viewed.map(entry => `<a href="#${entry.type}/${entry.id}"><span class="recent-viewed-icon">${icons[entry.type]}</span><span><strong>${escapeHTML(entry.name)}</strong><small>${entry.type === 'item' ? 'Предмет' : 'Монстр'}</small></span>${icons.chevron}</a>`).join('')}</div></section>`
       : `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><p class="home-start-hint">Здесь появятся открытые предметы и монстры.</p></section>`;
     const resources = `<section class="home-resources home-compact-section" aria-labelledby="resourcesTitle">
       <h2 id="resourcesTitle">Ресурсы Iris Online</h2>
@@ -342,6 +353,7 @@
         <a href="https://wiki.irisonline.ru/" target="_blank" rel="noopener noreferrer external"><strong>Wiki</strong><small>wiki.irisonline.ru</small></a>
         <a href="https://vk.com/irisonru" target="_blank" rel="noopener noreferrer external"><strong>ВКонтакте</strong><small>vk.com/irisonru</small></a>
         <a href="https://vk.ru/board59626511" target="_blank" rel="noopener noreferrer external"><strong>Обсуждения</strong><small>vk.ru</small></a>
+        <a href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external"><strong>GitHub проекта</strong><small>github.com/fsibatov/iris-online-database</small></a>
       </div>
       <div class="community-links" aria-labelledby="communitiesTitle"><h3 id="communitiesTitle">Сообщества</h3><p>Официальный статус этих площадок не подтверждён.</p><div>
         <a href="https://aminoapps.com/c/IrisONru/home/" target="_blank" rel="noopener noreferrer external">Amino</a>
@@ -1013,6 +1025,37 @@
     return `<section class="recipe-materials" aria-labelledby="recipeMaterialsTitle"><h2 id="recipeMaterialsTitle">Материалы рецепта</h2><div class="recipe-material-list">${rows}</div></section>`;
   }
 
+  function chestVariantLabel(variant) {
+    const details = [];
+    const quantity = Number(variant?.quantity) || 0;
+    const enhanced = Number(variant?.enhanced) || 0;
+    if (quantity > 1) details.push(`×${formatNumber(quantity)}`);
+    if (enhanced > 0) details.push(`усиление +${formatNumber(enhanced)}`);
+    return details.join(' · ');
+  }
+
+  function chestContentsHTML(chest) {
+    const items = Array.isArray(chest?.items) ? chest.items : [];
+    if (!items.length) return '';
+    const rows = items.map(item => {
+      const variants = Array.isArray(item.variants) ? item.variants : [];
+      let detail = '';
+      if (variants.length === 1) {
+        detail = chestVariantLabel(variants[0]);
+      } else if (variants.length > 1) {
+        detail = variants.map(variant => {
+          const label = chestVariantLabel(variant) || 'обычный вариант';
+          return variant.chanceKnown === true ? `${label} — ${formatChance(variant.chance)}` : label;
+        }).join(' · ');
+      }
+      const body = `<span class="source-icon">${icons.item}</span><span><strong>${escapeHTML(item.item || `Предмет ID ${item.itemId}`)}</strong>${detail ? `<small>${escapeHTML(detail)}</small>` : ''}</span>${item.chanceKnown === true ? `<span class="source-chance"><small>Шанс при открытии</small><strong>${formatChance(item.chance)}</strong></span>` : ''}`;
+      return item.itemKnown === true ? `<a class="chest-content-row" href="#item/${Number(item.itemId)}">${body}</a>` : `<div class="chest-content-row">${body}</div>`;
+    }).join('');
+    const drawCount = Number(chest.drawCount) || 0;
+    const drawNote = drawCount > 0 ? `<p>За одно открытие из выбранной группы выбирается ${formatCount(drawCount, 'предмет', 'предмета', 'предметов')}.</p>` : '';
+    return `<section class="chest-contents" aria-labelledby="chestContentsTitle"><header><div><span class="eyebrow">Сундук</span><h2 id="chestContentsTitle">Содержимое сундука</h2>${drawNote}</div><button class="text-button" type="button" data-dialog="chance">${icons.info}<span>Как рассчитывается шанс</span></button></header><div class="chest-content-list">${rows}</div></section>`;
+  }
+
   function meaningfulDescription(value, recordName = '') {
     const text = String(value || '').replace(/\r\n?/g, '\n').trim();
     const normalized = text.replace(/\s+/g, ' ').toLocaleLowerCase('ru-RU');
@@ -1042,12 +1085,15 @@
     const bonuses = Array.isArray(data.bonuses) ? data.bonuses : [];
     const presentation = itemPresentation(item, bonuses);
     const description = meaningfulDescription(item.tooltip, item.name);
-    const drops = [...(data.drops || [])].sort((a, b) => baseAttemptChance(b) - baseAttemptChance(a));
-    const best = drops[0];
-    const bestLabel = best ? (best.groupChanceKnown ? `${formatChance(baseAttemptChance(best))} за базовую попытку` : `${formatChance(baseAttemptChance(best))} при выполнении условий`) : '';
-    const sourceSummary = best ? `${sourceName(best)} — ${bestLabel}` : '';
+    const drops = [...(data.drops || [])];
+    const knownDrops = drops.filter(drop => drop.source !== 'Сундук' || drop.chanceKnown === true);
+    const best = (knownDrops.length ? knownDrops : drops).reduce((current, row) => !current || baseAttemptChance(row) > baseAttemptChance(current) ? row : current, null);
+    const bestChanceKnown = best && (best.source !== 'Сундук' || best.chanceKnown === true);
+    const bestLabel = bestChanceKnown ? (best.source === 'Сундук' ? `${formatChance(baseAttemptChance(best))} при открытии` : best.groupChanceKnown ? `${formatChance(baseAttemptChance(best))} за базовую попытку` : `${formatChance(baseAttemptChance(best))} при выполнении условий`) : '';
+    const sourceSummary = best ? [sourceName(best), bestLabel].filter(Boolean).join(' — ') : '';
     state.sourceSections = buildSourceSections(drops);
     state.monsterDrops = null;
+    state.monsterWorldDrops = null;
 
     main.innerHTML = `<section class="page detail-page" data-route="item/${Number(item.id)}">
       ${breadcrumb('items', 'Предметы', item.name)}
@@ -1057,6 +1103,7 @@
       </header>
       ${gameProperties(presentation, 'Характеристики предмета', data.set ? setContent(item, data.set) : '')}
       ${recipeMaterialsHTML(data.recipe)}
+      ${chestContentsHTML(data.chest)}
       ${drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary)}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p></div><button class="secondary-button" type="button" data-open-details="item-sources">Показать все источники</button></section>` : ''}
       <section class="detail-accordions">
         ${drops.length ? accordion('Источники получения', formatCount(drops.length, 'вариант', 'варианта', 'вариантов'), sourcesContent(), false, 'item-sources') : ''}
@@ -1135,16 +1182,19 @@
 
   function sourceName(drop) {
     const isWorld = drop.source === 'Мировое выпадение';
+    const isChest = drop.source === 'Сундук';
     const isQuest = drop.source === 'Квестовый дроп' || drop.source === 'Квестовое выпадение';
     if (isWorld) return drop.monster || 'Мировая добыча';
+    if (isChest) return drop.container || 'Сундук';
     if (isQuest) return drop.quest || 'Квестовый источник';
     return `${drop.monster || 'Источник'}${drop.monsterLevel ? ` · Уровень ${drop.monsterLevel}` : ''}`;
   }
 
   function buildSourceSections(drops) {
     const definitions = [
-      { title: 'Обычная добыча с монстров', sources: ['Выпадение монстра'] },
+      { title: 'Точные монстры', sources: ['Выпадение монстра'] },
       { title: 'Мировая добыча', sources: ['Мировое выпадение'] },
+      { title: 'Сундуки', sources: ['Сундук'] },
       { title: 'Квестовые источники', sources: ['Квестовый дроп', 'Квестовое выпадение'] },
     ];
     const known = new Set(definitions.flatMap(def => def.sources));
@@ -1154,17 +1204,37 @@
     return result;
   }
 
+  function chestSourceDetails(drop) {
+    const variants = Array.isArray(drop.variants) ? drop.variants : [];
+    if (variants.length === 1) return chestVariantLabel(variants[0]);
+    if (variants.length > 1) return variants.map(variant => {
+      const label = chestVariantLabel(variant) || 'обычный вариант';
+      return variant.chanceKnown === true ? `${label} — ${formatChance(variant.chance)}` : label;
+    }).join(' · ');
+    const quantity = Number(drop.quantity) || 0;
+    return quantity > 1 ? `×${formatNumber(quantity)}` : '';
+  }
+
   function sourceRow(drop) {
     const isWorld = drop.source === 'Мировое выпадение';
+    const isChest = drop.source === 'Сундук';
     const isQuest = drop.source === 'Квестовый дроп' || drop.source === 'Квестовое выпадение';
-    const baseDetails = isWorld ? [drop.context, drop.slotTitle] : isQuest ? [drop.quest, drop.context] : [drop.slotTitle];
-    if (!isQuest && drop.groupChanceKnown) {
-      baseDetails.push(`Шанс выбрать группу: ${formatChance(drop.groupBaseChance ?? drop.groupChance)}`);
-      baseDetails.push(`Шанс внутри группы: ${formatChance(drop.itemBaseChance ?? drop.itemChance)}`);
+    const baseDetails = isWorld ? [drop.context] : isChest ? [chestSourceDetails(drop)] : isQuest ? [drop.context] : [drop.slotTitle];
+    if (!isQuest && !isChest && drop.groupChanceKnown) {
+      baseDetails.push(`Шанс группы: ${formatChance(drop.groupBaseChance ?? drop.groupChance)}`);
+      baseDetails.push(`Если группа выбрана: ${formatChance(drop.itemBaseChance ?? drop.itemChance)}`);
     }
-    const details = baseDetails.filter(Boolean).join(' · ');
-    const chanceLabel = isQuest ? 'Шанс при выполнении условий' : 'За одну основную попытку';
-    const content = `<span class="source-icon">${icons[isWorld ? 'home' : isQuest ? 'info' : 'monster']}</span><span><strong>${escapeHTML(sourceName(drop))}</strong><small>${escapeHTML(details || 'Источник получения')}</small></span><span class="source-chance"><small>${chanceLabel}</small><strong>${formatChance(baseAttemptChance(drop))}</strong></span>`;
+    const sourceLabel = sourceName(drop).trim().toLocaleLowerCase('ru-RU');
+    const details = [...new Set(baseDetails.filter(Boolean).map(value => String(value).trim()).filter(value => value && value.toLocaleLowerCase('ru-RU') !== sourceLabel))].join(' · ');
+    const chanceLabel = isChest ? 'Шанс при открытии' : isQuest ? 'Шанс при выполнении условий' : 'За одну основную попытку';
+    const chanceKnown = !isChest || drop.chanceKnown === true;
+    const icon = icons[isWorld ? 'home' : isQuest ? 'info' : isChest ? 'item' : 'monster'];
+    const chance = chanceKnown ? `<span class="source-chance"><small>${chanceLabel}</small><strong>${formatChance(baseAttemptChance(drop))}</strong></span>` : '';
+    const content = `<span class="source-icon">${icon}</span><span><strong>${escapeHTML(sourceName(drop))}</strong>${details ? `<small>${escapeHTML(details)}</small>` : ''}</span>${chance}`;
+    if (isWorld) {
+      return `<details class="world-source" data-world-source data-item-id="${Number(drop.itemId)}" data-source-line="${Number(drop.sourceLine)}" data-group-id="${Number(drop.groupId)}" data-choice-position="${Number(drop.choicePosition)}" data-item-position="${Number(drop.itemPosition)}"><summary class="source-row">${content}</summary><div class="world-source-results" data-world-source-host><p class="empty-copy">Раскройте источник, чтобы показать подходящих монстров.</p></div></details>`;
+    }
+    if (isChest && Number(drop.containerId) > 0) return `<a class="source-row" href="#item/${Number(drop.containerId)}">${content}</a>`;
     return drop.monsterId ? `<a class="source-row" href="#monster/${drop.monsterId}">${content}</a>` : `<div class="source-row">${content}</div>`;
   }
 
@@ -1181,6 +1251,47 @@
     return `<section class="source-section" data-source-section="${index}"><header><h3>${escapeHTML(section.title)}</h3><span>${formatNumber(section.rows.length)}</span></header><div class="source-list">${visible.map(sourceRow).join('')}</div>${section.shown < section.rows.length ? `<button class="secondary-button load-more" type="button" data-source-more="${index}">Показать ещё ${formatNumber(Math.min(SOURCE_BATCH, section.rows.length - section.shown))}</button>` : ''}</section>`;
   }
 
+  function renderWorldSourceRows(details) {
+    const host = details?.querySelector('[data-world-source-host]');
+    const monsters = Array.isArray(details?._worldMonsters) ? details._worldMonsters : [];
+    if (!host) return;
+    const shown = Math.min(monsters.length, Math.max(WORLD_SOURCE_BATCH, Number(details.dataset.worldShown) || WORLD_SOURCE_BATCH));
+    const rows = monsters.slice(0, shown).map(monster => `<a class="world-monster-row" href="#monster/${Number(monster.monsterId)}"><span>${icons.monster}</span><span><strong>${escapeHTML(monster.monster || `Монстр ID ${monster.monsterId}`)}</strong>${Number(monster.level) > 0 ? `<small>Уровень ${formatNumber(monster.level)}</small>` : ''}</span><span class="source-chance"><small>За одну основную попытку</small><strong>${formatChance(monster.chance)}</strong></span></a>`).join('');
+    const more = shown < monsters.length ? `<button class="secondary-button load-more" type="button" data-world-more>Показать ещё ${formatNumber(Math.min(WORLD_SOURCE_BATCH, monsters.length - shown))}</button>` : '';
+    const note = details.dataset.contextMatchKnown === 'false' ? '<p class="world-source-note">В опубликованных данных нет подтверждённой привязки конкретного монстра к типу карты. Список отфильтрован по уровню и типу монстра; условие «Открытая локация/Инстанс» сервер применяет отдельно.</p>' : '';
+    host.innerHTML = `${note}${monsters.length ? `<div class="world-monster-list">${rows}</div>${more}` : '<p class="empty-copy">Подходящие монстры по известным условиям не найдены.</p>'}`;
+  }
+
+  async function renderWorldSourceMonsters(details) {
+    if (!details || details.dataset.worldLoaded === 'true' || details.dataset.worldLoading === 'true') return;
+    const host = details.querySelector('[data-world-source-host]');
+    if (!host) return;
+    details.dataset.worldLoading = 'true';
+    host.innerHTML = '<p class="empty-copy">Загрузка подходящих монстров…</p>';
+    const params = new URLSearchParams({
+      server: state.server,
+      itemId: details.dataset.itemId || '',
+      sourceLine: details.dataset.sourceLine || '',
+      groupId: details.dataset.groupId || '',
+      choicePosition: details.dataset.choicePosition || '',
+      itemPosition: details.dataset.itemPosition || '',
+    });
+    try {
+      const data = await api(`/api/world-source-monsters?${params.toString()}`, { signal: state.routeController?.signal });
+      if (!details.isConnected) return;
+      details._worldMonsters = Array.isArray(data?.monsters) ? data.monsters : [];
+      details.dataset.worldShown = String(Math.min(WORLD_SOURCE_BATCH, details._worldMonsters.length));
+      details.dataset.contextMatchKnown = String(data?.contextMatchKnown !== false);
+      details.dataset.worldLoaded = 'true';
+      renderWorldSourceRows(details);
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      if (details.isConnected) host.innerHTML = '<p class="empty-copy">Не удалось загрузить список монстров. Закройте и снова раскройте источник.</p>';
+    } finally {
+      delete details.dataset.worldLoading;
+    }
+  }
+
   function monsterDetail(data) {
     const monster = data.monster;
     trackRecentlyViewed('monster', monster.id, monster.name);
@@ -1189,7 +1300,9 @@
     const presentation = monsterPresentation(monster);
     const description = meaningfulDescription(monster.note, monster.name);
     const slots = data.slots || [];
+    const worldRuleCount = Math.max(0, Number(data.worldRuleCount) || 0);
     state.monsterDrops = { slots, groups: [], shellRendered: false };
+    state.monsterWorldDrops = { monsterId: Number(monster.id), count: worldRuleCount, slots: [], groups: [], loaded: false, loading: false, shellRendered: false };
     const topDrops = topMonsterDrops(slots, 6);
     main.innerHTML = `<section class="page detail-page" data-route="monster/${Number(monster.id)}">
       ${breadcrumb('monsters', 'Монстры', monster.name)}
@@ -1202,6 +1315,7 @@
       ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Основные предметы</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small>${formatChance(drop.chance)} за основную попытку</small></a>`).join('')}</div></section>` : ''}
       <section class="detail-accordions">
         ${slots.length ? accordion('Обычная добыча', formatCount(slots.length, 'вариант', 'варианта', 'вариантов'), `<div data-monster-drops-host><p class="empty-copy">Список будет загружен после раскрытия раздела.</p></div>`, false, 'monster-drops lazy-monster-drops') : ''}
+        ${worldRuleCount ? accordion('Мировая добыча', `${formatCount(worldRuleCount, 'правило', 'правила', 'правил')} по уровню и типу`, `<div data-monster-world-drops-host><p class="empty-copy">Список будет загружен после раскрытия раздела.</p></div>`, false, 'monster-world-drops lazy-monster-world-drops') : ''}
         ${description ? accordion('Описание', '', `<p class="reading-text">${escapeHTML(description)}</p>`, false) : ''}
         ${accordion('Технические сведения', `ID ${monster.id}`, `${kvList([...monsterTechnicalRows(monster), ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server]])}`, false)}
       </section>
@@ -1236,10 +1350,7 @@
         const groupIndex = model.groups.length;
         model.groups.push({ choice, shown: 0, rendered: false });
         const count = (choice.items || []).length;
-        const rawGroupWeight = Math.abs(Number(choice.chance || 0) - Number(choice.baseSelectionChance || 0)) > 0.0000001
-          ? ` · вес в исходной таблице: ${formatChance(choice.chance)}`
-          : '';
-        return `<details class="drop-choice" data-drop-group="${groupIndex}"><summary><span><strong>${escapeHTML(choice.title || 'Группа предметов')}</strong><small>Шанс выбрать группу: ${formatChance(choice.baseSelectionChance)}${rawGroupWeight} · ${formatCount(count, 'предмет', 'предмета', 'предметов')}</small></span>${icons.chevron}</summary><div class="drop-items" data-drop-group-host="${groupIndex}"><p class="empty-copy">Раскройте группу, чтобы показать предметы.</p></div></details>`;
+        return `<details class="drop-choice" data-drop-group="${groupIndex}"><summary><span><strong>${escapeHTML(choice.title || 'Группа предметов')}</strong><small>Шанс группы: ${formatChance(choice.baseSelectionChance)} · ${formatCount(count, 'предмет', 'предмета', 'предметов')}</small></span>${icons.chevron}</summary><div class="drop-items" data-drop-group-host="${groupIndex}"><p class="empty-copy">Раскройте группу, чтобы показать предметы.</p></div></details>`;
       }).join('');
       const extraAttempts = [
         slot.addAttempt1Count ? `${formatCount(slot.addAttempt1Count, 'дополнительная попытка', 'дополнительные попытки', 'дополнительных попыток')} при ${formatChance(slot.addAttempt1Rate)}` : '',
@@ -1264,14 +1375,83 @@
       host.innerHTML = '<p class="empty-copy">Состав группы не найден.</p>';
       return;
     }
-    const rows = items.slice(0, group.shown).map(item => {
-      const rawItemWeight = Math.abs(Number(item.chance || 0) - Number(item.baseSelectionChance || 0)) > 0.0000001
-        ? ` · вес в исходной таблице: ${formatChance(item.chance)}`
-        : '';
-      return `<a href="#item/${item.itemId}"><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Внутри группы: ${formatChance(item.baseSelectionChance)}${rawItemWeight} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`;
-    }).join('');
+    const rows = items.slice(0, group.shown).map(item => `<a href="#item/${item.itemId}"><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`).join('');
     const remaining = items.length - group.shown;
     host.innerHTML = `${rows}<div class="lazy-list-status" aria-live="polite">Показано ${formatNumber(group.shown)} из ${formatNumber(items.length)}</div>${remaining > 0 ? `<div class="lazy-list-actions"><button class="secondary-button" type="button" data-drop-more="${groupIndex}">Показать ещё ${formatNumber(Math.min(DROP_BATCH, remaining))}</button><button class="text-button" type="button" data-drop-all="${groupIndex}">Показать всё</button></div>` : ''}`;
+  }
+
+  function renderMonsterWorldDropSlots() {
+    const model = state.monsterWorldDrops;
+    const host = main.querySelector('[data-monster-world-drops-host]');
+    if (!model || !host) return;
+    const meta = activeServerMeta();
+    const dates = `<div class="data-inline"><strong>Актуальность данных</strong><span>Состав групп: ${formatSourceDate(meta.dropListsUpdatedAt)}</span><span>Мировая добыча: ${formatSourceDate(meta.worldDropsUpdatedAt)}</span></div>`;
+    const note = '<p class="world-source-note">Правила ниже подходят монстру по уровню и типу. Для мирового дропа сервер также учитывает тип локации. В опубликованных данных нет надёжной привязки каждого монстра к открытому миру или инстансу, поэтому это список подходящих правил, а не подтверждение конкретной карты.</p>';
+    if (!model.slots.length) {
+      host.innerHTML = `${dates}${note}<p class="empty-copy">Подходящие правила мировой добычи не найдены.</p>`;
+      model.shellRendered = true;
+      return;
+    }
+    model.groups = [];
+    const slotsHTML = model.slots.map((slot, slotIndex) => {
+      const groups = (slot.choices || []).map(choice => {
+        const groupIndex = model.groups.length;
+        model.groups.push({ choice, shown: 0, rendered: false });
+        const count = (choice.items || []).length;
+        return `<details class="drop-choice" data-monster-world-drop-group="${groupIndex}" data-group-id="${Number(choice.groupId) || 0}"><summary><span><strong>${escapeHTML(choice.title || `Вариант ${groupIndex + 1}`)}</strong><small>Шанс группы: ${formatChance(choice.baseSelectionChance)} · ${formatCount(count, 'предмет', 'предмета', 'предметов')}</small></span>${icons.chevron}</summary><div class="drop-items" data-monster-world-drop-group-host="${groupIndex}"><p class="empty-copy">Раскройте вариант, чтобы показать предметы.</p></div></details>`;
+      }).join('');
+      const extraAttempts = [
+        slot.addAttempt1Count ? `${formatCount(slot.addAttempt1Count, 'дополнительная попытка', 'дополнительные попытки', 'дополнительных попыток')} при ${formatChance(slot.addAttempt1Rate)}` : '',
+        slot.addAttempt2Count ? `${formatCount(slot.addAttempt2Count, 'дополнительная попытка', 'дополнительные попытки', 'дополнительных попыток')} при ${formatChance(slot.addAttempt2Rate)}` : '',
+      ].filter(Boolean).join(' · ');
+      return `<section class="drop-slot"><header><div><h3>${escapeHTML(slot.context || `Правило ${slotIndex + 1}`)}</h3><p>Основная попытка: 1${extraAttempts ? ` · ${extraAttempts}` : ''}</p></div></header><div>${groups || '<p class="empty-copy">Варианты не найдены.</p>'}</div></section>`;
+    }).join('');
+    host.innerHTML = `${dates}${note}<button class="text-button" type="button" data-dialog="chance">${icons.info}<span>Как работает выпадение</span></button><div class="drop-slots">${slotsHTML}</div>`;
+    model.shellRendered = true;
+  }
+
+  async function renderMonsterWorldDropShell() {
+    const model = state.monsterWorldDrops;
+    const host = main.querySelector('[data-monster-world-drops-host]');
+    if (!model || !host || model.loading) return;
+    if (model.loaded) {
+      if (!model.shellRendered) renderMonsterWorldDropSlots();
+      return;
+    }
+    model.loading = true;
+    host.innerHTML = '<p class="empty-copy">Загрузка мировой добычи…</p>';
+    const params = new URLSearchParams({ server: state.server, monsterId: String(model.monsterId) });
+    try {
+      const data = await api(`/api/monster-world-drops?${params.toString()}`, { signal: state.routeController?.signal });
+      if (!host.isConnected || state.monsterWorldDrops !== model) return;
+      model.slots = Array.isArray(data?.slots) ? data.slots : [];
+      model.loaded = true;
+      model.shellRendered = false;
+      renderMonsterWorldDropSlots();
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      if (host.isConnected) host.innerHTML = '<p class="empty-copy">Не удалось загрузить мировую добычу. Закройте и снова раскройте раздел.</p>';
+    } finally {
+      model.loading = false;
+    }
+  }
+
+  function renderMonsterWorldDropGroup(groupIndex, showAll = false) {
+    const group = state.monsterWorldDrops?.groups?.[groupIndex];
+    const host = main.querySelector(`[data-monster-world-drop-group-host="${groupIndex}"]`);
+    if (!group || !host) return;
+    const items = group.choice.items || [];
+    if (showAll) group.shown = items.length;
+    else if (!group.rendered) group.shown = Math.min(DROP_BATCH, items.length);
+    else group.shown = Math.min(items.length, group.shown + DROP_BATCH);
+    group.rendered = true;
+    if (!items.length) {
+      host.innerHTML = '<p class="empty-copy">Состав варианта не найден.</p>';
+      return;
+    }
+    const rows = items.slice(0, group.shown).map(item => `<a href="#item/${item.itemId}"><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`).join('');
+    const remaining = items.length - group.shown;
+    host.innerHTML = `${rows}<div class="lazy-list-status" aria-live="polite">Показано ${formatNumber(group.shown)} из ${formatNumber(items.length)}</div>${remaining > 0 ? `<div class="lazy-list-actions"><button class="secondary-button" type="button" data-monster-world-drop-more="${groupIndex}">Показать ещё ${formatNumber(Math.min(DROP_BATCH, remaining))}</button><button class="text-button" type="button" data-monster-world-drop-all="${groupIndex}">Показать всё</button></div>` : ''}`;
   }
 
   async function favoritesPage(signal) {
@@ -1309,6 +1489,7 @@
     if (!preserveItemDetail) {
       state.sourceSections = [];
       state.monsterDrops = null;
+      state.monsterWorldDrops = null;
     }
     if (preserveItemDetail) visibleDetail.setAttribute('aria-busy', 'true');
     if (preserveCatalogPage) {
@@ -1406,7 +1587,7 @@
     closeMoreMenu();
     if (type === 'about') {
       infoDialogTitle.textContent = 'О приложении';
-      infoDialogBody.innerHTML = `<p>Iris Online — локальная база предметов, монстров и источников получения.</p><dl class="kv-list"><div><dt>Версия</dt><dd>${APP_VERSION}</dd></div><div><dt>Работа с данными</dt><dd>Локально на этом компьютере</dd></div></dl><div class="legal-notice"><p><strong>© 2026 Iris Online Database</strong></p><p>Iris Online Database — неофициальное фанатское приложение для Iris Online. Проект не связан с разработчиками, издателями или правообладателями игры. Все игровые материалы, названия, логотипы и товарные знаки принадлежат их соответствующим правообладателям.</p><p><a class="external-link" href="https://irisonline.ru/" target="_blank" rel="noopener noreferrer" aria-label="Официальный сайт игры Iris Online — открыть в новой вкладке">Официальный сайт игры: irisonline.ru ${icons.external}</a></p></div>`;
+      infoDialogBody.innerHTML = `<p>Iris Online — локальная база предметов, монстров и источников получения.</p><dl class="kv-list"><div><dt>Версия</dt><dd>${APP_VERSION}</dd></div><div><dt>Автор</dt><dd>Хоуп (Original)</dd></div><div><dt>Работа с данными</dt><dd>Локально на этом компьютере</dd></div></dl><div class="legal-notice"><p><strong>© 2026 Iris Online Database</strong></p><p>Iris Online Database — неофициальное фанатское приложение для Iris Online. Проект не связан с разработчиками, издателями или правообладателями игры. Все игровые материалы, названия, логотипы и товарные знаки принадлежат их соответствующим правообладателям.</p><p><a class="external-link" href="https://irisonline.ru/" target="_blank" rel="noopener noreferrer" aria-label="Официальный сайт игры Iris Online — открыть в новой вкладке">Официальный сайт игры: irisonline.ru ${icons.external}</a></p><p><a class="external-link" href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external" aria-label="GitHub проекта Iris Online Database — открыть в новой вкладке">GitHub проекта ${icons.external}</a></p></div>`;
     } else if (type === 'data') {
       const meta = state.meta?.meta || {};
       const server = activeServerMeta();
@@ -1417,7 +1598,7 @@
       infoDialogBody.innerHTML = `<p>Откройте таблицу Google и оставьте комментарий в нужной ячейке.</p><p><a class="primary-button" target="_blank" rel="noopener noreferrer external" href="https://docs.google.com/spreadsheets/d/1OEKLkfWQPNXG5QXpn1C0JZKOsgxjlTkrE5ckikG4uf4/edit?gid=1073338359#gid=1073338359">Открыть таблицу Google ${icons.external}</a></p>`;
     } else if (type === 'chance') {
       infoDialogTitle.textContent = 'Как работает выпадение';
-      infoDialogBody.innerHTML = `<p>Обычная добыча выбирается в два шага.</p><ol class="chance-steps"><li><strong>Группа.</strong> Сервер берёт случайное число от 1 до 1 000 000 и по накопительным весам выбирает не более одной группы.</li><li><strong>Предмет.</strong> Если группа выбрана, вторым независимым броском выбирается не более одного предмета внутри неё.</li><li><strong>За одну основную попытку.</strong> Это шанс пройти оба выбора в исходной таблице без серверных модификаторов.</li></ol><p>Например, 0,0042% означает 42 подходящих значения из 1 000 000. Очень маленький ненулевой шанс показывается без округления до нуля и, когда это полезно, дополнительно как «примерно 1 из N».</p><p class="muted-copy">Это не точный шанс за убийство: на результат могут влиять штраф за разницу уровней, временные ограничения, время суток, дополнительные и событийные попытки.</p>`;
+      infoDialogBody.innerHTML = `<p><strong>Добыча с монстров.</strong> Шанс считается в два простых шага.</p><ol class="chance-steps"><li><strong>Шанс группы.</strong> Сначала игра решает, сработала ли нужная группа наград.</li><li><strong>Если группа выбрана.</strong> Затем игра выбирает конкретный предмет внутри этой группы.</li><li><strong>За одну основную попытку.</strong> Это вероятность, что оба шага сработают подряд.</li></ol><p><strong>Пример:</strong> шанс группы 0,0042%, а предмета внутри неё 0,0833%. Тогда за одну основную попытку шанс предмета около 0,0000035% — примерно 1 из 28,6 млн.</p><p class="muted-copy">Это не обязательно итоговый шанс за убийство. На сервере могут быть дополнительные попытки, ограничения по уровню и времени и другие модификаторы.</p><p><strong>Сундуки.</strong> При открытии сначала определяется набор наград, затем из него выбирается указанное количество предметов. «Шанс при открытии» показывает вероятность получить этот предмет хотя бы один раз за одно открытие. Если точный процент нельзя подтвердить по имеющимся данным, приложение показывает содержимое без процента.</p>`;
     }
     infoDialog.showModal();
     requestAnimationFrame(() => infoDialog.querySelector('[data-close-dialog]')?.focus());
@@ -1431,7 +1612,7 @@
   let lastVisibilitySave = 0;
   function persistedFilterValues(filters) {
     const result = {};
-    Object.entries(filters).forEach(([key, value]) => { if (key !== 'page') result[key] = String(value ?? ''); });
+    Object.entries(filters).forEach(([key, value]) => { if (key !== 'page' && key !== 'q') result[key] = String(value ?? ''); });
     return result;
   }
 
@@ -1531,13 +1712,17 @@
       state.history = Array.isArray(profile.history) ? profile.history : [];
       if (Array.isArray(profile.recentlyViewed) && profile.recentlyViewed.length) state.recentlyViewed = profile.recentlyViewed;
       else if (Array.isArray(localRecentlyViewed)) state.recentlyViewed = localRecentlyViewed;
-      applyFilterProfile(state.itemFilters, profile.itemFilters, ['q', 'category', 'subcategory', 'quality', 'minLevel', 'maxLevel', 'sort']);
-      applyFilterProfile(state.monsterFilters, profile.monsterFilters, ['q', 'category', 'type', 'minLevel', 'maxLevel', 'sort']);
+      applyFilterProfile(state.itemFilters, profile.itemFilters, ['category', 'subcategory', 'quality', 'minLevel', 'maxLevel', 'sort']);
+      applyFilterProfile(state.monsterFilters, profile.monsterFilters, ['category', 'type', 'minLevel', 'maxLevel', 'sort']);
     } else {
       state.history = safeJSON(localStorage.getItem('iris-history') || '[]', []);
-      applyFilterProfile(state.itemFilters, safeJSON(localStorage.getItem('iris-item-filters') || '{}', {}), ['q', 'category', 'subcategory', 'quality', 'minLevel', 'maxLevel', 'sort']);
-      applyFilterProfile(state.monsterFilters, safeJSON(localStorage.getItem('iris-monster-filters') || '{}', {}), ['q', 'category', 'type', 'minLevel', 'maxLevel', 'sort']);
+      applyFilterProfile(state.itemFilters, safeJSON(localStorage.getItem('iris-item-filters') || '{}', {}), ['category', 'subcategory', 'quality', 'minLevel', 'maxLevel', 'sort']);
+      applyFilterProfile(state.monsterFilters, safeJSON(localStorage.getItem('iris-monster-filters') || '{}', {}), ['category', 'type', 'minLevel', 'maxLevel', 'sort']);
     }
+    state.itemFilters.q = '';
+    state.monsterFilters.q = '';
+    globalSearch.value = '';
+    closeSuggestions();
     if (!['list', 'cards'].includes(state.view)) state.view = 'list';
     normalizeDependentFilters('items');
     normalizeDependentFilters('monsters');
@@ -1547,6 +1732,8 @@
     localStorage.setItem('iris-theme', state.theme);
     localStorage.setItem('iris-view', state.view);
     localStorage.setItem('iris-favorites', JSON.stringify([...state.favorites]));
+    localStorage.setItem('iris-item-filters', JSON.stringify(persistedFilterValues(state.itemFilters)));
+    localStorage.setItem('iris-monster-filters', JSON.stringify(persistedFilterValues(state.monsterFilters)));
     state.recentlyViewed = recentViewedEntries();
     localStorage.setItem(RECENT_VIEWED_KEY, JSON.stringify(state.recentlyViewed));
     state.profileLoaded = true;
@@ -1555,9 +1742,19 @@
   }
 
   let heartbeatTimer;
+  let sessionOpenController;
   let sessionOpening = false;
   let sessionClosing = false;
   let sessionCloseSent = false;
+
+  function newSessionID() {
+    const bytes = new Uint8Array(16);
+    if (globalThis.crypto?.getRandomValues) {
+      globalThis.crypto.getRandomValues(bytes);
+      return [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
+    }
+    return `browser-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+  }
 
   function scheduleHeartbeat(delay = 5000) {
     clearTimeout(heartbeatTimer);
@@ -1571,22 +1768,33 @@
       await api('/api/session/heartbeat', { method: 'POST', body: JSON.stringify({ id: state.sessionId }), headers: { 'Content-Type': 'application/json' } });
       scheduleHeartbeat(5000);
     } catch (_) {
-      state.sessionId = '';
-      scheduleHeartbeat(2000);
+      clearTimeout(heartbeatTimer);
+      if (!sessionClosing) heartbeatTimer = setTimeout(openApplicationSession, 2000);
     }
   }
 
   async function openApplicationSession() {
     if (sessionClosing || sessionOpening) return;
+    if (!state.sessionId) state.sessionId = newSessionID();
     sessionOpening = true;
+    sessionOpenController = new AbortController();
     try {
-      const response = await api('/api/session/open', { method: 'POST', body: JSON.stringify({ id: state.sessionId || '' }), headers: { 'Content-Type': 'application/json' } });
+      const response = await api('/api/session/open', { method: 'POST', signal: sessionOpenController.signal, body: JSON.stringify({ id: state.sessionId }), headers: { 'Content-Type': 'application/json' } });
       state.sessionId = response.id;
+      if (sessionClosing) {
+        queueSessionClose(state.sessionId, false);
+        return;
+      }
       scheduleHeartbeat(Math.max(1000, Number(response.heartbeatSeconds || 5) * 1000));
-    } catch (_) {
-      state.sessionId = '';
-      scheduleHeartbeat(2000);
-    } finally { sessionOpening = false; }
+    } catch (error) {
+      if (sessionClosing) return;
+      if (error?.status === 409) state.sessionId = '';
+      clearTimeout(heartbeatTimer);
+      heartbeatTimer = setTimeout(openApplicationSession, 2000);
+    } finally {
+      sessionOpenController = null;
+      sessionOpening = false;
+    }
   }
 
   function abortPendingWork() {
@@ -1599,16 +1807,12 @@
     state.catalogController?.abort();
     state.suggestionController?.abort();
     profileController?.abort();
+    sessionOpenController?.abort();
   }
 
-  function closeApplicationSession() {
-    if (sessionCloseSent) return;
-    sessionCloseSent = true;
-    sessionClosing = true;
-    saveProfileBestEffort();
-    abortPendingWork();
-    if (!state.sessionId) return;
-    const body = JSON.stringify({ id: state.sessionId });
+  function queueSessionClose(id, pendingOpen = false) {
+    if (!id) return;
+    const body = JSON.stringify({ id, pendingOpen: Boolean(pendingOpen) });
     const queued = navigator.sendBeacon?.('/api/session/close', new Blob([body], { type: 'application/json' })) === true;
     if (!queued) {
       fetch('/api/session/close', {
@@ -1620,11 +1824,23 @@
     }
   }
 
+  function closeApplicationSession() {
+    if (sessionCloseSent) return;
+    const pendingOpen = sessionOpening;
+    sessionCloseSent = true;
+    sessionClosing = true;
+    saveProfileBestEffort();
+    abortPendingWork();
+    queueSessionClose(state.sessionId, pendingOpen);
+  }
+
+
   main.addEventListener('click', event => {
     const favorite = event.target.closest('[data-favorite]');
     if (favorite) { toggleFavorite(favorite.dataset.favorite, favorite); return; }
     const action = event.target.closest('[data-action]')?.dataset.action;
     if (action === 'reload') { renderRoute(); return; }
+    if (action === 'clear-recently-viewed') { clearRecentlyViewed(); return; }
     if (action === 'open-filters') { openFilters(); return; }
     if (action === 'reset-filters') { resetFilters(); return; }
     const pageButton = event.target.closest('[data-page]');
@@ -1683,6 +1899,14 @@
       if (host) host.outerHTML = sourceSectionHTML(section, index);
       return;
     }
+    const worldMore = event.target.closest('[data-world-more]');
+    if (worldMore) {
+      const details = worldMore.closest('[data-world-source]');
+      if (!details || !Array.isArray(details._worldMonsters)) return;
+      details.dataset.worldShown = String(Math.min(details._worldMonsters.length, (Number(details.dataset.worldShown) || WORLD_SOURCE_BATCH) + WORLD_SOURCE_BATCH));
+      renderWorldSourceRows(details);
+      return;
+    }
     const dropMore = event.target.closest('[data-drop-more]');
     if (dropMore) {
       renderMonsterDropGroup(Number(dropMore.dataset.dropMore));
@@ -1693,6 +1917,16 @@
       renderMonsterDropGroup(Number(dropAll.dataset.dropAll), true);
       return;
     }
+    const monsterWorldDropMore = event.target.closest('[data-monster-world-drop-more]');
+    if (monsterWorldDropMore) {
+      renderMonsterWorldDropGroup(Number(monsterWorldDropMore.dataset.monsterWorldDropMore));
+      return;
+    }
+    const monsterWorldDropAll = event.target.closest('[data-monster-world-drop-all]');
+    if (monsterWorldDropAll) {
+      renderMonsterWorldDropGroup(Number(monsterWorldDropAll.dataset.monsterWorldDropAll), true);
+      return;
+    }
     const dialogButton = event.target.closest('[data-dialog]');
     if (dialogButton) openInfoDialog(dialogButton.dataset.dialog);
   });
@@ -1701,7 +1935,10 @@
     const details = event.target;
     if (!(details instanceof HTMLDetailsElement) || !details.open) return;
     if (details.matches('.lazy-monster-drops')) renderMonsterDropShell();
+    if (details.matches('.lazy-monster-world-drops')) renderMonsterWorldDropShell();
     if (details.matches('[data-drop-group]')) renderMonsterDropGroup(Number(details.dataset.dropGroup));
+    if (details.matches('[data-monster-world-drop-group]')) renderMonsterWorldDropGroup(Number(details.dataset.monsterWorldDropGroup));
+    if (details.matches('[data-world-source]')) renderWorldSourceMonsters(details);
   }, true);
 
   main.addEventListener('input', event => {
@@ -1854,6 +2091,8 @@
   });
 
   (async () => {
+    globalSearch.value = '';
+    closeSuggestions();
     try {
       await loadUserProfile();
       await openApplicationSession();

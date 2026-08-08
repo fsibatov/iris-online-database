@@ -101,6 +101,75 @@ func TestTwoSessionExpiryCloseOrders(t *testing.T) {
 	})
 }
 
+func TestPendingOpenClosePreventsLateSessionCreation(t *testing.T) {
+	s := newSessionManager(time.Millisecond, 5*time.Millisecond, time.Minute, 10*time.Millisecond)
+	id := "pending-open-session-0001"
+	s.Close(id, true)
+	if got := s.PreclosedCount(time.Now()); got != 1 {
+		t.Fatalf("preclosed sessions=%d want 1", got)
+	}
+	if got := s.Open(id); got != "" {
+		t.Fatalf("late open after page close created session %q", got)
+	}
+	if got := s.ActiveCount(time.Now()); got != 0 {
+		t.Fatalf("late open left %d active sessions", got)
+	}
+	if s.ShouldShutdown(time.Now().Add(time.Second)) {
+		t.Fatal("unknown pending-open close must not itself trigger shutdown")
+	}
+}
+
+func TestOrdinaryUnknownCloseDoesNotCreatePreclosedState(t *testing.T) {
+	s := newSessionManager(time.Millisecond, 5*time.Millisecond, time.Minute, time.Minute)
+	s.Close("random-unknown-session-002")
+	if got := s.PreclosedCount(time.Now()); got != 0 {
+		t.Fatalf("ordinary unknown close created %d preclosed entries", got)
+	}
+}
+
+func TestPreclosedSessionsBoundedAndExpire(t *testing.T) {
+	s := newSessionManager(time.Millisecond, 5*time.Millisecond, time.Minute, 5*time.Millisecond)
+	now := time.Now()
+	s.mu.Lock()
+	for i := 0; i < maxPreclosedSessionCount+100; i++ {
+		s.addPreclosedLocked(fmt.Sprintf("preclosed-session-%08d", i), now)
+	}
+	count := len(s.preclosedSessions)
+	s.mu.Unlock()
+	if count != maxPreclosedSessionCount {
+		t.Fatalf("preclosed sessions=%d want hard limit %d", count, maxPreclosedSessionCount)
+	}
+	if got := s.PreclosedCount(now.Add(20 * time.Millisecond)); got != 0 {
+		t.Fatalf("preclosed sessions after TTL=%d want 0", got)
+	}
+}
+
+func TestPendingCloseRaceEitherOrderLeavesNoOrphan(t *testing.T) {
+	t.Run("open then close", func(t *testing.T) {
+		s := newSessionManager(time.Millisecond, 5*time.Millisecond, time.Minute, time.Minute)
+		id := "race-open-close-000001"
+		if got := s.Open(id); got != id {
+			t.Fatalf("open=%q want %q", got, id)
+		}
+		s.Close(id, true)
+		if got := s.ActiveCount(time.Now()); got != 0 {
+			t.Fatalf("active sessions=%d want 0", got)
+		}
+	})
+
+	t.Run("close then open", func(t *testing.T) {
+		s := newSessionManager(time.Millisecond, 5*time.Millisecond, time.Minute, time.Minute)
+		id := "race-close-open-000001"
+		s.Close(id, true)
+		if got := s.Open(id); got != "" {
+			t.Fatalf("late open=%q want rejection", got)
+		}
+		if got := s.ActiveCount(time.Now()); got != 0 {
+			t.Fatalf("active sessions=%d want 0", got)
+		}
+	})
+}
+
 func TestExpiredSessionTombstonesBoundedAndExpire(t *testing.T) {
 	s := newSessionManager(time.Millisecond, 5*time.Millisecond, 5*time.Millisecond)
 	now := time.Now()
@@ -381,8 +450,12 @@ func TestSessionManagerConcurrentLifecycleRemainsBounded(t *testing.T) {
 				if i%3 == 0 {
 					s.Close(id)
 				}
+				if i%11 == 0 {
+					s.Close(fmt.Sprintf("pending-race-%02d-%04d", worker, i), true)
+				}
 				_ = s.ActiveCount(time.Now())
 				_ = s.ExpiredCount(time.Now())
+				_ = s.PreclosedCount(time.Now())
 				_ = s.ShouldShutdown(time.Now())
 			}
 		}()
@@ -407,6 +480,9 @@ func TestSessionManagerConcurrentLifecycleRemainsBounded(t *testing.T) {
 	}
 	if got := s.ExpiredCount(time.Now()); got > maxExpiredSessionCount {
 		t.Fatalf("expired-session tombstones exceeded cap: %d > %d", got, maxExpiredSessionCount)
+	}
+	if got := s.PreclosedCount(time.Now()); got > maxPreclosedSessionCount {
+		t.Fatalf("preclosed sessions exceeded cap: %d > %d", got, maxPreclosedSessionCount)
 	}
 }
 

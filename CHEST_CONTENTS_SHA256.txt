@@ -1,0 +1,1 @@
+2b77350006cfb7f992c1707b9d0c703ebb82206dac1810084aa105d0878fe98b  assets/chest_contents.json.gz

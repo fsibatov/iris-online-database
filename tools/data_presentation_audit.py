@@ -22,6 +22,7 @@ SET_EFFECTS = ROOT / "assets/set_effects.json.gz"
 ITEM_ABILITIES = ROOT / "assets/item_abilities.json.gz"
 ITEM_RECIPES = ROOT / "assets/item_recipes.json.gz"
 MONSTER_DETAILS = ROOT / "assets/monster_details.json.gz"
+CHEST_CONTENTS = ROOT / "assets/chest_contents.json.gz"
 MAIN_GO = ROOT / "main.go"
 APP_JS = ROOT / "web/app.js"
 
@@ -115,6 +116,7 @@ def audit() -> dict:
     abilities = load_gzip(ITEM_ABILITIES)
     recipes = load_gzip(ITEM_RECIPES)
     monster_details = load_gzip(MONSTER_DETAILS)
+    chest_contents = load_gzip(CHEST_CONTENTS)
     go_source = MAIN_GO.read_text(encoding="utf-8")
     js = APP_JS.read_text(encoding="utf-8")
 
@@ -214,6 +216,52 @@ def audit() -> dict:
     recipe_material_ids = [str(row["itemId"]) for materials in recipes.get("recipes", {}).values() for row in materials]
     missing_recipe_material_ids = sorted({value for value in recipe_material_ids if value not in base_items_by_id}, key=int)
 
+    chest_profile_counts = {}
+    chest_row_counts = {}
+    chest_output_ids_missing = set()
+    chest_source_ids_missing = set()
+    invalid_chest_profiles = []
+    chest_probability_unknown_profiles = []
+    for server_key, server_data in chest_contents.get("servers", {}).items():
+        profiles = server_data.get("profiles", {})
+        chest_profile_counts[server_key] = len(profiles)
+        chest_row_counts[server_key] = 0
+        for chest_id, profile in profiles.items():
+            if chest_id not in base_items_by_id:
+                chest_source_ids_missing.add(chest_id)
+            rows = profile.get("rows", [])
+            chest_row_counts[server_key] += len(rows)
+            draw_count = profile.get("drawCount", 0)
+            positions = [row.get("position") for row in rows]
+            structurally_valid = (
+                isinstance(draw_count, int) and 0 <= draw_count <= 40
+                and (not rows or draw_count > 0)
+                and len(positions) == len(set(positions))
+                and all(
+                    isinstance(row.get("itemId"), int) and row["itemId"] > 0
+                    and isinstance(row.get("quantity"), int) and row["quantity"] > 0
+                    and isinstance(row.get("enhanced"), int) and row["enhanced"] >= 0
+                    and isinstance(row.get("threshold"), int) and row["threshold"] > 0
+                    and isinstance(row.get("position"), int) and row["position"] > 0
+                    for row in rows
+                )
+            )
+            if not structurally_valid:
+                invalid_chest_profiles.append(f"{server_key}:{chest_id}")
+            elif rows:
+                chest_threshold_counts = collections.Counter(row["threshold"] for row in rows)
+                probability_known = (
+                    all(threshold <= 1_000_000 for threshold in chest_threshold_counts)
+                    and max(chest_threshold_counts, default=0) == 1_000_000
+                    and all(count >= draw_count for count in chest_threshold_counts.values())
+                )
+                if not probability_known:
+                    chest_probability_unknown_profiles.append(f"{server_key}:{chest_id}")
+            for row in rows:
+                output_id = str(row.get("itemId", ""))
+                if output_id and output_id not in base_items_by_id:
+                    chest_output_ids_missing.add(output_id)
+
     checks.update({
         "unknown_item_effect_types": unknown_item_effects,
         "unknown_set_effect_types": unknown_set_effects,
@@ -231,6 +279,14 @@ def audit() -> dict:
         "monster_supplement_not_merged": "mergeMonsterDetailSupplement()" not in go_source or "assets/monster_details.json.gz" not in go_source,
         "set_supplement_not_merged": "mergeSetSupplement()" not in go_source or "assets/set_effects.json.gz" not in go_source,
         "recipe_supplement_not_merged": "mergeRecipeSupplement()" not in go_source or "assets/item_recipes.json.gz" not in go_source,
+        "chest_supplement_not_merged": "mergeChestContentSupplement()" not in go_source or "assets/chest_contents.json.gz" not in go_source,
+        "chest_source_ids_missing_from_game_data": sorted(chest_source_ids_missing, key=int),
+        # Output IDs can legitimately be absent from the public item projection. The UI
+        # preserves the numeric ID and renders a neutral fallback instead of dropping it.
+        "chest_output_ids_missing_from_game_data": sorted(chest_output_ids_missing, key=int),
+        "invalid_chest_profiles": sorted(invalid_chest_profiles),
+        "chest_probability_unknown_profiles": sorted(chest_probability_unknown_profiles),
+        "chest_missing_item_fallback_absent": bool(chest_output_ids_missing) and "Неизвестный предмет (ID %d)" not in go_source,
         "frontend_has_set_slice_limit": bool(re.search(r"set\.(?:effects|items)\s*\.slice\(0,", js)),
         "frontend_uses_generic_properties_array": "const properties =" in js,
         "monster_id_in_suggestion_preview": bool(re.search(r"record\.category,\s*record\.typeName.*?ID \$\{record\.id\}", js, re.S)),
@@ -245,11 +301,11 @@ def audit() -> dict:
         "monster_supplement_missing_monster_fields", "monster_supplement_missing_patch_fields",
         "unknown_set_effect_types", "unknown_active_states", "unknown_card_slot_types",
         "ability_supplement_ids_missing_from_game_data", "monster_supplement_ids_missing_from_game_data",
-        "recipe_ids_missing_from_game_data",
+        "recipe_ids_missing_from_game_data", "chest_source_ids_missing_from_game_data", "invalid_chest_profiles",
         "unknown_make_skill_codes", "unknown_use_map_codes", "unknown_guild_use_codes",
     )
     fatal = [name for name in fatal_keys if checks[name]]
-    for name in ("ability_supplement_not_merged", "monster_supplement_not_merged", "set_supplement_not_merged", "recipe_supplement_not_merged", "recipe_missing_material_fallback_absent"):
+    for name in ("ability_supplement_not_merged", "monster_supplement_not_merged", "set_supplement_not_merged", "recipe_supplement_not_merged", "chest_supplement_not_merged", "recipe_missing_material_fallback_absent", "chest_missing_item_fallback_absent"):
         if checks[name]:
             fatal.append(name)
     if checks["frontend_has_set_slice_limit"] or checks["frontend_uses_generic_properties_array"] or checks["monster_id_in_suggestion_preview"] or checks["frontend_loses_bonus_known_flag"]:
@@ -261,6 +317,7 @@ def audit() -> dict:
         "itemAbilitiesSha256": hashlib.sha256(ITEM_ABILITIES.read_bytes()).hexdigest(),
         "itemRecipesSha256": hashlib.sha256(ITEM_RECIPES.read_bytes()).hexdigest(),
         "monsterDetailsSha256": hashlib.sha256(MONSTER_DETAILS.read_bytes()).hexdigest(),
+        "chestContentsSha256": hashlib.sha256(CHEST_CONTENTS.read_bytes()).hexdigest(),
         "items": len(game["items"]), "monsters": len(game["monsters"]), "setsInEmbedded": len(embedded_sets),
         "setsWithPublishedMembers": len(embedded_member_set_ids),
         "setsWithEffectDefinitions": len(sets["sets"]), "setEffectRows": len(set_rows),
@@ -283,6 +340,10 @@ def audit() -> dict:
         "monsterSupplementMonsters": len(monster_details.get("monsters", {})),
         "monsterSupplementFieldCounts": dict(sorted(monster_patch_field_counts.items())),
         "recipeRows": len(recipes.get("recipes", {})),
+        "chestProfilesByServer": dict(sorted(chest_profile_counts.items())),
+        "chestItemRowsByServer": dict(sorted(chest_row_counts.items())),
+        "chestOutputIDsMissingFromGameData": len(chest_output_ids_missing),
+        "chestProbabilityUnknownProfiles": len(chest_probability_unknown_profiles),
         "recipeMaterialLinks": len(recipe_material_ids),
         "maxRecipeMaterials": max((len(rows) for rows in recipes.get("recipes", {}).values()), default=0),
         "restoredAbilityDescriptions": ability_patch_field_counts.get("abilityDescription", 0),
@@ -310,6 +371,7 @@ def main() -> None:
         print(f"set rows={result['setEffectRows']} thresholds={result['setThresholds']} active={result['activeEffectRows']}")
         print(f"5-piece sets={result['setsWithFivePieceEffects']} active@5={result['fivePieceActiveEffects']}")
         print(f"recipes={result['recipeRows']} materials={result['recipeMaterialLinks']}")
+        print(f"chests={result['chestProfilesByServer']} chest rows={result['chestItemRowsByServer']} unknown outputs={result['chestOutputIDsMissingFromGameData']}")
         print(f"unknown item option enums={result['unknownItemEffectTypes']}")
         print(f"fatal={result['fatal']}")
     if result["fatal"]:

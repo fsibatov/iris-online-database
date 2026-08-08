@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="1.0"
+VERSION="1.0.1"
 EXPECTED_GO="go$(tr -d '[:space:]' < .go-version)"
 ACTUAL_GO="$(go version | awk '{print $3}')"
 DIAGNOSTIC=0

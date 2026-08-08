@@ -22,13 +22,15 @@ import (
 )
 
 const (
-	sessionHeartbeatTimeout = 90 * time.Second
-	sessionShutdownGrace    = 6 * time.Second
-	startupSessionTimeout   = 55 * time.Second
-	serverShutdownTimeout   = 8 * time.Second
-	maxSessionCount         = 128
-	maxExpiredSessionCount  = 256
-	expiredSessionTTL       = 6 * time.Hour
+	sessionHeartbeatTimeout  = 90 * time.Second
+	sessionShutdownGrace     = 6 * time.Second
+	startupSessionTimeout    = 55 * time.Second
+	serverShutdownTimeout    = 8 * time.Second
+	maxSessionCount          = 128
+	maxExpiredSessionCount   = 256
+	expiredSessionTTL        = 6 * time.Hour
+	maxPreclosedSessionCount = 256
+	preclosedSessionTTL      = 30 * time.Second
 )
 
 type application struct {
@@ -60,23 +62,26 @@ const (
 )
 
 type sessionManager struct {
-	mu               sync.Mutex
-	sessions         map[string]time.Time
-	expiredSessions  map[string]time.Time
-	everOpened       bool
-	lastTransition   time.Time
-	emptyReason      sessionEmptyReason
-	grace            time.Duration
-	heartbeatTimeout time.Duration
-	expiredTTL       time.Duration
-	firstOpened      chan struct{}
-	firstOpenOnce    sync.Once
+	mu                sync.Mutex
+	sessions          map[string]time.Time
+	expiredSessions   map[string]time.Time
+	preclosedSessions map[string]time.Time
+	everOpened        bool
+	lastTransition    time.Time
+	emptyReason       sessionEmptyReason
+	grace             time.Duration
+	heartbeatTimeout  time.Duration
+	expiredTTL        time.Duration
+	preclosedTTL      time.Duration
+	firstOpened       chan struct{}
+	firstOpenOnce     sync.Once
 }
 
 func newSessionManager(graceValues ...time.Duration) *sessionManager {
 	grace := sessionShutdownGrace
 	heartbeatTimeout := sessionHeartbeatTimeout
 	expiredTTL := expiredSessionTTL
+	preclosedTTL := preclosedSessionTTL
 	if len(graceValues) > 0 && graceValues[0] > 0 {
 		grace = graceValues[0]
 	}
@@ -86,14 +91,19 @@ func newSessionManager(graceValues ...time.Duration) *sessionManager {
 	if len(graceValues) > 2 && graceValues[2] > 0 {
 		expiredTTL = graceValues[2]
 	}
+	if len(graceValues) > 3 && graceValues[3] > 0 {
+		preclosedTTL = graceValues[3]
+	}
 	return &sessionManager{
-		sessions:         make(map[string]time.Time),
-		expiredSessions:  make(map[string]time.Time),
-		lastTransition:   time.Now(),
-		grace:            grace,
-		heartbeatTimeout: heartbeatTimeout,
-		expiredTTL:       expiredTTL,
-		firstOpened:      make(chan struct{}),
+		sessions:          make(map[string]time.Time),
+		expiredSessions:   make(map[string]time.Time),
+		preclosedSessions: make(map[string]time.Time),
+		lastTransition:    time.Now(),
+		grace:             grace,
+		heartbeatTimeout:  heartbeatTimeout,
+		expiredTTL:        expiredTTL,
+		preclosedTTL:      preclosedTTL,
+		firstOpened:       make(chan struct{}),
 	}
 }
 
@@ -115,7 +125,30 @@ func (s *sessionManager) addExpiredLocked(id string, now time.Time) {
 	s.expiredSessions[id] = now.Add(s.expiredTTL)
 }
 
+func (s *sessionManager) addPreclosedLocked(id string, now time.Time) {
+	if !validSessionID(id) {
+		return
+	}
+	if len(s.preclosedSessions) >= maxPreclosedSessionCount {
+		oldestID := ""
+		oldest := now
+		for sessionID, expiresAt := range s.preclosedSessions {
+			if oldestID == "" || expiresAt.Before(oldest) {
+				oldestID = sessionID
+				oldest = expiresAt
+			}
+		}
+		delete(s.preclosedSessions, oldestID)
+	}
+	s.preclosedSessions[id] = now.Add(s.preclosedTTL)
+}
+
 func (s *sessionManager) pruneExpiredLocked(now time.Time) {
+	for sessionID, expiresAt := range s.preclosedSessions {
+		if !now.Before(expiresAt) {
+			delete(s.preclosedSessions, sessionID)
+		}
+	}
 	hadActive := len(s.sessions) > 0
 	hadTracked := hadActive || len(s.expiredSessions) > 0
 	hadExpiredTombstones := len(s.expiredSessions) > 0
@@ -145,12 +178,22 @@ func (s *sessionManager) pruneExpiredLocked(now time.Time) {
 }
 
 func (s *sessionManager) Open(id string) string {
-	if !validSessionID(id) {
-		id = randomSessionID()
-	}
 	now := time.Now()
 	s.mu.Lock()
 	s.pruneExpiredLocked(now)
+	if validSessionID(id) {
+		if _, preclosed := s.preclosedSessions[id]; preclosed {
+			s.mu.Unlock()
+			return ""
+		}
+	} else {
+		for {
+			id = randomSessionID()
+			if _, preclosed := s.preclosedSessions[id]; !preclosed {
+				break
+			}
+		}
+	}
 	delete(s.expiredSessions, id)
 	if _, exists := s.sessions[id]; !exists && len(s.sessions) >= maxSessionCount {
 		oldestID := ""
@@ -189,7 +232,7 @@ func (s *sessionManager) Heartbeat(id string) bool {
 	return true
 }
 
-func (s *sessionManager) Close(id string) {
+func (s *sessionManager) Close(id string, pendingOpen ...bool) {
 	if !validSessionID(id) {
 		return
 	}
@@ -203,6 +246,12 @@ func (s *sessionManager) Close(id string) {
 	}
 	if expired {
 		delete(s.expiredSessions, id)
+	}
+	if !active && !expired && len(pendingOpen) > 0 && pendingOpen[0] {
+		// pagehide can race an in-flight /session/open. Remember only an
+		// explicitly marked pending-open close, for a short bounded interval,
+		// so the late open cannot orphan the backend after the tab is gone.
+		s.addPreclosedLocked(id, now)
 	}
 	// Only a session ID that was actually opened by this process may count as
 	// an explicit close. Random/unknown IDs must never be able to stop the app.
@@ -249,6 +298,13 @@ func (s *sessionManager) ExpiredCount(now time.Time) int {
 	defer s.mu.Unlock()
 	s.pruneExpiredLocked(now)
 	return len(s.expiredSessions)
+}
+
+func (s *sessionManager) PreclosedCount(now time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneExpiredLocked(now)
+	return len(s.preclosedSessions)
 }
 
 func validSessionID(id string) bool {
@@ -473,6 +529,10 @@ func (a *application) handleSessionOpen(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := a.sessions.Open(request.ID)
+	if id == "" {
+		http.Error(w, "Сессия уже закрыта.\n", http.StatusConflict)
+		return
+	}
 	writeJSON(w, map[string]any{"id": id, "heartbeatSeconds": 5})
 }
 
@@ -500,12 +560,13 @@ func (a *application) handleSessionClose(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var request struct {
-		ID string `json:"id"`
+		ID          string `json:"id"`
+		PendingOpen bool   `json:"pendingOpen,omitempty"`
 	}
 	if !decodeJSONRequest(w, r, &request, 4096) {
 		return
 	}
-	a.sessions.Close(request.ID)
+	a.sessions.Close(request.ID, request.PendingOpen)
 	w.WriteHeader(http.StatusNoContent)
 }
 

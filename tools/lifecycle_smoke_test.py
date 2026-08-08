@@ -155,6 +155,39 @@ def main() -> None:
 
             assert app.wait_exit(4) == 0, app.stderr()
 
+        # pagehide may race an in-flight session/open request. A close marked
+        # as pending-open must prevent that late open from creating an orphan,
+        # while an ordinary unknown close must remain harmless.
+        with RunningApp(
+            binary,
+            ["-startup-timeout=1s", "-idle-grace=100ms"],
+            env=browser_env,
+        ) as app:
+            app.wait_ready()
+
+            pending_id = "pending-open-race-session-0001"
+            status, payload = json_request(
+                app.base_url,
+                "/api/session/close",
+                method="POST",
+                payload={"id": pending_id, "pendingOpen": True},
+            )
+            assert status == 204, payload
+            status, _payload = json_request(
+                app.base_url,
+                "/api/session/open",
+                method="POST",
+                payload={"id": pending_id},
+            )
+            assert status == 409, "late open after pending close was not rejected"
+
+            ordinary_id = "ordinary-unknown-close-session-01"
+            close_session(app, ordinary_id)
+            reopened = open_session(app, ordinary_id)
+            assert reopened == ordinary_id, "ordinary unknown close incorrectly blocked a later open"
+            close_session(app, reopened)
+            assert app.wait_exit(4) == 0, app.stderr()
+
         # A recently expired real browser session remains a bounded tombstone.
         # Its later explicit close must still be authoritative, while a random
         # unknown ID cannot stop the process.

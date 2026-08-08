@@ -98,7 +98,7 @@ def resource_payloads(path: pathlib.Path, wanted_type: int) -> list[bytes]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", required=True, type=pathlib.Path)
-    parser.add_argument("--version", default="1.0")
+    parser.add_argument("--version", default="1.0.1")
     parser.add_argument("--go-version", required=True)
     parser.add_argument("--diagnostic", action="store_true")
     args = parser.parse_args()

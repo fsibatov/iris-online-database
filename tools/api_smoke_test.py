@@ -23,7 +23,7 @@ def main() -> None:
         app.wait_ready()
         health = assert_status(app.base_url, "/api/health")
         assert health["application"] == "iris-online-database"
-        assert health["version"] == "1.0"
+        assert health["version"] == "1.0.1"
 
         search = assert_status(app.base_url, "/api/search?q=%D0%B3%D0%BD%D0%B5%D0%B2%20%D0%BF%D1%80%D0%B5%D0%B4%D0%BA%D0%BE%D0%B2")
         assert search["items"] or search["monsters"], "word-form search returned nothing"
@@ -64,6 +64,53 @@ def main() -> None:
         assert favorites["total"] == 620
         assert favorites["pages"] == 13
         assert len(favorites["rows"]) == 20
+
+        chest_item = assert_status(app.base_url, "/api/items/101402?server=kiss")
+        chest_source = next((row for row in chest_item["drops"] if row.get("source") == "Сундук" and row.get("containerId") == 808094), None)
+        assert chest_source is not None, "labyrinth cloth chest source is missing"
+        assert chest_source.get("chanceKnown") is True, chest_source
+        assert abs(chest_source["itemBaseChance"] - 15.204) < 1e-9, chest_source
+
+        chest = assert_status(app.base_url, "/api/items/808094?server=kiss")
+        silk_hat = next((row for row in (chest.get("chest") or {}).get("items", []) if row.get("itemId") == 101402), None)
+        assert silk_hat is not None and silk_hat.get("chanceKnown") is True and abs(silk_hat["chance"] - 15.204) < 1e-9, silk_hat
+
+        quest_box = assert_status(app.base_url, "/api/items/873063?server=kiss")
+        assert (quest_box.get("chest") or {}).get("items"), "non-category item-change box was filtered out"
+
+        anomalous_box = assert_status(app.base_url, "/api/items/873079?server=kiss")
+        anomalous_items = (anomalous_box.get("chest") or {}).get("items", [])
+        assert anomalous_items, "anomalous box contents are missing"
+        assert all(row.get("chanceKnown") is False and "chance" not in row for row in anomalous_items), anomalous_items
+
+        world_item = assert_status(app.base_url, "/api/items/1055001?server=kiss")
+        world_source = next((row for row in world_item["drops"] if row.get("source") == "Мировое выпадение"), None)
+        assert world_source is not None, "world source fixture is missing"
+        world_query = (
+            f"/api/world-source-monsters?server=kiss&itemId=1055001"
+            f"&sourceLine={world_source['sourceLine']}&groupId={world_source['groupId']}"
+            f"&choicePosition={world_source['choicePosition']}&itemPosition={world_source['itemPosition']}"
+        )
+        world_monsters = assert_status(app.base_url, world_query)
+        assert world_monsters["contextMatchKnown"] is False
+        assert world_monsters["monsters"], "world source did not expand to level/type candidates"
+
+        hostile = assert_status(app.base_url, "/api/monsters/85?server=kiss")
+        assert hostile["monster"]["name"] == "Враждебный дух"
+        assert hostile.get("worldRuleCount", 0) > 0, "hostile spirit exposes no world-drop rules"
+        hostile_world = assert_status(app.base_url, "/api/monster-world-drops?server=kiss&monsterId=85")
+        assert hostile_world["contextMatchKnown"] is False
+        soul_beads = []
+        golden_chest = []
+        for slot in hostile_world["slots"]:
+            for choice in slot.get("choices", []):
+                for row in choice.get("items", []):
+                    if row.get("itemId") == 835221:
+                        soul_beads.append(row)
+                    if row.get("itemId") == 808100:
+                        golden_chest.append(row)
+        assert sorted(round(row["baseAttemptChance"], 10) for row in soul_beads) == [0.05, 0.1, 0.85], soul_beads
+        assert len(golden_chest) == 1 and abs(golden_chest[0]["baseAttemptChance"] - 0.36) < 1e-12, golden_chest
 
         kiss = assert_status(app.base_url, "/api/monsters/10042?server=kiss")
         original = assert_status(app.base_url, "/api/monsters/10042?server=original")

@@ -28,11 +28,11 @@ const applicationID = "iris-online-database"
 // appVersion is a variable so release and diagnostic builds can pin the visible version
 // with -ldflags while development builds keep a safe diagnostic default.
 var (
-	appVersion    = "1.0"
-	releaseMarker = "IrisOnlineDiagnostic/1.0/development"
+	appVersion    = "1.0.1"
+	releaseMarker = "IrisOnlineDiagnostic/1.0.1/development"
 )
 
-//go:embed web/* assets/game_data.json.gz assets/set_effects.json.gz assets/item_abilities.json.gz assets/item_recipes.json.gz assets/monster_details.json.gz
+//go:embed web/* assets/game_data.json.gz assets/set_effects.json.gz assets/item_abilities.json.gz assets/item_recipes.json.gz assets/monster_details.json.gz assets/chest_contents.json.gz
 var embedded embed.FS
 
 func main() {
@@ -368,6 +368,8 @@ func (a *application) routes() http.Handler {
 	mux.HandleFunc("/api/search", handleSearch)
 	mux.HandleFunc("/api/items", handleItems)
 	mux.HandleFunc("/api/items/", handleItem)
+	mux.HandleFunc("/api/world-source-monsters", handleWorldSourceMonsters)
+	mux.HandleFunc("/api/monster-world-drops", handleMonsterWorldDrops)
 	mux.HandleFunc("/api/monsters", handleMonsters)
 	mux.HandleFunc("/api/monsters/", handleMonster)
 
@@ -821,6 +823,7 @@ func isCacheableResponseRequest(r *http.Request) bool {
 		path == "/api/search" ||
 		path == "/api/items" ||
 		strings.HasPrefix(path, "/api/items/") ||
+		path == "/api/monster-world-drops" ||
 		path == "/api/monsters" ||
 		strings.HasPrefix(path, "/api/monsters/")
 }

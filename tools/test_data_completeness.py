@@ -88,6 +88,20 @@ class DataCompletenessTests(unittest.TestCase):
         self.assertIn("item.enhancedIndex", script)
         self.assertIn("item.printableFlag", script)
 
+    def test_chest_projection_is_complete_and_fail_closed(self):
+        self.assertEqual(self.result["chestProfilesByServer"], {"kiss": 399, "original": 399})
+        self.assertEqual(self.result["chestItemRowsByServer"], {"kiss": 4944, "original": 4944})
+        self.assertEqual(self.result["chestContentsSha256"], "2b77350006cfb7f992c1707b9d0c703ebb82206dac1810084aa105d0878fe98b")
+        checks = self.result["checks"]
+        self.assertEqual(checks["chest_source_ids_missing_from_game_data"], [])
+        self.assertEqual(checks["invalid_chest_profiles"], [])
+        self.assertEqual(checks["chest_probability_unknown_profiles"], ["kiss:873079", "original:873079"])
+        self.assertFalse(checks["chest_supplement_not_merged"])
+        self.assertFalse(checks["chest_missing_item_fallback_absent"])
+        # These IDs are intentionally retained even though the public item table
+        # does not contain names for them; the UI renders a neutral ID fallback.
+        self.assertEqual(self.result["chestOutputIDsMissingFromGameData"], 24)
+
     def test_item_rank_is_not_mislabeled_as_level(self):
         script = (ROOT / "web/app.js").read_text(encoding="utf-8")
         self.assertIn("`Ранг ${item.level}`", script)

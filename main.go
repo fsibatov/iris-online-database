@@ -285,6 +285,58 @@ type itemRecipeSupplement struct {
 	Recipes       map[string][]itemRecipeMaterialSource `json:"recipes"`
 }
 
+type chestContentSourceRow struct {
+	ItemID    int `json:"itemId"`
+	Quantity  int `json:"quantity"`
+	Enhanced  int `json:"enhanced"`
+	Threshold int `json:"threshold"`
+	Position  int `json:"position"`
+}
+
+type chestProfileSource struct {
+	DrawCount int                     `json:"drawCount"`
+	Rows      []chestContentSourceRow `json:"rows"`
+}
+
+type chestServerSupplement struct {
+	Profiles map[string]chestProfileSource `json:"profiles"`
+}
+
+type chestContentSupplement struct {
+	SchemaVersion int                              `json:"schemaVersion"`
+	Servers       map[string]chestServerSupplement `json:"servers"`
+}
+
+type ChestVariant struct {
+	Quantity    int     `json:"quantity"`
+	Enhanced    int     `json:"enhanced,omitempty"`
+	Chance      float64 `json:"chance,omitempty"`
+	ChanceKnown bool    `json:"chanceKnown"`
+}
+
+type ChestContentItem struct {
+	ItemID      int            `json:"itemId"`
+	Item        string         `json:"item"`
+	ItemKnown   bool           `json:"itemKnown"`
+	Chance      float64        `json:"chance,omitempty"`
+	ChanceKnown bool           `json:"chanceKnown"`
+	Variants    []ChestVariant `json:"variants,omitempty"`
+}
+
+type ChestContents struct {
+	ChestID   int                `json:"chestId"`
+	Chest     string             `json:"chest"`
+	DrawCount int                `json:"drawCount"`
+	Items     []ChestContentItem `json:"items"`
+}
+
+type WorldSourceMonster struct {
+	MonsterID int     `json:"monsterId"`
+	Monster   string  `json:"monster"`
+	Level     int     `json:"level,omitempty"`
+	Chance    float64 `json:"chance"`
+}
+
 type Monster struct {
 	ID                 int     `json:"id"`
 	Name               string  `json:"name"`
@@ -434,41 +486,49 @@ type DropGroup struct {
 }
 
 type ItemDrop struct {
-	MonsterID         int     `json:"monsterId"`
-	Monster           string  `json:"monster"`
-	MonsterLevel      int     `json:"monsterLevel"`
-	QuestID           int     `json:"questId"`
-	Quest             string  `json:"quest"`
-	Source            string  `json:"source"`
-	Context           string  `json:"context"`
-	GroupTitle        string  `json:"groupTitle"`
-	GroupID           int     `json:"groupId"`
-	GroupChance       float64 `json:"groupChance"`
-	GroupChanceKnown  bool    `json:"groupChanceKnown"`
-	GroupBaseChance   float64 `json:"groupBaseChance,omitempty"`
-	ItemChance        float64 `json:"itemChance"`
-	ItemBaseChance    float64 `json:"itemBaseChance,omitempty"`
-	BaseAttemptChance float64 `json:"baseAttemptChance,omitempty"`
-	Quantity          int     `json:"quantity"`
-	SlotNumber        int     `json:"slotNumber"`
-	SlotTitle         string  `json:"slotTitle"`
-	ChoicePosition    int     `json:"choicePosition"`
-	ItemPosition      int     `json:"itemPosition"`
-	SourceLine        int     `json:"sourceLine"`
-	ChanceOverflow    bool    `json:"chanceOverflow"`
-	ItemOverflow      bool    `json:"itemOverflow"`
+	ItemID            int            `json:"itemId"`
+	MonsterID         int            `json:"monsterId"`
+	Monster           string         `json:"monster"`
+	MonsterLevel      int            `json:"monsterLevel"`
+	ContainerID       int            `json:"containerId,omitempty"`
+	Container         string         `json:"container,omitempty"`
+	Variants          []ChestVariant `json:"variants,omitempty"`
+	ChanceKnown       bool           `json:"chanceKnown,omitempty"`
+	QuestID           int            `json:"questId"`
+	Quest             string         `json:"quest"`
+	Source            string         `json:"source"`
+	Context           string         `json:"context"`
+	GroupTitle        string         `json:"groupTitle"`
+	GroupID           int            `json:"groupId"`
+	GroupChance       float64        `json:"groupChance"`
+	GroupChanceKnown  bool           `json:"groupChanceKnown"`
+	GroupBaseChance   float64        `json:"groupBaseChance,omitempty"`
+	ItemChance        float64        `json:"itemChance"`
+	ItemBaseChance    float64        `json:"itemBaseChance,omitempty"`
+	BaseAttemptChance float64        `json:"baseAttemptChance,omitempty"`
+	Quantity          int            `json:"quantity"`
+	SlotNumber        int            `json:"slotNumber"`
+	SlotTitle         string         `json:"slotTitle"`
+	ChoicePosition    int            `json:"choicePosition"`
+	ItemPosition      int            `json:"itemPosition"`
+	SourceLine        int            `json:"sourceLine"`
+	ChanceOverflow    bool           `json:"chanceOverflow"`
+	ItemOverflow      bool           `json:"itemOverflow"`
 }
 
 type runtimeData struct {
-	server      ServerData
-	resolved    map[int][]DropItem
-	questByItem map[int][]ItemDrop
+	server        ServerData
+	resolved      map[int][]DropItem
+	questByItem   map[int][]ItemDrop
+	chestProfiles map[int]chestProfileSource
+	chestByItem   map[int][]ItemDrop
 }
 
 type runtimeSlot struct {
-	once   sync.Once
-	server ServerData
-	value  *runtimeData
+	once          sync.Once
+	server        ServerData
+	chestProfiles map[int]chestProfileSource
+	value         *runtimeData
 }
 
 type searchDocument struct {
@@ -486,6 +546,7 @@ type appStore struct {
 	monsterTypeNames map[int]string
 	categoryItems    map[string]int
 	itemRecipes      map[int][]itemRecipeMaterialSource
+	chestProfiles    map[string]map[int]chestProfileSource
 	runtimes         map[string]*runtimeSlot
 }
 
@@ -527,6 +588,10 @@ func ensureLoaded() error {
 			loadErr = err
 			return
 		}
+		if err := mergeChestContentSupplement(); err != nil {
+			loadErr = err
+			return
+		}
 		store.itemsByID = make(map[int]*Item, len(store.data.Items))
 		store.monstersByID = make(map[int]*Monster, len(store.data.Monsters))
 		store.itemNames = make(map[int]string, len(store.data.Items))
@@ -551,7 +616,7 @@ func ensureLoaded() error {
 		}
 		store.runtimes = make(map[string]*runtimeSlot, len(store.data.Servers))
 		for key, server := range store.data.Servers {
-			store.runtimes[key] = &runtimeSlot{server: server}
+			store.runtimes[key] = &runtimeSlot{server: server, chestProfiles: store.chestProfiles[key]}
 		}
 	})
 	return loadErr
@@ -777,6 +842,66 @@ func mergeRecipeSupplement() error {
 	return nil
 }
 
+func mergeChestContentSupplement() error {
+	raw, err := embedded.ReadFile("assets/chest_contents.json.gz")
+	if err != nil {
+		return fmt.Errorf("не удалось прочитать содержимое сундуков: %w", err)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("не удалось открыть содержимое сундуков: %w", err)
+	}
+	defer gz.Close()
+	var supplement chestContentSupplement
+	if err := json.NewDecoder(gz).Decode(&supplement); err != nil {
+		return fmt.Errorf("не удалось разобрать содержимое сундуков: %w", err)
+	}
+	if supplement.SchemaVersion != 1 {
+		return fmt.Errorf("неподдерживаемая версия содержимого сундуков: %d", supplement.SchemaVersion)
+	}
+	store.chestProfiles = make(map[string]map[int]chestProfileSource, len(supplement.Servers))
+	for serverKey, server := range supplement.Servers {
+		profiles := make(map[int]chestProfileSource, len(server.Profiles))
+		for key, profile := range server.Profiles {
+			chestID, err := strconv.Atoi(key)
+			if err != nil || chestID <= 0 {
+				return fmt.Errorf("некорректный ID сундука: %q", key)
+			}
+			if store.itemsByID != nil && store.itemsByID[chestID] == nil {
+				return fmt.Errorf("сундук %d отсутствует в основной базе", chestID)
+			}
+			if profile.DrawCount < 0 || profile.DrawCount > 40 {
+				return fmt.Errorf("некорректное количество выборов сундука %d: %d", chestID, profile.DrawCount)
+			}
+			rows := append([]chestContentSourceRow(nil), profile.Rows...)
+			positions := make(map[int]bool, len(rows))
+			for i, row := range rows {
+				if row.ItemID <= 0 || row.Quantity <= 0 || row.Enhanced < 0 || row.Threshold <= 0 || row.Position <= 0 {
+					return fmt.Errorf("некорректная строка содержимого сундука %d, позиция %d", chestID, i+1)
+				}
+				if positions[row.Position] {
+					return fmt.Errorf("повторяющаяся позиция %d в содержимом сундука %d", row.Position, chestID)
+				}
+				positions[row.Position] = true
+			}
+			if len(rows) > 0 && profile.DrawCount <= 0 {
+				return fmt.Errorf("сундук %d содержит предметы, но количество выборов равно %d", chestID, profile.DrawCount)
+			}
+			profiles[chestID] = chestProfileSource{DrawCount: profile.DrawCount, Rows: rows}
+		}
+		store.chestProfiles[normalizeServerDataKey(serverKey)] = profiles
+	}
+	return nil
+}
+
+func normalizeServerDataKey(key string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "or" {
+		return "original"
+	}
+	return key
+}
+
 func itemRecipeMaterials(itemID int) []ItemRecipeMaterial {
 	source := store.itemRecipes[itemID]
 	if len(source) == 0 {
@@ -793,11 +918,191 @@ func itemRecipeMaterials(itemID int) []ItemRecipeMaterial {
 	return result
 }
 
-func buildRuntime(server ServerData) *runtimeData {
+func combination(n, k int) float64 {
+	if k < 0 || k > n {
+		return 0
+	}
+	if k == 0 || k == n {
+		return 1
+	}
+	if k > n-k {
+		k = n - k
+	}
+	result := 1.0
+	for i := 1; i <= k; i++ {
+		result *= float64(n-k+i) / float64(i)
+	}
+	return result
+}
+
+type chestTier struct {
+	Threshold int
+	Chance    float64
+	Rows      []chestContentSourceRow
+}
+
+func chestProbabilityKnown(profile chestProfileSource) bool {
+	if len(profile.Rows) == 0 || profile.DrawCount <= 0 {
+		return false
+	}
+	tierSizes := make(map[int]int)
+	maxThreshold := 0
+	for _, row := range profile.Rows {
+		if row.Threshold <= 0 || row.Threshold > 1_000_000 {
+			return false
+		}
+		tierSizes[row.Threshold]++
+		maxThreshold = max(maxThreshold, row.Threshold)
+	}
+	if maxThreshold != 1_000_000 {
+		return false
+	}
+	for _, count := range tierSizes {
+		if count < profile.DrawCount {
+			return false
+		}
+	}
+	return true
+}
+
+func chestProfileTiers(profile chestProfileSource) []chestTier {
+	byThreshold := make(map[int][]chestContentSourceRow)
+	thresholds := make([]int, 0, len(profile.Rows))
+	seen := make(map[int]bool)
+	for _, row := range profile.Rows {
+		byThreshold[row.Threshold] = append(byThreshold[row.Threshold], row)
+		if !seen[row.Threshold] {
+			seen[row.Threshold] = true
+			thresholds = append(thresholds, row.Threshold)
+		}
+	}
+	sort.Ints(thresholds)
+	result := make([]chestTier, 0, len(thresholds))
+	previous := 0
+	for _, threshold := range thresholds {
+		chance := float64(threshold-previous) / 10_000.0
+		if chance > 0 {
+			result = append(result, chestTier{Threshold: threshold, Chance: chance, Rows: byThreshold[threshold]})
+		}
+		previous = threshold
+	}
+	return result
+}
+
+func chestTierItemChance(tier chestTier, drawCount, itemID int) float64 {
+	n := len(tier.Rows)
+	if n == 0 || drawCount <= 0 {
+		return 0
+	}
+	k := min(drawCount, n)
+	m := 0
+	for _, row := range tier.Rows {
+		if row.ItemID == itemID {
+			m++
+		}
+	}
+	if m == 0 {
+		return 0
+	}
+	conditional := 1.0
+	if n-m >= k {
+		conditional -= combination(n-m, k) / combination(n, k)
+	}
+	return tier.Chance * conditional
+}
+
+func chestRowChance(tier chestTier, drawCount int) float64 {
+	if len(tier.Rows) == 0 || drawCount <= 0 {
+		return 0
+	}
+	return tier.Chance * float64(min(drawCount, len(tier.Rows))) / float64(len(tier.Rows))
+}
+
+func chestContentsForProfile(chestID int, profile chestProfileSource) *ChestContents {
+	if len(profile.Rows) == 0 || profile.DrawCount <= 0 {
+		return nil
+	}
+	name := store.itemNames[chestID]
+	if strings.TrimSpace(name) == "" {
+		name = fmt.Sprintf("Сундук ID %d", chestID)
+	}
+	chanceKnown := chestProbabilityKnown(profile)
+	byItem := make(map[int]*ChestContentItem)
+	entryFor := func(itemID int) *ChestContentItem {
+		entry := byItem[itemID]
+		if entry != nil {
+			return entry
+		}
+		itemName := store.itemNames[itemID]
+		itemKnown := strings.TrimSpace(itemName) != ""
+		if !itemKnown {
+			itemName = fmt.Sprintf("Неизвестный предмет (ID %d)", itemID)
+		}
+		entry = &ChestContentItem{ItemID: itemID, Item: itemName, ItemKnown: itemKnown, ChanceKnown: chanceKnown}
+		byItem[itemID] = entry
+		return entry
+	}
+
+	if chanceKnown {
+		for _, tier := range chestProfileTiers(profile) {
+			rowChance := chestRowChance(tier, profile.DrawCount)
+			seenInTier := make(map[int]bool)
+			for _, row := range tier.Rows {
+				entry := entryFor(row.ItemID)
+				entry.Variants = append(entry.Variants, ChestVariant{Quantity: max(1, row.Quantity), Enhanced: max(0, row.Enhanced), Chance: rowChance, ChanceKnown: true})
+				if !seenInTier[row.ItemID] {
+					entry.Chance += chestTierItemChance(tier, profile.DrawCount, row.ItemID)
+					seenInTier[row.ItemID] = true
+				}
+			}
+		}
+	} else {
+		for _, row := range profile.Rows {
+			entry := entryFor(row.ItemID)
+			entry.Variants = append(entry.Variants, ChestVariant{Quantity: max(1, row.Quantity), Enhanced: max(0, row.Enhanced), ChanceKnown: false})
+		}
+	}
+
+	items := make([]ChestContentItem, 0, len(byItem))
+	for _, item := range byItem {
+		sort.SliceStable(item.Variants, func(i, j int) bool {
+			if item.Variants[i].ChanceKnown != item.Variants[j].ChanceKnown {
+				return item.Variants[i].ChanceKnown
+			}
+			if item.Variants[i].ChanceKnown && math.Abs(item.Variants[i].Chance-item.Variants[j].Chance) > 0.0000001 {
+				return item.Variants[i].Chance > item.Variants[j].Chance
+			}
+			if item.Variants[i].Quantity != item.Variants[j].Quantity {
+				return item.Variants[i].Quantity > item.Variants[j].Quantity
+			}
+			return item.Variants[i].Enhanced > item.Variants[j].Enhanced
+		})
+		items = append(items, *item)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].ChanceKnown != items[j].ChanceKnown {
+			return items[i].ChanceKnown
+		}
+		if items[i].ChanceKnown && math.Abs(items[i].Chance-items[j].Chance) > 0.0000001 {
+			return items[i].Chance > items[j].Chance
+		}
+		left := strings.ToLower(strings.TrimSpace(items[i].Item))
+		right := strings.ToLower(strings.TrimSpace(items[j].Item))
+		if left != right {
+			return left < right
+		}
+		return items[i].ItemID < items[j].ItemID
+	})
+	return &ChestContents{ChestID: chestID, Chest: name, DrawCount: profile.DrawCount, Items: items}
+}
+
+func buildRuntime(server ServerData, chestProfiles map[int]chestProfileSource) *runtimeData {
 	rt := &runtimeData{
-		server:      server,
-		resolved:    make(map[int][]DropItem, len(server.DropLists)),
-		questByItem: make(map[int][]ItemDrop),
+		server:        server,
+		resolved:      make(map[int][]DropItem, len(server.DropLists)),
+		questByItem:   make(map[int][]ItemDrop),
+		chestProfiles: chestProfiles,
+		chestByItem:   make(map[int][]ItemDrop),
 	}
 
 	for key, entries := range server.DropLists {
@@ -829,6 +1134,7 @@ func buildRuntime(server ServerData) *runtimeData {
 			monsterLevel = monster.Level
 		}
 		rt.questByItem[drop.ItemID] = append(rt.questByItem[drop.ItemID], ItemDrop{
+			ItemID:           drop.ItemID,
 			MonsterID:        drop.MonsterID,
 			Monster:          drop.Monster,
 			MonsterLevel:     monsterLevel,
@@ -845,6 +1151,32 @@ func buildRuntime(server ServerData) *runtimeData {
 			ItemPosition:     len(rt.questByItem[drop.ItemID]) + 1,
 			SlotTitle:        "Условие задания",
 		})
+	}
+
+	for chestID, profile := range chestProfiles {
+		contents := chestContentsForProfile(chestID, profile)
+		if contents == nil {
+			continue
+		}
+		for index, content := range contents.Items {
+			quantity := 0
+			if len(content.Variants) == 1 {
+				quantity = content.Variants[0].Quantity
+			}
+			rt.chestByItem[content.ItemID] = append(rt.chestByItem[content.ItemID], ItemDrop{
+				ItemID:         content.ItemID,
+				ContainerID:    chestID,
+				Container:      contents.Chest,
+				Source:         "Сундук",
+				Context:        "Открытие сундука",
+				ItemChance:     content.Chance,
+				ItemBaseChance: content.Chance,
+				ChanceKnown:    content.ChanceKnown,
+				Quantity:       quantity,
+				ItemPosition:   index + 1,
+				Variants:       append([]ChestVariant(nil), content.Variants...),
+			})
+		}
 	}
 	return rt
 }
@@ -889,6 +1221,74 @@ func worldRuleSourceLabel(rule WorldRule) string {
 	default:
 		return "Монстр, " + worldMonsterTypeLabel(rule.MonsterType)
 	}
+}
+
+func worldRuleMatchesMonster(rule WorldRule, monster *Monster) bool {
+	if monster == nil || monster.Level < rule.MinLevel || monster.Level > rule.MaxLevel {
+		return false
+	}
+	return rule.MonsterType == 0 || rule.MonsterType == monster.Type
+}
+
+func monsterWorldRuleCount(monster *Monster, rt *runtimeData) int {
+	if monster == nil || rt == nil {
+		return 0
+	}
+	count := 0
+	for _, rule := range rt.server.WorldRules {
+		if worldRuleMatchesMonster(rule, monster) {
+			count++
+		}
+	}
+	return count
+}
+
+func monsterWorldDropView(monster *Monster, rt *runtimeData) []DropSlot {
+	if monster == nil || rt == nil {
+		return []DropSlot{}
+	}
+	slots := make([]DropSlot, 0, monsterWorldRuleCount(monster, rt))
+	for _, rule := range rt.server.WorldRules {
+		if !worldRuleMatchesMonster(rule, monster) {
+			continue
+		}
+		chanceTotal := groupChanceTotal(rule.Groups)
+		chanceOverflow := chanceTotal > 100.000001
+		choices := make([]DropChoice, 0, len(rule.Groups))
+		for choiceIndex, group := range rule.Groups {
+			groupBaseChance := orderedEntryChance(rule.Groups, choiceIndex, func(value GroupRule) float64 { return value.Chance })
+			items := dropItemsForAttempt(rt.resolved[group.GroupID], groupBaseChance)
+			itemTotal, itemEmpty, itemOverflow := dropItemChanceSummary(items)
+			choices = append(choices, DropChoice{
+				ID:                  fmt.Sprintf("world-%d-%d", rule.SourceLine, choiceIndex+1),
+				GroupID:             group.GroupID,
+				Title:               fmt.Sprintf("Вариант %d", choiceIndex+1),
+				Chance:              group.Chance,
+				BaseSelectionChance: groupBaseChance,
+				Items:               items,
+				ItemChanceTotal:     itemTotal,
+				ItemEmptyChance:     itemEmpty,
+				ItemChanceOverflow:  itemOverflow,
+			})
+		}
+		slots = append(slots, DropSlot{
+			ID:               fmt.Sprintf("world-slot-%d", rule.SourceLine),
+			Title:            "Мировая добыча",
+			Source:           "Мировое выпадение",
+			Context:          worldRuleContext(rule),
+			SourceLine:       rule.SourceLine,
+			AddAttempt1Count: rule.AddAttempt1Count,
+			AddAttempt1Rate:  rule.AddAttempt1Rate,
+			AddAttempt2Count: rule.AddAttempt2Count,
+			AddAttempt2Rate:  rule.AddAttempt2Rate,
+			ChanceTotal:      chanceTotal,
+			EmptyChance:      remainingChance(chanceTotal, chanceOverflow),
+			ChanceOverflow:   chanceOverflow,
+			Choices:          choices,
+			Note:             "Правило подходит этому монстру по уровню и типу. Для мирового дропа сервер отдельно учитывает тип локации; опубликованные данные не содержат надёжной привязки каждого монстра к открытому миру или инстансу.",
+		})
+	}
+	return slots
 }
 
 func monsterDropView(monster *Monster, rt *runtimeData) ([]DropGroup, []DropSlot) {
@@ -974,8 +1374,10 @@ func itemDropSources(itemID int, rt *runtimeData) []ItemDrop {
 		return []ItemDrop{}
 	}
 	drops := append([]ItemDrop(nil), rt.questByItem[itemID]...)
+	drops = append(drops, rt.chestByItem[itemID]...)
 	matches, itemOverflow := matchingGroupItems(rt, itemID)
 	if len(matches) == 0 {
+		sortItemDropSources(drops)
 		return drops
 	}
 
@@ -989,6 +1391,7 @@ func itemDropSources(itemID int, rt *runtimeData) []ItemDrop {
 				entries := matches[rule.GroupID]
 				for _, entry := range entries {
 					drops = append(drops, ItemDrop{
+						ItemID:            itemID,
 						MonsterID:         monster.ID,
 						Monster:           monster.Name,
 						MonsterLevel:      monster.Level,
@@ -1024,6 +1427,7 @@ func itemDropSources(itemID int, rt *runtimeData) []ItemDrop {
 			entries := matches[rule.GroupID]
 			for _, entry := range entries {
 				drops = append(drops, ItemDrop{
+					ItemID:            itemID,
 					Monster:           worldRuleSourceLabel(worldRule),
 					Source:            "Мировое выпадение",
 					Context:           worldRuleContext(worldRule),
@@ -1065,31 +1469,42 @@ func itemDropSourceRank(source string) int {
 		return 0
 	case "Мировое выпадение":
 		return 1
-	case "Квестовое выпадение", "Квестовый дроп":
+	case "Сундук":
 		return 2
-	default:
+	case "Квестовое выпадение", "Квестовый дроп":
 		return 3
+	default:
+		return 4
 	}
 }
 
 func sortItemDropSources(drops []ItemDrop) {
 	sort.SliceStable(drops, func(i, j int) bool {
+		leftRank := itemDropSourceRank(drops[i].Source)
+		rightRank := itemDropSourceRank(drops[j].Source)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+
 		leftChance := itemDropSortChance(drops[i])
 		rightChance := itemDropSortChance(drops[j])
 		if math.Abs(leftChance-rightChance) > 0.0000001 {
 			return leftChance > rightChance
 		}
+		if drops[i].Source == "Выпадение монстра" && drops[i].MonsterLevel != drops[j].MonsterLevel {
+			return drops[i].MonsterLevel < drops[j].MonsterLevel
+		}
 
-		leftName := strings.ToLower(strings.TrimSpace(drops[i].Monster))
-		rightName := strings.ToLower(strings.TrimSpace(drops[j].Monster))
+		leftName := strings.ToLower(strings.TrimSpace(sourceDropSortName(drops[i])))
+		rightName := strings.ToLower(strings.TrimSpace(sourceDropSortName(drops[j])))
 		if leftName != rightName {
 			return leftName < rightName
 		}
 		if drops[i].MonsterID != drops[j].MonsterID {
 			return drops[i].MonsterID < drops[j].MonsterID
 		}
-		if drops[i].Source != drops[j].Source {
-			return itemDropSourceRank(drops[i].Source) < itemDropSourceRank(drops[j].Source)
+		if drops[i].ContainerID != drops[j].ContainerID {
+			return drops[i].ContainerID < drops[j].ContainerID
 		}
 		if drops[i].SlotNumber != drops[j].SlotNumber {
 			return drops[i].SlotNumber < drops[j].SlotNumber
@@ -1099,6 +1514,16 @@ func sortItemDropSources(drops []ItemDrop) {
 		}
 		return drops[i].ItemPosition < drops[j].ItemPosition
 	})
+}
+
+func sourceDropSortName(drop ItemDrop) string {
+	if strings.TrimSpace(drop.Container) != "" {
+		return drop.Container
+	}
+	if strings.TrimSpace(drop.Quest) != "" {
+		return drop.Quest
+	}
+	return drop.Monster
 }
 
 func groupChanceTotal(rules []GroupRule) float64 {
@@ -1162,6 +1587,74 @@ func dropItemsForAttempt(items []DropItem, groupBaseChance float64) []DropItem {
 	return result
 }
 
+func chestContents(chestID int, rt *runtimeData) *ChestContents {
+	if rt == nil {
+		return nil
+	}
+	profile, ok := rt.chestProfiles[chestID]
+	if !ok {
+		return nil
+	}
+	return chestContentsForProfile(chestID, profile)
+}
+
+func worldSourceMonsters(itemID, sourceLine, groupID, choicePosition, itemPosition int, rt *runtimeData) ([]WorldSourceMonster, string, bool) {
+	if rt == nil || itemID <= 0 || sourceLine <= 0 || groupID <= 0 || choicePosition <= 0 || itemPosition <= 0 {
+		return nil, "", false
+	}
+	var selected *WorldRule
+	for index := range rt.server.WorldRules {
+		rule := &rt.server.WorldRules[index]
+		if rule.SourceLine == sourceLine {
+			selected = rule
+			break
+		}
+	}
+	if selected == nil {
+		return nil, "", false
+	}
+	groupIndex := choicePosition - 1
+	if groupIndex < 0 || groupIndex >= len(selected.Groups) || selected.Groups[groupIndex].GroupID != groupID {
+		return nil, "", false
+	}
+	entries := rt.resolved[groupID]
+	var entry *DropItem
+	for index := range entries {
+		if entries[index].ItemID == itemID && entries[index].Position == itemPosition {
+			entry = &entries[index]
+			break
+		}
+	}
+	if entry == nil {
+		return nil, "", false
+	}
+	groupBase := orderedEntryChance(selected.Groups, groupIndex, func(value GroupRule) float64 { return value.Chance })
+	chance := groupBase * entry.BaseSelectionChance / 100
+	monsters := make([]WorldSourceMonster, 0, 64)
+	for index := range store.data.Monsters {
+		monster := &store.data.Monsters[index]
+		if !worldRuleMatchesMonster(*selected, monster) {
+			continue
+		}
+		monsters = append(monsters, WorldSourceMonster{MonsterID: monster.ID, Monster: monster.Name, Level: monster.Level, Chance: chance})
+	}
+	sort.SliceStable(monsters, func(i, j int) bool {
+		if math.Abs(monsters[i].Chance-monsters[j].Chance) > 0.0000001 {
+			return monsters[i].Chance > monsters[j].Chance
+		}
+		if monsters[i].Level != monsters[j].Level {
+			return monsters[i].Level < monsters[j].Level
+		}
+		left := strings.ToLower(strings.TrimSpace(monsters[i].Monster))
+		right := strings.ToLower(strings.TrimSpace(monsters[j].Monster))
+		if left != right {
+			return left < right
+		}
+		return monsters[i].MonsterID < monsters[j].MonsterID
+	})
+	return monsters, worldRuleContext(*selected), true
+}
+
 func activeRuntime(server string) *runtimeData {
 	if server == "or" {
 		server = "original"
@@ -1177,9 +1670,9 @@ func activeRuntime(server string) *runtimeData {
 		}
 	}
 	if slot == nil {
-		return &runtimeData{resolved: map[int][]DropItem{}, questByItem: map[int][]ItemDrop{}}
+		return &runtimeData{resolved: map[int][]DropItem{}, questByItem: map[int][]ItemDrop{}, chestByItem: map[int][]ItemDrop{}}
 	}
-	slot.once.Do(func() { slot.value = buildRuntime(slot.server) })
+	slot.once.Do(func() { slot.value = buildRuntime(slot.server, slot.chestProfiles) })
 	return slot.value
 }
 
@@ -1535,7 +2028,67 @@ func handleItem(w http.ResponseWriter, r *http.Request) {
 		}
 		bonuses = append(bonuses, map[string]any{"type": option.Type, "name": name, "value": value, "known": ok && strings.TrimSpace(spec.Name) != ""})
 	}
-	writeJSON(w, map[string]any{"item": item, "level": itemLevel(item), "bonuses": bonuses, "set": set, "recipe": itemRecipeMaterials(id), "drops": itemDropSources(id, rt)})
+	writeJSON(w, map[string]any{"item": item, "level": itemLevel(item), "bonuses": bonuses, "set": set, "recipe": itemRecipeMaterials(id), "chest": chestContents(id, rt), "drops": itemDropSources(id, rt)})
+}
+
+func handleWorldSourceMonsters(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if r.URL.Path != "/api/world-source-monsters" {
+		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
+		return
+	}
+	q := r.URL.Query()
+	itemID := parseInt(q, "itemId", 0)
+	sourceLine := parseInt(q, "sourceLine", 0)
+	groupID := parseInt(q, "groupId", 0)
+	choicePosition := parseInt(q, "choicePosition", 0)
+	itemPosition := parseInt(q, "itemPosition", 0)
+	if itemID <= 0 || sourceLine <= 0 || groupID <= 0 || choicePosition <= 0 || itemPosition <= 0 {
+		http.Error(w, "Некорректные параметры источника.\n", http.StatusBadRequest)
+		return
+	}
+	monsters, context, ok := worldSourceMonsters(itemID, sourceLine, groupID, choicePosition, itemPosition, activeRuntime(q.Get("server")))
+	if !ok {
+		http.Error(w, "Источник не найден.\n", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"monsters":          monsters,
+		"total":             len(monsters),
+		"context":           context,
+		"contextMatchKnown": false,
+	})
+}
+
+func handleMonsterWorldDrops(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if r.URL.Path != "/api/monster-world-drops" {
+		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
+		return
+	}
+	q := r.URL.Query()
+	monsterID := parseInt(q, "monsterId", 0)
+	if monsterID <= 0 {
+		http.Error(w, "Некорректный идентификатор монстра.\n", http.StatusBadRequest)
+		return
+	}
+	monster := store.monstersByID[monsterID]
+	if monster == nil {
+		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
+		return
+	}
+	slots := monsterWorldDropView(monster, activeRuntime(q.Get("server")))
+	writeJSON(w, map[string]any{
+		"monsterId":         monsterID,
+		"slots":             slots,
+		"contextMatchKnown": false,
+	})
 }
 
 func handleMonsters(w http.ResponseWriter, r *http.Request) {
@@ -1631,7 +2184,7 @@ func handleMonster(w http.ResponseWriter, r *http.Request) {
 	}
 	rt := activeRuntime(r.URL.Query().Get("server"))
 	groups, slots := monsterDropView(mon, rt)
-	writeJSON(w, map[string]any{"monster": mon, "groups": groups, "slots": slots})
+	writeJSON(w, map[string]any{"monster": mon, "groups": groups, "slots": slots, "worldRuleCount": monsterWorldRuleCount(mon, rt)})
 }
 
 func itemSummary(item *Item) map[string]any {

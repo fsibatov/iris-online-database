@@ -25,7 +25,7 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertNotIn("$Version:", text)
         self.assertIn("${Version}:", text)
         self.assertIn("Собрано Iris Online", text)
-        self.assertIn('$Version = "1.0"', text)
+        self.assertIn('$Version = "1.0.1"', text)
         self.assertIn("IrisOnlineRelease/$Version", text)
         self.assertIn("IrisOnlineDiagnostic/$Version/$ActualGo", text)
         self.assertIn('$env:CGO_ENABLED = "1"', text)
@@ -46,8 +46,8 @@ class ReleaseHelperTests(unittest.TestCase):
     def test_build_scripts_separate_release_and_diagnostic_markers(self):
         ps = (ROOT / "build.ps1").read_text(encoding="utf-8-sig")
         sh = (ROOT / "build.sh").read_text(encoding="utf-8")
-        self.assertIn('$Version = "1.0"', ps)
-        self.assertIn('VERSION="1.0"', sh)
+        self.assertIn('$Version = "1.0.1"', ps)
+        self.assertIn('VERSION="1.0.1"', sh)
         for text in (ps, sh):
             self.assertIn("IrisOnlineRelease/", text)
             self.assertIn("IRIS_SKIP_CHECKS=1 разрешён только для диагностической сборки", text)
