@@ -20,7 +20,7 @@ const (
 	maxUpdateResponseBytes = 32 << 10
 )
 
-var versionPattern = regexp.MustCompile(`^[vV]?(\d+)\.(\d+)\.(\d+)$`)
+var versionPattern = regexp.MustCompile(`(?i)^v?\s*(\d+)\.(\d+)(?:\.(\d+))?\.?$`)
 
 type updateCheckResult struct {
 	CurrentVersion  string `json:"currentVersion"`
@@ -127,7 +127,13 @@ func normalizeVersion(value string) (string, error) {
 	}
 	parts := make([]int, 3)
 	for i := range parts {
-		number, err := strconv.Atoi(match[i+1])
+		raw := match[i+1]
+		if raw == "" {
+			parts[i] = 0
+			continue
+		}
+
+		number, err := strconv.Atoi(raw)
 		if err != nil || number < 0 {
 			return "", errors.New("invalid version")
 		}

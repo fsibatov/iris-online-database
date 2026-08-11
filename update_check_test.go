@@ -28,6 +28,34 @@ func TestCompareVersions(t *testing.T) {
 	}
 }
 
+func TestNormalizeVersionHumanFormats(t *testing.T) {
+	valid := []string{
+		"1.1.0.", "1.1.0", "1.1.", "1.1",
+		"v1.1.0.", "v1.1.0", "v1.1.", "v1.1",
+		"v 1.1.0.", "v 1.1.0", "v 1.1.", "v 1.1",
+	}
+
+	for _, input := range valid {
+		got, err := normalizeVersion(input)
+		if err != nil || got != "1.1.0" {
+			t.Fatalf("normalizeVersion(%q)=(%q,%v), want 1.1.0", input, got, err)
+		}
+	}
+
+	for _, input := range []string{
+		"1",
+		"v",
+		"1.1-beta",
+		"v1.1.0-beta",
+		"1.1..",
+		"version 1.1",
+	} {
+		if got, err := normalizeVersion(input); err == nil {
+			t.Fatalf("normalizeVersion(%q)=%q, want error", input, got)
+		}
+	}
+}
+
 func TestUpdateCheckFindsNewerReleaseWithoutFollowingRedirects(t *testing.T) {
 	var redirected atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
