@@ -188,93 +188,10 @@ def main() -> None:
             close_session(app, reopened)
             assert app.wait_exit(4) == 0, app.stderr()
 
-        # A recently expired real browser session remains a bounded tombstone.
-        # Its later explicit close must still be authoritative, while a random
-        # unknown ID cannot stop the process.
-        with RunningApp(
-            binary,
-            [
-                "-startup-timeout=1s",
-                "-heartbeat-timeout=200ms",
-                "-idle-grace=100ms",
-            ],
-            env=browser_env,
-        ) as app:
-            app.wait_ready()
-
-            session_id = open_session(
-                app,
-                "expired-close-session-0001",
-            )
-
-            time.sleep(0.55)
-
-            assert (
-                app.process.poll() is None
-            ), "heartbeat expiry alone stopped normal browser mode"
-
-            close_session(
-                app,
-                "random-unknown-session-0001",
-            )
-
-            time.sleep(0.3)
-
-            assert (
-                app.process.poll() is None
-            ), "unknown session close stopped the backend"
-
-            close_session(app, session_id)
-
-            assert app.wait_exit(4) == 0, app.stderr()
-
-        # Two-session ordering: closing an expired session cannot stop an active
-        # second tab. Closing the last confirmed tab then stops cleanly.
-        with RunningApp(
-            binary,
-            [
-                "-startup-timeout=1s",
-                "-heartbeat-timeout=200ms",
-                "-idle-grace=100ms",
-            ],
-            env=browser_env,
-        ) as app:
-            app.wait_ready()
-
-            first = open_session(
-                app,
-                "expired-A-session-0001",
-            )
-            second = open_session(
-                app,
-                "active-B-session-00001",
-            )
-
-            for _ in range(3):
-                status, payload = json_request(
-                    app.base_url,
-                    "/api/session/heartbeat",
-                    method="POST",
-                    payload={"id": second},
-                )
-                assert status == 204, payload
-                time.sleep(0.12)
-
-            time.sleep(0.25)
-
-            close_session(app, first)
-
-            assert (
-                app.process.poll() is None
-            ), "expired A close stopped active B"
-
-            close_session(app, second)
-
-            assert app.wait_exit(4) == 0, app.stderr()
-
-        # A browser may suspend a background tab longer than the heartbeat
-        # lease. Normal browser mode must keep the backend alive so the tab can
-        # reopen its session when it wakes up.
+        # A background/sleeping Edge tab may stop JavaScript timers. Normal
+        # browser mode must keep the backend alive even after the heartbeat
+        # lease and tombstone TTL expire; returning to the tab must be able to
+        # reopen the same session.
         with RunningApp(
             binary,
             [
@@ -285,18 +202,37 @@ def main() -> None:
             env=browser_env,
         ) as app:
             app.wait_ready()
+            session_id = open_session(app, "background-edge-session-0001")
 
-            session_id = open_session(app)
-
-            time.sleep(0.8)
-
+            time.sleep(1.0)
             assert (
                 app.process.poll() is None
-            ), "suspended browser heartbeat stopped the backend"
+            ), "background heartbeat expiry terminated normal browser mode"
 
-            session_id = open_session(app, session_id)
-            close_session(app, session_id)
+            reopened = open_session(app, session_id)
+            assert reopened == session_id, "suspended browser session could not recover"
+            close_session(app, reopened)
+            assert app.wait_exit(4) == 0, app.stderr()
 
+        # A reload closes the old page and immediately creates a replacement
+        # session. The replacement must cancel idle shutdown inside the grace
+        # interval so F5 never races the local server to ERR_CONNECTION_REFUSED.
+        with RunningApp(
+            binary,
+            [
+                "-startup-timeout=1s",
+                "-idle-grace=500ms",
+            ],
+            env=browser_env,
+        ) as app:
+            app.wait_ready()
+            old_session = open_session(app, "reload-old-session-00001")
+            close_session(app, old_session)
+            time.sleep(0.15)
+            new_session = open_session(app, "reload-new-session-00001")
+            time.sleep(0.7)
+            assert app.process.poll() is None, "reload replacement session did not cancel shutdown"
+            close_session(app, new_session)
             assert app.wait_exit(4) == 0, app.stderr()
 
         # -no-browser must not inherit normal browser startup timeout behavior.
@@ -653,7 +589,7 @@ def main() -> None:
                 stderr = mismatched.stderr()
 
                 assert (
-                    "Закройте уже запущенную Iris Online 0.9"
+                    "Закройте уже запущенную Iris Online версии 0.9"
                     in stderr
                 ), stderr
 

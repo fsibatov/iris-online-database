@@ -1,0 +1,1 @@
+5566a5fcc6585ce7ccadd3c74a88c73b1b6628c3f550b16f328a6201cf5cf11e  assets/monster_presence.json.gz

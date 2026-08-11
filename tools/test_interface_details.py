@@ -97,8 +97,15 @@ class InterfaceDetailTests(unittest.TestCase):
 
     def test_home_has_resources_without_catalog_duplication(self):
         home = self.script[self.script.index("function homePage"):self.script.index("function addHistory")]
-        self.assertIn("Ресурсы Iris Online", home)
+        self.assertIn("Полезные ссылки", home)
         self.assertIn("Недавно просмотренные", home)
+        self.assertIn("Original и Kiss: в чём разница?", home)
+        self.assertIn("Original и Kiss — два сервера Iris Online.", home)
+        self.assertIn("После переключения база автоматически показывает", home)
+        self.assertIn("Original — 609 монстров", home)
+        self.assertIn("Kiss — 677 монстров", home)
+        self.assertIn("способы получения предметов", home)
+        self.assertNotIn("контейнер", home.lower())
         self.assertIn("Обсуждения", home)
         self.assertIn("https://vk.ru/board59626511", home)
         self.assertIn("https://github.com/fsibatov/iris-online-database", home)
@@ -133,12 +140,28 @@ class InterfaceDetailTests(unittest.TestCase):
 
     def test_recently_viewed_supports_items_and_monsters_in_profile(self):
         self.assertIn("['item', 'monster'].includes(type)", self.script)
-        self.assertIn("const key = `${type}:${numericID}`", self.script)
-        self.assertIn("trackRecentlyViewed('item', item.id, item.name)", self.script)
-        self.assertIn("trackRecentlyViewed('monster', monster.id, monster.name)", self.script)
-        self.assertIn("recentlyViewed: recentViewedEntries()", self.script)
+        self.assertIn("const key = `${type}:${numericID}:${server}`", self.script)
+        self.assertIn("entry.type === 'monster'", self.script)
+        self.assertIn("normalizeServerKey(entry.server)", self.script)
+        self.assertIn("trackRecentlyViewed('item', item.id, item.name,", self.script)
+        self.assertIn("trackRecentlyViewed('monster', monster.id, monster.name,", self.script)
+        self.assertIn("recent-viewed-list", self.script)
+        self.assertNotIn("recent-viewed-card", self.script)
+        self.assertIn("recentlyViewed: normalizedRecentViewedEntries()", self.script)
         self.assertIn("profile.recentlyViewed", self.script)
         self.assertIn("localRecentlyViewed", self.script)
+
+    def test_items_have_known_source_filter(self):
+        self.assertIn("knownSource: ''", self.script)
+        self.assertIn('name="knownSource" type="checkbox" value="1"', self.script)
+        self.assertIn("Известно, где получить", self.script)
+        self.assertIn("input.type === 'checkbox' ? (input.checked ? '1' : '')", self.script)
+        self.assertIn("knownSource: 'Известно, где получить'", self.script)
+        self.assertIn(".filter-checkbox", self.styles)
+
+    def test_server_switch_refreshes_server_specific_monster_views(self):
+        self.assertIn("['home', 'monsters', 'favorites', 'search'].includes(activeRoute)", self.script)
+        self.assertIn("&server=${encodeURIComponent(state.server)}", self.script)
 
     def test_home_primary_matches_main_home_width(self):
         final_home = self.styles[self.styles.index("/* Главная:"):self.styles.index(".item-inline-set")]
@@ -167,12 +190,12 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
 
     def test_public_ui_has_no_stale_version_label(self):
         combined = self.script + self.html
-        legacy_versions = tuple(f"{1}.{1}.{patch}" for patch in range(7))
+        legacy_versions = tuple(f"1.0.{patch}" for patch in range(7))
         for stale in ("IrisOnline" + "Preview", "audited", *legacy_versions):
             self.assertNotIn(stale, combined)
         self.assertNotIn(" preview", self.html.lower())
-        self.assertIn("const APP_VERSION = '1.0.1'", self.script)
-        self.assertIn("Версия 1.0.1", self.html)
+        self.assertIn("const APP_VERSION = '1.1.0'", self.script)
+        self.assertIn("Версия 1.1.0", self.html)
 
     def test_selects_share_control_class(self):
         self.assertIn('class="control-select control-select--server"', self.html)
@@ -185,8 +208,56 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
     def test_no_new_periodic_or_duplicate_event_mechanisms(self):
         self.assertEqual(self.script.count("setInterval("), 0)
         self.assertEqual(self.script.count("setTimeout("), 10)
-        self.assertEqual(self.script.count("addEventListener("), 27)
-        self.assertEqual(self.script.count("api("), 15)
+        self.assertEqual(self.script.count("addEventListener("), 28)
+        self.assertEqual(self.script.count("api("), 17)
+
+
+    def test_sell_restriction_wording_is_global_for_selltype_zero(self):
+        self.assertIn("if (Number(item.sellType) === 0) actions.push({ text: 'Нельзя продать персонажу'", self.script)
+        self.assertNotIn("Нельзя продать в магазин", self.script)
+        self.assertNotIn("Number(item.id) === 808030", self.script)
+
+    def test_item_action_footer_matches_game_order_and_wording(self):
+        start = self.script.index("    const actions = [];", self.script.index("function itemPresentation"))
+        end = self.script.index("    const price =", start)
+        block = self.script[start:end]
+        expected = [
+            "Можно разобрать",
+            "Можно перековать",
+            "Функция печати (",
+            "Запечатать невозможно",
+            "Нельзя продать персонажу",
+        ]
+        positions = [block.index(text) for text in expected]
+        self.assertLess(positions[0], positions[1])
+        self.assertLess(positions[1], positions[2])
+        self.assertLess(positions[2], positions[4])
+        self.assertLess(positions[3], positions[4])
+        self.assertNotIn("Печать доступна", block)
+        self.assertNotIn("Можно запечатать", block)
+        self.assertIn("sealCount > 0 ? `Функция печати (${formatNumber(sealCount)})` : 'Запечатать невозможно'", block)
+
+    def test_update_notice_does_not_rerender_home_or_destroy_search_input(self):
+        start = self.script.index("async function checkForUpdates()")
+        end = self.script.index("function openInfoDialog", start)
+        body = self.script[start:end]
+        self.assertIn("refreshUpdateNotice()", body)
+        self.assertNotIn("homePage()", body)
+
+    def test_update_check_is_visible_bounded_and_non_downloading(self):
+        self.assertIn("/api/update-check", self.script)
+        self.assertIn("void checkForUpdates()", self.script)
+        self.assertIn("Доступна версия", self.script)
+        self.assertIn("https://github.com/fsibatov/iris-online-database/releases/latest", self.script)
+        self.assertNotIn("releases/latest/download", self.script)
+        self.assertEqual(self.script.count("checkForUpdates()"), 2)
+        block = self.script[self.script.index("async function checkForUpdates"):self.script.index("function openInfoDialog")]
+        self.assertIn("refreshUpdateNotice()", block)
+        self.assertNotIn("homePage()", block)
+
+    def test_old_gift_chest_does_not_require_id_special_case(self):
+        self.assertIn("if (Number(item.sellType) === 0) actions.push({ text: 'Нельзя продать персонажу'", self.script)
+        self.assertNotIn("Number(item.id) === 808030", self.script)
 
     def test_chest_contents_and_sources_are_visible_on_both_sides(self):
         self.assertIn("function chestContentsHTML(chest)", self.script)
@@ -202,7 +273,7 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         self.assertIn("renderWorldSourceMonsters(details)", self.script)
         self.assertIn("/api/world-source-monsters", self.script)
         self.assertIn("data?.contextMatchKnown !== false", self.script)
-        self.assertIn("нет подтверждённой привязки конкретного монстра к типу карты", self.script)
+        self.assertIn("нет подтверждённой связи конкретного монстра с типом карты", self.script)
 
     def test_monster_world_drops_expand_lazily_without_claiming_location_mapping(self):
         self.assertIn("lazy-monster-world-drops", self.script)
@@ -215,7 +286,7 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
 
     def test_sources_use_requested_section_order(self):
         block = self.script[self.script.index("function buildSourceSections"):self.script.index("function chestSourceDetails")]
-        labels = ["Точные монстры", "Мировая добыча", "Сундуки", "Квестовые источники"]
+        labels = ["Монстры с подтверждённым выпадением", "Мировая добыча", "Сундуки", "Задания"]
         positions = [block.index(label) for label in labels]
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn("sort((a, b) => baseAttemptChance(b) - baseAttemptChance(a))", self.script)
@@ -229,6 +300,31 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         self.assertIn("meaningfulDescription(item.tooltip, item.name)", self.script)
         self.assertIn("meaningfulDescription(monster.note, monster.name)", self.script)
         self.assertGreaterEqual(self.script.count("description ? accordion('Описание'"), 2)
+        self.assertIn("function normalizeDisplayText(value)", self.script)
+        self.assertIn("function multilineHTML(value)", self.script)
+        self.assertGreaterEqual(self.script.count("multilineHTML(description)"), 2)
+        self.assertIn("const rawText = normalizeDisplayText(active.text);", self.script)
+
+
+    def test_recipe_catalog_section(self):
+        self.assertIn("{ route: 'recipes', label: 'Рецепты', icon: 'recipe' }", self.script)
+        self.assertIn("function defaultRecipeFilters()", self.script)
+        self.assertIn("function recipeRow(recipe, query = '')", self.script)
+        self.assertIn("path === 'items' || path === 'monsters' || path === 'recipes'", self.script)
+        self.assertIn("path.startsWith('recipe/')", self.script)
+        self.assertIn("Рецепты Iris Online и материалы для изготовления.", self.script)
+        self.assertIn("knownSource: ''", self.script[self.script.index("function defaultRecipeFilters()"):self.script.index("function resetTransientCatalogFilters()")])
+        self.assertIn("Только рецепты, для которых в выбранной базе указан источник получения.", self.script)
+        self.assertIn("recipe-source-preview", self.script)
+        self.assertIn("recipe-source-preview", self.styles)
+        self.assertIn("По уровню мастерства", self.script)
+        self.assertIn("Уровень мастерства от", self.script)
+        self.assertIn("Каллиграф", self.script)
+        self.assertIn("recipe-material-label", self.script)
+        self.assertIn("grid-template-columns: 18px minmax(0, 1fr);", self.styles)
+        self.assertIn("single-source-block", self.script)
+        self.assertIn("drops.length === 1", self.script)
+        self.assertIn("grid-template-columns: repeat(5, minmax(0, 1fr));", self.styles)
 
 
 if __name__ == "__main__":

@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="1.0.1"
+VERSION="1.1.0"
 EXPECTED_GO="go$(tr -d '[:space:]' < .go-version)"
 ACTUAL_GO="$(go version | awk '{print $3}')"
 DIAGNOSTIC=0
 if [[ "$ACTUAL_GO" != "$EXPECTED_GO" ]]; then
   DIAGNOSTIC=1
   if [[ "${IRIS_ALLOW_UNSUPPORTED_GO:-}" != "1" ]]; then
-    echo "Требуется $EXPECTED_GO, обнаружен $ACTUAL_GO. Для диагностической сборки задайте IRIS_ALLOW_UNSUPPORTED_GO=1." >&2
+    echo "Требуется $EXPECTED_GO, но обнаружен $ACTUAL_GO. Для диагностической сборки задайте IRIS_ALLOW_UNSUPPORTED_GO=1." >&2
     exit 1
   fi
 fi
 
 if [[ "$DIAGNOSTIC" == "0" && "${IRIS_SKIP_CHECKS:-}" == "1" ]]; then
-  echo "IRIS_SKIP_CHECKS=1 разрешён только для диагностической сборки. Публикационная сборка должна пройти все проверки." >&2
+  echo "IRIS_SKIP_CHECKS=1 разрешён только для диагностической сборки. Сборка для публикации должна пройти все проверки." >&2
   exit 1
 fi
 

@@ -13,9 +13,11 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +25,160 @@ import (
 	"testing"
 	"time"
 )
+
+func TestCatalogNameSortingPutsRussianThenOtherLanguagesThenDigitsSymbolsBlank(t *testing.T) {
+	names := []string{
+		"",
+		"[поддержка поселенцев] Рыцарский меч",
+		"210100",
+		"Zulu",
+		"Ядовитый паук",
+		"Ёж",
+		"Ель",
+		"Жук",
+		"Alpha",
+		"Альфа",
+		"*призыв разлома*",
+		"   ",
+	}
+	sort.SliceStable(names, func(i, j int) bool {
+		return catalogNameLess(names[i], names[j])
+	})
+	want := []string{
+		"Альфа",
+		"Ель",
+		"Ёж",
+		"Жук",
+		"Ядовитый паук",
+		"Alpha",
+		"Zulu",
+		"210100",
+		"*призыв разлома*",
+		"[поддержка поселенцев] Рыцарский меч",
+		"",
+		"   ",
+	}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("catalog name order = %#v, want %#v", names, want)
+	}
+}
+
+func TestItemFilterCategoryAndQualityOrdering(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+
+	categoryReq := httptest.NewRequest(http.MethodGet, "/api/items?pageSize=8", nil)
+	categoryRecorder := httptest.NewRecorder()
+	handleItems(categoryRecorder, categoryReq)
+	if categoryRecorder.Code != http.StatusOK {
+		t.Fatalf("category status=%d: %s", categoryRecorder.Code, categoryRecorder.Body.String())
+	}
+	var categoryResponse struct {
+		Filters struct {
+			Categories []string `json:"categories"`
+		} `json:"filters"`
+	}
+	if err := json.Unmarshal(categoryRecorder.Body.Bytes(), &categoryResponse); err != nil {
+		t.Fatal(err)
+	}
+	wantCategories := []string{"Оружие/щит", "Броня (кожа)", "Броня (латы)", "Броня (ткань)", "Бижутерия"}
+	if len(categoryResponse.Filters.Categories) < len(wantCategories) || !reflect.DeepEqual(categoryResponse.Filters.Categories[:len(wantCategories)], wantCategories) {
+		t.Fatalf("leading item categories = %#v, want prefix %#v", categoryResponse.Filters.Categories, wantCategories)
+	}
+
+	qualityReq := httptest.NewRequest(http.MethodGet, "/api/items?category="+url.QueryEscape("Бижутерия")+"&pageSize=8", nil)
+	qualityRecorder := httptest.NewRecorder()
+	handleItems(qualityRecorder, qualityReq)
+	if qualityRecorder.Code != http.StatusOK {
+		t.Fatalf("quality status=%d: %s", qualityRecorder.Code, qualityRecorder.Body.String())
+	}
+	var qualityResponse struct {
+		Filters struct {
+			Qualities []string `json:"qualities"`
+		} `json:"filters"`
+	}
+	if err := json.Unmarshal(qualityRecorder.Body.Bytes(), &qualityResponse); err != nil {
+		t.Fatal(err)
+	}
+	wantQualities := []string{"Не указано", "Обычное", "Необычное", "Редкое", "Уникальное", "PvP", "Эпическое", "Особое", "Событийное"}
+	if !reflect.DeepEqual(qualityResponse.Filters.Qualities, wantQualities) {
+		t.Fatalf("quality filter order = %#v, want %#v", qualityResponse.Filters.Qualities, wantQualities)
+	}
+}
+
+func TestItemRaritySortRunsFromLowestQualityIDToHighest(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/items?sort=rarity&page=1&pageSize=48", nil)
+	recorder := httptest.NewRecorder()
+	handleItems(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d: %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Items []Item `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Items) == 0 {
+		t.Fatal("rarity-sorted catalog is empty")
+	}
+	for i := 1; i < len(response.Items); i++ {
+		if response.Items[i-1].QualityID > response.Items[i].QualityID {
+			t.Fatalf("rarity order decreased at %d: %d > %d", i, response.Items[i-1].QualityID, response.Items[i].QualityID)
+		}
+	}
+}
+
+func TestMonsterNameCatalogPlacesBlankNamesLast(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/monsters?server=kiss&sort=name&page=1&pageSize=48", nil)
+	recorder := httptest.NewRecorder()
+	handleMonsters(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d: %s", recorder.Code, recorder.Body.String())
+	}
+	var first struct {
+		Monsters []Monster `json:"monsters"`
+		Total    int       `json:"total"`
+		Pages    int       `json:"pages"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	for _, monster := range first.Monsters {
+		if strings.TrimSpace(monster.Name) == "" {
+			t.Fatalf("blank-name monster %d appeared on first alphabetical page", monster.ID)
+		}
+	}
+
+	lastReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/monsters?server=kiss&sort=name&page=%d&pageSize=48", first.Pages), nil)
+	lastRecorder := httptest.NewRecorder()
+	handleMonsters(lastRecorder, lastReq)
+	if lastRecorder.Code != http.StatusOK {
+		t.Fatalf("last page status=%d: %s", lastRecorder.Code, lastRecorder.Body.String())
+	}
+	var last struct {
+		Monsters []Monster `json:"monsters"`
+	}
+	if err := json.Unmarshal(lastRecorder.Body.Bytes(), &last); err != nil {
+		t.Fatal(err)
+	}
+	blankFound := false
+	for _, monster := range last.Monsters {
+		if strings.TrimSpace(monster.Name) == "" {
+			blankFound = true
+		}
+	}
+	if !blankFound {
+		t.Fatal("expected at least one blank-name monster on the final alphabetical page")
+	}
+}
 
 func TestDependentItemFiltersAreIgnoredWithoutCategory(t *testing.T) {
 	if err := ensureLoaded(); err != nil {
@@ -46,6 +202,84 @@ func TestDependentItemFiltersAreIgnoredWithoutCategory(t *testing.T) {
 	}
 }
 
+func TestKnownSourceItemFilterIsServerAware(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+	kiss := activeRuntime("kiss")
+	original := activeRuntime("original")
+	if len(kiss.knownSourceItems) == 0 || len(original.knownSourceItems) == 0 {
+		t.Fatalf("known-source index is empty: kiss=%d original=%d", len(kiss.knownSourceItems), len(original.knownSourceItems))
+	}
+
+	var itemID int
+	var sourceServer, otherServer string
+	for id := range kiss.knownSourceItems {
+		if _, ok := original.knownSourceItems[id]; !ok {
+			itemID, sourceServer, otherServer = id, "kiss", "original"
+			break
+		}
+	}
+	if itemID == 0 {
+		for id := range original.knownSourceItems {
+			if _, ok := kiss.knownSourceItems[id]; !ok {
+				itemID, sourceServer, otherServer = id, "original", "kiss"
+				break
+			}
+		}
+	}
+	if itemID == 0 {
+		t.Fatal("no server-specific known-source item found in the current data package")
+	}
+
+	request := func(server string) struct {
+		Items []Item `json:"items"`
+		Total int    `json:"total"`
+	} {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/items?q=%d&knownSource=1&server=%s&pageSize=48", itemID, server), nil)
+		recorder := httptest.NewRecorder()
+		handleItems(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("server=%s status=%d: %s", server, recorder.Code, recorder.Body.String())
+		}
+		var response struct {
+			Items []Item `json:"items"`
+			Total int    `json:"total"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+
+	contains := func(items []Item, id int) bool {
+		for _, item := range items {
+			if item.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if response := request(sourceServer); !contains(response.Items, itemID) {
+		t.Fatalf("item %d with a known source on %s was filtered out: %#v", itemID, sourceServer, response.Items)
+	}
+	if response := request(otherServer); contains(response.Items, itemID) {
+		t.Fatalf("item %d incorrectly has a known source on %s", itemID, otherServer)
+	}
+}
+
+func TestKnownSourceItemFilterRejectsInvalidValue(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/items?knownSource=yes", nil)
+	recorder := httptest.NewRecorder()
+	handleItems(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want=%d", recorder.Code, http.StatusBadRequest)
+	}
+}
+
 func TestDependentMonsterTypeIgnoredWithoutCategory(t *testing.T) {
 	if err := ensureLoaded(); err != nil {
 		t.Fatal(err)
@@ -62,8 +296,9 @@ func TestDependentMonsterTypeIgnoredWithoutCategory(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Total != len(store.data.Monsters) {
-		t.Fatalf("dependent type was applied without a category: got %d want %d", response.Total, len(store.data.Monsters))
+	const want = 677
+	if response.Total != want {
+		t.Fatalf("dependent type was applied without a category or server visibility was lost: got %d want %d", response.Total, want)
 	}
 }
 
@@ -274,7 +509,7 @@ func TestItemInterfaceShowsAllSourcesGroupedByType(t *testing.T) {
 	}
 	sectionCode := script[sectionStart : sectionStart+sectionEnd]
 	positions := make([]int, 0, 4)
-	for _, expected := range []string{"Точные монстры", "Мировая добыча", "Сундуки", "Квестовые источники"} {
+	for _, expected := range []string{"Монстры с подтверждённым выпадением", "Мировая добыча", "Сундуки", "Задания"} {
 		position := strings.Index(sectionCode, expected)
 		if position < 0 {
 			t.Fatalf("source group marker is missing: %s", expected)
@@ -301,7 +536,7 @@ func TestItemEndpointReturnsEveryComputedSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	const itemID = 809012
-	const want = 471
+	const want = 277
 	request := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/items/%d?server=kiss", itemID), nil)
 	recorder := httptest.NewRecorder()
 	handleItem(recorder, request)
@@ -329,7 +564,7 @@ func TestPlayerFacingDropTerminologyExplainsIndependentAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 	combined := strings.ToLower(string(mainSource) + string(interfaceSource))
-	for _, expected := range []string{"отдельная попытка выпадения", "Шанс группы", "оба шага сработают подряд"} {
+	for _, expected := range []string{"отдельная попытка выпадения", "Шанс группы", "оба выбора сработают подряд"} {
 		if !strings.Contains(combined, strings.ToLower(expected)) {
 			t.Fatalf("drop explanation marker is missing: %s", expected)
 		}
@@ -696,7 +931,7 @@ func TestMonsterPreviewUsesReliableStatsAndExcludesExperience(t *testing.T) {
 		for _, stat := range stats {
 			names[stat["name"].(string)] = true
 		}
-		if !names["HP"] || !names["Физ. защита"] {
+		if !names["HP"] || !names["Физическая защита"] {
 			t.Fatalf("monster preview lacks reliable stats: %#v", stats)
 		}
 		if names["Опыт"] {
@@ -951,7 +1186,7 @@ func TestDropProbabilitiesAreAlwaysVisibleWithoutHiddenMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(data)
-	for _, expected := range []string{"formatChance(choice.baseSelectionChance)", "Шанс группы", "за одну основную попытку", "Как работает выпадение"} {
+	for _, expected := range []string{"formatChance(choice.baseSelectionChance)", "Шанс группы", "за одну основную попытку", "Как рассчитывается шанс"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("probability marker is missing: %s", expected)
 		}
@@ -989,7 +1224,7 @@ func TestDropInterfaceIsConciseAndOpensSlotsToGroupLevel(t *testing.T) {
 	if strings.Contains(script, "<details class=\"drop-choice\" open>") {
 		t.Fatal("item lists must remain collapsed until the player opens a group")
 	}
-	if !strings.Contains(script, "Список будет загружен после раскрытия раздела") {
+	if !strings.Contains(script, "Список загрузится после открытия раздела.") {
 		t.Fatal("monster drop accordion is not lazy")
 	}
 }
@@ -1150,6 +1385,32 @@ func TestMonsterCanBeFoundByID(t *testing.T) {
 	}
 }
 
+func TestPaginationHasFirstAndLastPageControls(t *testing.T) {
+	data, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	start := strings.Index(script, "  function pagination(")
+	end := strings.Index(script[start:], "  function activeFilterCount(")
+	if start < 0 || end < 0 {
+		t.Fatal("pagination source block was not found")
+	}
+	block := script[start : start+end]
+	for _, want := range []string{
+		`aria-label="Первая страница"`,
+		`aria-label="Предыдущая страница"`,
+		`aria-label="Следующая страница"`,
+		`aria-label="Последняя страница"`,
+		`${attribute}="1"`,
+		`${attribute}="${pages}"`,
+	} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("pagination is missing %q", want)
+		}
+	}
+}
+
 func TestMonsterInterfaceHidesPreviewIDAndKeepsTechnicalID(t *testing.T) {
 	data, err := os.ReadFile("web/app.js")
 	if err != nil {
@@ -1184,12 +1445,12 @@ func TestDetailPagesRenderPropertiesOnceAndSkipEmptyDescriptions(t *testing.T) {
 			t.Fatalf("obsolete or empty detail UI remains: %s", forbidden)
 		}
 	}
-	properties := strings.Index(script, "gameProperties(presentation, 'Характеристики предмета',")
+	properties := strings.Index(script, "gameProperties(presentation, recipeContext ? 'Характеристики рецепта' : 'Характеристики предмета',")
 	bestSource := strings.Index(script, "<span class=\"eyebrow\">Лучший источник</span>")
 	if properties < 0 || bestSource < 0 || properties > bestSource {
 		t.Fatal("item properties are not rendered before the best source")
 	}
-	for _, required := range []string{"itemClassBadge(presentation.classes)", "property-group--base", "property-group--bonus", "property-group--price", "cardSlotsRow(presentation.cardSlots)", "card-slot-chip"} {
+	for _, required := range []string{"itemClassBadge(presentation.classes)", "property-group--base", "property-group--bonus", "property-group--price", "cardSlotsRow(presentation.cardSlots)", "card-slot-chip", "recipeProductHTML(data.recipeProduct, item)", "recipeProductEffectText", "Что даёт готовый предмет"} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("new item presentation is missing %q", required)
 		}
@@ -1199,6 +1460,24 @@ func TestDetailPagesRenderPropertiesOnceAndSkipEmptyDescriptions(t *testing.T) {
 	}
 	if !strings.Contains(script, "description ? accordion('Описание'") {
 		t.Fatal("meaningful descriptions are not rendered conditionally")
+	}
+}
+
+func TestRecipeProductEffectSuppressesRepeatedProductName(t *testing.T) {
+	data, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	for _, required := range []string{
+		"function recipeProductEffectText(value, productName)",
+		"recipeProductEffectText(product.abilityDescription, product.name)",
+		"recipeProductEffectText(fallbackEffect, product.name)",
+		"!== normalizedName",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("recipe product duplicate-name suppression is missing %q", required)
+		}
 	}
 }
 
@@ -1256,7 +1535,7 @@ func TestSetItemsAreMarkedAndHaveOneClickNavigation(t *testing.T) {
 	}
 	script := string(data)
 	for _, expected := range []string{
-		"Комплект · ${formatNumber(count)}",
+		"Комплект · ${formatCount(count, 'предмет', 'предмета', 'предметов')}",
 		"Предметы комплекта",
 		"set-member-link",
 		"aria-current=\"page\"",
@@ -1672,6 +1951,9 @@ func TestLegacyProfileRoundTrips(t *testing.T) {
 	if profile.Settings.View != "cards" || len(profile.Favorites) != 2 {
 		t.Fatalf("legacy profile was not preserved: %#v", profile)
 	}
+	if len(profile.ItemFilters) != 0 || len(profile.MonsterFilters) != 0 {
+		t.Fatalf("legacy catalog filters were not cleared: item=%#v monster=%#v", profile.ItemFilters, profile.MonsterFilters)
+	}
 	profile.Settings.Theme = "light"
 	if err := store.Replace(profile); err != nil {
 		t.Fatal(err)
@@ -1694,7 +1976,7 @@ func TestRecentlyViewedSanitizationAndProfileReload(t *testing.T) {
 	}
 	profile := defaultProfile()
 	profile.RecentlyViewed = []recentViewEntry{
-		{Type: "monster", ID: 253, Name: "Монстр 253"},
+		{Type: "monster", ID: 253, Name: "Монстр 253", Meta: "Босс · Уровень 25 · ID 253"},
 		{Type: "item", ID: 253, Name: "Предмет 253"},
 		{Type: "monster", ID: 253, Name: "Дубликат"},
 		{Type: "unknown", ID: 10, Name: "Лишнее"},
@@ -1714,6 +1996,9 @@ func TestRecentlyViewedSanitizationAndProfileReload(t *testing.T) {
 	}
 	if reloaded.RecentlyViewed[0].Type != "monster" || reloaded.RecentlyViewed[0].ID != 253 || reloaded.RecentlyViewed[1].Type != "item" || reloaded.RecentlyViewed[1].ID != 253 {
 		t.Fatalf("item and monster with same numeric ID were not preserved independently: %#v", reloaded.RecentlyViewed)
+	}
+	if reloaded.RecentlyViewed[0].Meta != "Босс · Уровень 25 · ID 253" {
+		t.Fatalf("recent-view metadata was not preserved: %#v", reloaded.RecentlyViewed[0])
 	}
 }
 
@@ -1758,8 +2043,11 @@ func TestFrontendLifecycleAndLazyRenderingMarkers(t *testing.T) {
 	script := string(data)
 	for _, marker := range []string{
 		"navigator.sendBeacon?.('/api/session/close'",
-		"if (!queued)",
 		"fetch('/api/session/close'",
+		"window.addEventListener('beforeunload', closeApplicationSession)",
+		"if (sessionCloseSent) state.sessionId = newSessionID()",
+		"const openingSession = openApplicationSession()",
+		"await Promise.all([loadUserProfile(), openingSession])",
 		"fetch('/api/user-data'",
 		"keepalive: true",
 		"sessionCloseSent",
@@ -1788,6 +2076,19 @@ func TestFrontendLifecycleAndLazyRenderingMarkers(t *testing.T) {
 	closeBlock := script[closeStart : closeStart+closeEnd]
 	if strings.Contains(closeBlock, "profilePayload()") || strings.Contains(closeBlock, "profile:") {
 		t.Fatal("full profile is coupled to session close payload")
+	}
+}
+
+func TestBrowserModeDoesNotUseHeartbeatExpiryAsCloseSignal(t *testing.T) {
+	data, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "shutdownOnHeartbeatExpiry: *shutdownWhenIdle") {
+		t.Fatal("normal browser mode still treats heartbeat expiry as a close signal")
+	}
+	if strings.Contains(string(data), "shutdownOnHeartbeatExpiry: browserEnabled || *shutdownWhenIdle") {
+		t.Fatal("browser mode would still terminate when Edge suspends background timers")
 	}
 }
 
@@ -1820,12 +2121,19 @@ func TestSearchStartsEmptyAndRecentlyViewedCanBeCleared(t *testing.T) {
 	}
 	script := string(data)
 	for _, marker := range []string{
-		"state.itemFilters.q = ''",
-		"state.monsterFilters.q = ''",
+		"resetTransientCatalogFilters()",
+		"state.itemFilters = defaultItemFilters()",
+		"state.monsterFilters = defaultMonsterFilters()",
+		"localStorage.removeItem('iris-item-filters')",
+		"localStorage.removeItem('iris-monster-filters')",
+		"itemFilters: {}",
+		"monsterFilters: {}",
 		"globalSearch.value = ''",
-		"key !== 'page' && key !== 'q'",
 		"data-action=\"clear-recently-viewed\"",
 		"function clearRecentlyViewed()",
+		"knownSource: ''",
+		"Известно, где получить",
+		"Original и Kiss: в чём разница?",
 	} {
 		if !strings.Contains(script, marker) {
 			t.Fatalf("startup-search/recent-view marker is missing: %s", marker)
@@ -1844,7 +2152,7 @@ func TestPlayerFacingDropHelpHidesInternalGameFileDetails(t *testing.T) {
 			t.Fatalf("internal/technical drop detail remains in player-facing UI: %s", forbidden)
 		}
 	}
-	for _, expected := range []string{"шанс группы", "если группа выбрана", "оба шага сработают подряд", "шанс при открытии"} {
+	for _, expected := range []string{"шанс группы", "если группа выбрана", "оба выбора сработают подряд", "шанс при открытии"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("simple drop explanation marker is missing: %s", expected)
 		}
@@ -2274,8 +2582,11 @@ func TestLegacyProfilePreservesSafeUnknownTopLevelData(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile := profileStore.Get()
-	if profile.Settings.Server != "original" || profile.Settings.Theme != "light" || profile.Settings.View != "list" || len(profile.Favorites) != 2 || len(profile.History) != 1 || profile.ItemFilters["q"] != "эфир" || profile.ItemFilters["sort"] != "name" || profile.MonsterFilters["type"] != "boss" || profile.MonsterFilters["sort"] != "level" {
-		t.Fatalf("legacy profile values were not preserved: %#v", profile)
+	if profile.Settings.Server != "original" || profile.Settings.Theme != "light" || profile.Settings.View != "list" || len(profile.Favorites) != 2 || len(profile.History) != 1 {
+		t.Fatalf("legacy persistent profile values were not preserved: %#v", profile)
+	}
+	if len(profile.ItemFilters) != 0 || len(profile.MonsterFilters) != 0 {
+		t.Fatalf("catalog filters must not survive application restart: item=%#v monster=%#v", profile.ItemFilters, profile.MonsterFilters)
 	}
 	profile.Settings.Theme = "dark"
 	if err := profileStore.Replace(profile); err != nil {
@@ -2297,7 +2608,7 @@ func TestLegacyProfilePreservesSafeUnknownTopLevelData(t *testing.T) {
 
 func TestExistingInstanceRequiresExactVersionAndMarker(t *testing.T) {
 	oldVersion, oldMarker := appVersion, releaseMarker
-	appVersion, releaseMarker = "1.0", "IrisOnlineDiagnostic/1.0.1/go1.23.2"
+	appVersion, releaseMarker = "1.0", "IrisOnlineDiagnostic/1.1.0/go1.23.2"
 	defer func() { appVersion, releaseMarker = oldVersion, oldMarker }()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

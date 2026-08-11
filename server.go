@@ -28,11 +28,11 @@ const applicationID = "iris-online-database"
 // appVersion is a variable so release and diagnostic builds can pin the visible version
 // with -ldflags while development builds keep a safe diagnostic default.
 var (
-	appVersion    = "1.0.1"
-	releaseMarker = "IrisOnlineDiagnostic/1.0.1/development"
+	appVersion    = "1.1.0"
+	releaseMarker = "IrisOnlineDiagnostic/1.1.0/development"
 )
 
-//go:embed web/* assets/game_data.json.gz assets/set_effects.json.gz assets/item_abilities.json.gz assets/item_recipes.json.gz assets/monster_details.json.gz assets/chest_contents.json.gz
+//go:embed web/* assets/game_data.json.gz assets/set_effects.json.gz assets/item_abilities.json.gz assets/item_recipes.json.gz assets/monster_details.json.gz assets/chest_contents.json.gz assets/monster_presence.json.gz
 var embedded embed.FS
 
 func main() {
@@ -53,15 +53,15 @@ func run() int {
 	}
 
 	if *idleGrace <= 0 {
-		fmt.Fprintln(os.Stderr, "idle-grace должен быть положительным")
+		fmt.Fprintln(os.Stderr, "Параметр idle-grace должен быть положительным.")
 		return 2
 	}
 	if *heartbeatTimeout <= 0 {
-		fmt.Fprintln(os.Stderr, "heartbeat-timeout должен быть положительным")
+		fmt.Fprintln(os.Stderr, "Параметр heartbeat-timeout должен быть положительным.")
 		return 2
 	}
 	if *startupTimeout < 0 {
-		fmt.Fprintln(os.Stderr, "startup-timeout не может быть отрицательным")
+		fmt.Fprintln(os.Stderr, "Параметр startup-timeout не может быть отрицательным.")
 		return 2
 	}
 	if err := validateListenAddress(*address); err != nil {
@@ -92,16 +92,12 @@ func run() int {
 		}
 
 		version := strings.TrimSpace(existing.Version)
-		if version == "" {
-			version = "другой версии"
+		message := "Закройте уже запущенную копию Iris Online другой версии и повторите запуск."
+		if version != "" {
+			message = fmt.Sprintf("Закройте уже запущенную Iris Online версии %s и повторите запуск.", version)
 		}
 
-		showStartupError(
-			fmt.Sprintf(
-				"Закройте уже запущенную Iris Online %s и повторите запуск.",
-				version,
-			),
-		)
+		showStartupError(message)
 		return 1
 	}
 
@@ -173,14 +169,10 @@ func run() int {
 
 		if existing.Found {
 			version := strings.TrimSpace(existing.Version)
-			if version == "" {
-				version = "другой версии"
+			message := "Закройте уже запущенную копию Iris Online другой версии и повторите запуск."
+			if version != "" {
+				message = fmt.Sprintf("Закройте уже запущенную Iris Online версии %s и повторите запуск.", version)
 			}
-
-			message := fmt.Sprintf(
-				"Закройте уже запущенную Iris Online %s и повторите запуск.",
-				version,
-			)
 
 			logger.Printf(
 				"несовместимая уже запущенная копия: version=%q release=%q",
@@ -199,7 +191,7 @@ func run() int {
 		)
 
 		showStartupError(
-			"Не удалось запустить локальный сервер Iris Online. Проверьте, не занял ли другой процесс локальный порт приложения.",
+			"Не удалось запустить локальный сервер Iris Online. Проверьте, не используется ли локальный порт приложения другим процессом.",
 		)
 
 		_ = logWriter.Close()
@@ -260,13 +252,13 @@ func run() int {
 		sessions:  newSessionManager(*idleGrace, *heartbeatTimeout),
 		autoExit:  browserEnabled || *shutdownWhenIdle,
 
-		// Browsers may suspend background tabs for longer than the heartbeat
-		// lease. In the normal browser-launched mode, heartbeat expiry therefore
-		// means "session needs to reopen", not "the user closed the app".
-		// The explicit -shutdown-when-idle mode keeps lease expiry semantics for
-		// bounded/headless operation.
+		// Browser heartbeats are a recovery/diagnostic lease, not a close signal.
+		// Edge and other Chromium browsers may suspend JavaScript timers while a
+		// tab is in the background. Only explicit -shutdown-when-idle mode may
+		// treat heartbeat expiry as authority to terminate the backend.
 		shutdownOnHeartbeatExpiry: *shutdownWhenIdle,
 		startupTimeout:            effectiveStartupTimeout,
+		updates:                   newUpdateChecker(),
 	}
 
 	app.server = &http.Server{
@@ -355,10 +347,31 @@ func run() int {
 	return 0
 }
 
+func (a *application) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+
+	ctx := r.Context()
+	if a.ctx != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		stop := context.AfterFunc(a.ctx, cancel)
+		defer func() {
+			stop()
+			cancel()
+		}()
+	}
+
+	writeJSON(w, a.updates.Check(ctx))
+}
+
 func (a *application) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/health", a.handleHealth)
+	mux.HandleFunc("/api/update-check", a.handleUpdateCheck)
 	mux.HandleFunc("/api/session/open", a.handleSessionOpen)
 	mux.HandleFunc("/api/session/heartbeat", a.handleSessionHeartbeat)
 	mux.HandleFunc("/api/session/close", a.handleSessionClose)
@@ -368,6 +381,7 @@ func (a *application) routes() http.Handler {
 	mux.HandleFunc("/api/search", handleSearch)
 	mux.HandleFunc("/api/items", handleItems)
 	mux.HandleFunc("/api/items/", handleItem)
+	mux.HandleFunc("/api/recipes", handleRecipes)
 	mux.HandleFunc("/api/world-source-monsters", handleWorldSourceMonsters)
 	mux.HandleFunc("/api/monster-world-drops", handleMonsterWorldDrops)
 	mux.HandleFunc("/api/monsters", handleMonsters)
@@ -823,6 +837,7 @@ func isCacheableResponseRequest(r *http.Request) bool {
 		path == "/api/search" ||
 		path == "/api/items" ||
 		strings.HasPrefix(path, "/api/items/") ||
+		path == "/api/recipes" ||
 		path == "/api/monster-world-drops" ||
 		path == "/api/monsters" ||
 		strings.HasPrefix(path, "/api/monsters/")

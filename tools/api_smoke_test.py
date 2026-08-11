@@ -23,7 +23,7 @@ def main() -> None:
         app.wait_ready()
         health = assert_status(app.base_url, "/api/health")
         assert health["application"] == "iris-online-database"
-        assert health["version"] == "1.0.1"
+        assert health["version"] == "1.1.0"
 
         search = assert_status(app.base_url, "/api/search?q=%D0%B3%D0%BD%D0%B5%D0%B2%20%D0%BF%D1%80%D0%B5%D0%B4%D0%BA%D0%BE%D0%B2")
         assert search["items"] or search["monsters"], "word-form search returned nothing"
@@ -37,8 +37,36 @@ def main() -> None:
 
         filtered = assert_status(app.base_url, "/api/items?category=%D0%9E%D1%80%D1%83%D0%B6%D0%B8%D0%B5%2F%D1%89%D0%B8%D1%82&page=1&pageSize=24&sort=level")
         assert filtered["page"] == 1 and len(filtered["items"]) <= 24
+
+        recipes = assert_status(app.base_url, "/api/recipes?page=1&pageSize=24&sort=name")
+        assert recipes["total"] == 1207, recipes["total"]
+        assert len(recipes["recipes"]) <= 24 and recipes["recipes"], "recipe catalog is empty"
+        assert recipes["recipes"][0].get("materials"), "recipe row has no materials"
+        food_recipes = assert_status(app.base_url, "/api/recipes?type=%D0%A0%D0%B5%D1%86%D0%B5%D0%BF%D1%82%20%D0%B5%D0%B4%D1%8B&page=1&pageSize=24&sort=mastery")
+        assert food_recipes["total"] == 194, food_recipes["total"]
+        mastery_values = [int(row.get("masteryLevel", 0)) for row in food_recipes["recipes"]]
+        assert mastery_values == sorted(mastery_values), mastery_values
+        reference_recipe = assert_status(app.base_url, "/api/recipes?q=891219&page=1&pageSize=24&sort=mastery")
+        reference_rows = [row for row in reference_recipe["recipes"] if int(row.get("id", 0)) == 891219]
+        assert reference_rows, "reference recipe 891219 is missing"
+        assert int(reference_rows[0].get("makeSkill", 0)) == 2, reference_rows[0]
+        assert int(reference_rows[0].get("masteryLevel", -1)) == 20, reference_rows[0]
+        assert int(reference_rows[0].get("level", -1)) != 20, reference_rows[0]
+        sourced_recipes = assert_status(app.base_url, "/api/recipes?knownSource=1&server=kiss&page=1&pageSize=24&sort=name")
+        assert sourced_recipes["total"] > 0, "known-source recipe filter returned nothing"
+        assert all(row.get("sourceCount", 0) > 0 and row.get("sourcePreview", {}).get("name") for row in sourced_recipes["recipes"]), "recipe source preview missing"
         paged = assert_status(app.base_url, "/api/monsters?page=2&pageSize=24&sort=level")
         assert paged["page"] == 2 and len(paged["monsters"]) <= 24
+        kiss_catalog = assert_status(app.base_url, "/api/monsters?server=kiss&page=1&pageSize=8")
+        original_catalog = assert_status(app.base_url, "/api/monsters?server=original&page=1&pageSize=8")
+        assert kiss_catalog["total"] == 677, kiss_catalog["total"]
+        assert original_catalog["total"] == 609, original_catalog["total"]
+        assert_status(app.base_url, "/api/monsters/11026?server=original")
+        assert_status(app.base_url, "/api/monsters/11026?server=kiss", expected=404)
+        assert_status(app.base_url, "/api/monsters/1122?server=kiss")
+        assert_status(app.base_url, "/api/monsters/1122?server=original", expected=404)
+        assert_status(app.base_url, "/api/monsters/253?server=kiss", expected=404)
+        assert_status(app.base_url, "/api/monsters/253?server=original", expected=404)
         bounded = assert_status(app.base_url, "/api/items?page=-50&pageSize=999999")
         assert bounded["page"] == 1 and bounded["pageSize"] == 48 and len(bounded["items"]) <= 48
         assert_status(app.base_url, "/api/items?sort=unknown-enum", expected=400)

@@ -189,8 +189,11 @@ func TestExpiredSessionTombstonesBoundedAndExpire(t *testing.T) {
 	if got := s.ExpiredCount(future); got != 0 {
 		t.Fatalf("expired tombstones after TTL=%d want 0", got)
 	}
-	if !s.ShouldShutdown(future.Add(10 * time.Millisecond)) {
-		t.Fatal("abandoned tombstone expiry would leave the backend running forever")
+	if s.ShouldShutdown(future.Add(10 * time.Millisecond)) {
+		t.Fatal("expired heartbeat tombstone would terminate a suspended browser tab")
+	}
+	if !s.ShouldShutdown(future.Add(10*time.Millisecond), true) {
+		t.Fatal("explicit shutdown-when-idle mode did not terminate after lease expiry")
 	}
 }
 

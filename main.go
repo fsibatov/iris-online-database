@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 type Meta struct {
@@ -517,18 +518,26 @@ type ItemDrop struct {
 }
 
 type runtimeData struct {
-	server        ServerData
-	resolved      map[int][]DropItem
-	questByItem   map[int][]ItemDrop
-	chestProfiles map[int]chestProfileSource
-	chestByItem   map[int][]ItemDrop
+	server           ServerData
+	monsterIDs       map[int]struct{}
+	resolved         map[int][]DropItem
+	questByItem      map[int][]ItemDrop
+	chestProfiles    map[int]chestProfileSource
+	chestByItem      map[int][]ItemDrop
+	knownSourceItems map[int]struct{}
 }
 
 type runtimeSlot struct {
 	once          sync.Once
 	server        ServerData
+	monsterIDs    map[int]struct{}
 	chestProfiles map[int]chestProfileSource
 	value         *runtimeData
+}
+
+type monsterPresenceSupplement struct {
+	SchemaVersion int              `json:"schemaVersion"`
+	Servers       map[string][]int `json:"servers"`
 }
 
 type searchDocument struct {
@@ -547,6 +556,7 @@ type appStore struct {
 	categoryItems    map[string]int
 	itemRecipes      map[int][]itemRecipeMaterialSource
 	chestProfiles    map[string]map[int]chestProfileSource
+	monsterPresence  map[string]map[int]struct{}
 	runtimes         map[string]*runtimeSlot
 }
 
@@ -592,6 +602,10 @@ func ensureLoaded() error {
 			loadErr = err
 			return
 		}
+		if err := mergeMonsterPresenceSupplement(); err != nil {
+			loadErr = err
+			return
+		}
 		store.itemsByID = make(map[int]*Item, len(store.data.Items))
 		store.monstersByID = make(map[int]*Monster, len(store.data.Monsters))
 		store.itemNames = make(map[int]string, len(store.data.Items))
@@ -616,7 +630,7 @@ func ensureLoaded() error {
 		}
 		store.runtimes = make(map[string]*runtimeSlot, len(store.data.Servers))
 		for key, server := range store.data.Servers {
-			store.runtimes[key] = &runtimeSlot{server: server, chestProfiles: store.chestProfiles[key]}
+			store.runtimes[key] = &runtimeSlot{server: server, chestProfiles: store.chestProfiles[key], monsterIDs: store.monsterPresence[key]}
 		}
 	})
 	return loadErr
@@ -894,6 +908,68 @@ func mergeChestContentSupplement() error {
 	return nil
 }
 
+func mergeMonsterPresenceSupplement() error {
+	raw, err := embedded.ReadFile("assets/monster_presence.json.gz")
+	if err != nil {
+		return fmt.Errorf("не удалось прочитать список монстров серверов: %w", err)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("не удалось открыть список монстров серверов: %w", err)
+	}
+	defer gz.Close()
+	var supplement monsterPresenceSupplement
+	if err := json.NewDecoder(gz).Decode(&supplement); err != nil {
+		return fmt.Errorf("не удалось разобрать список монстров серверов: %w", err)
+	}
+	if supplement.SchemaVersion != 1 {
+		return fmt.Errorf("неподдерживаемая версия списка монстров серверов: %d", supplement.SchemaVersion)
+	}
+	known := make(map[int]struct{}, len(store.data.Monsters))
+	for index := range store.data.Monsters {
+		known[store.data.Monsters[index].ID] = struct{}{}
+	}
+	store.monsterPresence = make(map[string]map[int]struct{}, len(supplement.Servers))
+	for rawKey, ids := range supplement.Servers {
+		key := normalizeServerDataKey(rawKey)
+		if _, exists := store.monsterPresence[key]; exists {
+			return fmt.Errorf("повторяющийся сервер в списке монстров: %q", key)
+		}
+		visible := make(map[int]struct{}, len(ids))
+		for _, id := range ids {
+			if id <= 0 {
+				return fmt.Errorf("некорректный ID монстра для сервера %s: %d", key, id)
+			}
+			if _, ok := known[id]; !ok {
+				return fmt.Errorf("монстр %d из списка сервера %s отсутствует в основной базе", id, key)
+			}
+			if _, duplicate := visible[id]; duplicate {
+				return fmt.Errorf("повторяющийся ID монстра %d для сервера %s", id, key)
+			}
+			visible[id] = struct{}{}
+		}
+		if len(visible) == 0 {
+			return fmt.Errorf("пустой список монстров для сервера %s", key)
+		}
+		store.monsterPresence[key] = visible
+	}
+	for key := range store.data.Servers {
+		key = normalizeServerDataKey(key)
+		if len(store.monsterPresence[key]) == 0 {
+			return fmt.Errorf("для сервера %s отсутствует список монстров", key)
+		}
+	}
+	return nil
+}
+
+func monsterVisible(rt *runtimeData, monsterID int) bool {
+	if rt == nil || monsterID <= 0 {
+		return false
+	}
+	_, ok := rt.monsterIDs[monsterID]
+	return ok
+}
+
 func normalizeServerDataKey(key string) string {
 	key = strings.ToLower(strings.TrimSpace(key))
 	if key == "or" {
@@ -1096,13 +1172,15 @@ func chestContentsForProfile(chestID int, profile chestProfileSource) *ChestCont
 	return &ChestContents{ChestID: chestID, Chest: name, DrawCount: profile.DrawCount, Items: items}
 }
 
-func buildRuntime(server ServerData, chestProfiles map[int]chestProfileSource) *runtimeData {
+func buildRuntime(server ServerData, chestProfiles map[int]chestProfileSource, monsterIDs map[int]struct{}) *runtimeData {
 	rt := &runtimeData{
-		server:        server,
-		resolved:      make(map[int][]DropItem, len(server.DropLists)),
-		questByItem:   make(map[int][]ItemDrop),
-		chestProfiles: chestProfiles,
-		chestByItem:   make(map[int][]ItemDrop),
+		server:           server,
+		monsterIDs:       monsterIDs,
+		resolved:         make(map[int][]DropItem, len(server.DropLists)),
+		questByItem:      make(map[int][]ItemDrop),
+		chestProfiles:    chestProfiles,
+		chestByItem:      make(map[int][]ItemDrop),
+		knownSourceItems: make(map[int]struct{}),
 	}
 
 	for key, entries := range server.DropLists {
@@ -1129,10 +1207,14 @@ func buildRuntime(server ServerData, chestProfiles map[int]chestProfileSource) *
 	}
 
 	for _, drop := range store.data.QuestDrops {
+		if drop.MonsterID > 0 && !monsterVisible(rt, drop.MonsterID) {
+			continue
+		}
 		monsterLevel := 0
 		if monster := store.monstersByID[drop.MonsterID]; monster != nil {
 			monsterLevel = monster.Level
 		}
+		rt.knownSourceItems[drop.ItemID] = struct{}{}
 		rt.questByItem[drop.ItemID] = append(rt.questByItem[drop.ItemID], ItemDrop{
 			ItemID:           drop.ItemID,
 			MonsterID:        drop.MonsterID,
@@ -1159,6 +1241,7 @@ func buildRuntime(server ServerData, chestProfiles map[int]chestProfileSource) *
 			continue
 		}
 		for index, content := range contents.Items {
+			rt.knownSourceItems[content.ItemID] = struct{}{}
 			quantity := 0
 			if len(content.Variants) == 1 {
 				quantity = content.Variants[0].Quantity
@@ -1176,6 +1259,30 @@ func buildRuntime(server ServerData, chestProfiles map[int]chestProfileSource) *
 				ItemPosition:   index + 1,
 				Variants:       append([]ChestVariant(nil), content.Variants...),
 			})
+		}
+	}
+
+	markGroupItems := func(groupID int) {
+		for _, entry := range rt.resolved[groupID] {
+			if entry.ItemID > 0 {
+				rt.knownSourceItems[entry.ItemID] = struct{}{}
+			}
+		}
+	}
+	for index := range store.data.Monsters {
+		monster := &store.data.Monsters[index]
+		if !monsterVisible(rt, monster.ID) {
+			continue
+		}
+		for _, slot := range directSlotsForMonster(server, monster.ID) {
+			for _, choice := range slot.Choices {
+				markGroupItems(choice.GroupID)
+			}
+		}
+	}
+	for _, rule := range server.WorldRules {
+		for _, group := range rule.Groups {
+			markGroupItems(group.GroupID)
 		}
 	}
 	return rt
@@ -1285,7 +1392,7 @@ func monsterWorldDropView(monster *Monster, rt *runtimeData) []DropSlot {
 			EmptyChance:      remainingChance(chanceTotal, chanceOverflow),
 			ChanceOverflow:   chanceOverflow,
 			Choices:          choices,
-			Note:             "Правило подходит этому монстру по уровню и типу. Для мирового дропа сервер отдельно учитывает тип локации; опубликованные данные не содержат надёжной привязки каждого монстра к открытому миру или инстансу.",
+			Note:             "Правило подходит этому монстру по уровню и типу. Для мировой добычи сервер отдельно учитывает тип локации; опубликованные данные не содержат надёжной связи каждого монстра с открытой локацией или инстансом.",
 		})
 	}
 	return slots
@@ -1329,7 +1436,7 @@ func monsterDropView(monster *Monster, rt *runtimeData) ([]DropGroup, []DropSlot
 				Chance:      rule.Chance,
 				ChanceKnown: true,
 				Items:       items,
-				Note:        "Группа является одним из взаимоисключающих вариантов этой попытки выпадения.",
+				Note:        "Группа — один из взаимоисключающих вариантов этой попытки выпадения.",
 			})
 		}
 		slots = append(slots, DropSlot{
@@ -1382,6 +1489,9 @@ func itemDropSources(itemID int, rt *runtimeData) []ItemDrop {
 	}
 
 	for _, monster := range store.data.Monsters {
+		if !monsterVisible(rt, monster.ID) {
+			continue
+		}
 		for slotIndex, slotRule := range directSlotsForMonster(rt.server, monster.ID) {
 			slotNumber := slotIndex + 1
 			chanceTotal := groupChanceTotal(slotRule.Choices)
@@ -1633,7 +1743,7 @@ func worldSourceMonsters(itemID, sourceLine, groupID, choicePosition, itemPositi
 	monsters := make([]WorldSourceMonster, 0, 64)
 	for index := range store.data.Monsters {
 		monster := &store.data.Monsters[index]
-		if !worldRuleMatchesMonster(*selected, monster) {
+		if !monsterVisible(rt, monster.ID) || !worldRuleMatchesMonster(*selected, monster) {
 			continue
 		}
 		monsters = append(monsters, WorldSourceMonster{MonsterID: monster.ID, Monster: monster.Name, Level: monster.Level, Chance: chance})
@@ -1670,9 +1780,9 @@ func activeRuntime(server string) *runtimeData {
 		}
 	}
 	if slot == nil {
-		return &runtimeData{resolved: map[int][]DropItem{}, questByItem: map[int][]ItemDrop{}, chestByItem: map[int][]ItemDrop{}}
+		return &runtimeData{monsterIDs: map[int]struct{}{}, resolved: map[int][]DropItem{}, questByItem: map[int][]ItemDrop{}, chestByItem: map[int][]ItemDrop{}, knownSourceItems: map[int]struct{}{}}
 	}
-	slot.once.Do(func() { slot.value = buildRuntime(slot.server, slot.chestProfiles) })
+	slot.once.Do(func() { slot.value = buildRuntime(slot.server, slot.chestProfiles, slot.monsterIDs) })
 	return slot.value
 }
 
@@ -1717,6 +1827,16 @@ func itemLevel(item *Item) int {
 		return item.MaxLevel
 	}
 	return 0
+}
+
+// recipeMasteryLevel is the crafting-profession requirement shown in game
+// next to the profession name, for example "Каллиграф (20)". It comes from
+// MakeSkillExp and is independent from the item's MinLevel/MaxLevel.
+func recipeMasteryLevel(item *Item) int {
+	if item == nil || item.MakeSkill <= 0 {
+		return 0
+	}
+	return max(0, item.MakeSkillExp)
 }
 
 func normalizeSearch(value string) string {
@@ -1836,7 +1956,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, http.MethodGet)
 		return
 	}
-	q, ok := limitedQueryValue(r.URL.Query(), "q", 160)
+	qv := r.URL.Query()
+	q, ok := limitedQueryValue(qv, "q", 160)
 	if !ok {
 		http.Error(w, "Слишком длинный поисковый запрос.\n", http.StatusBadRequest)
 		return
@@ -1846,6 +1967,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := q
+	rt := activeRuntime(qv.Get("server"))
 	items := make([]map[string]any, 0, 6)
 	for i := range store.data.Items {
 		if matchesSearch(store.itemSearch[i], query) {
@@ -1857,6 +1979,9 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	monsters := make([]map[string]any, 0, 4)
 	for i := range store.data.Monsters {
+		if !monsterVisible(rt, store.data.Monsters[i].ID) {
+			continue
+		}
 		if matchesSearch(store.monsterSearch[i], query) {
 			monsters = append(monsters, monsterSummary(&store.data.Monsters[i]))
 			if len(monsters) == 4 {
@@ -1891,6 +2016,15 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 		quality = ""
 	}
 	scope := qv.Get("scope")
+	knownSource := qv.Get("knownSource")
+	if knownSource != "" && knownSource != "1" {
+		http.Error(w, "Некорректное значение фильтра источника.\n", http.StatusBadRequest)
+		return
+	}
+	var rt *runtimeData
+	if knownSource == "1" {
+		rt = activeRuntime(qv.Get("server"))
+	}
 	minLevel := clampInt(parseInt(qv, "minLevel", 0), 0, 10000)
 	maxLevel := clampInt(parseInt(qv, "maxLevel", 0), 0, 10000)
 	sortMode, sortOK := limitedQueryValue(qv, "sort", 20)
@@ -1904,7 +2038,7 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 	filtered := make([]*Item, 0, 256)
 	categories := map[string]bool{}
 	subcategories := map[string]bool{}
-	qualities := map[string]bool{}
+	qualities := map[string]int{}
 	for i := range store.data.Items {
 		item := &store.data.Items[i]
 		if scope == "weapons" && item.Category != "Оружие/щит" {
@@ -1913,12 +2047,18 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 		if scope == "armor" && !strings.HasPrefix(item.Category, "Броня") {
 			continue
 		}
-		categories[item.Category] = true
+		if item.Category != "Доп. умения" {
+			categories[item.Category] = true
+		}
 		if category != "" && item.Category != category {
 			continue
 		}
 		subcategories[item.Subcategory] = true
-		qualities[item.Quality] = true
+		if qualityName := strings.TrimSpace(item.Quality); qualityName != "" {
+			if qualityID, ok := qualities[qualityName]; !ok || item.QualityID < qualityID {
+				qualities[qualityName] = item.QualityID
+			}
+		}
 		if subcategory != "" && item.Subcategory != subcategory {
 			continue
 		}
@@ -1932,12 +2072,24 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 		if maxLevel > 0 && level > maxLevel {
 			continue
 		}
+		if knownSource == "1" {
+			if _, ok := rt.knownSourceItems[item.ID]; !ok {
+				continue
+			}
+		}
 		if queryNormalized != "" && !matchesSearch(store.itemSearch[i], queryNormalized) {
 			continue
 		}
 		filtered = append(filtered, item)
 	}
 	sort.SliceStable(filtered, func(i, j int) bool {
+		leftNameClass := catalogNameClass(filtered[i].Name)
+		rightNameClass := catalogNameClass(filtered[j].Name)
+		if leftNameClass == 4 || rightNameClass == 4 {
+			if leftNameClass != rightNameClass {
+				return leftNameClass < rightNameClass
+			}
+		}
 		if sortMode == "level" {
 			li, lj := itemLevel(filtered[i]), itemLevel(filtered[j])
 			if li != lj {
@@ -1945,9 +2097,9 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if sortMode == "rarity" && filtered[i].QualityID != filtered[j].QualityID {
-			return filtered[i].QualityID > filtered[j].QualityID
+			return filtered[i].QualityID < filtered[j].QualityID
 		}
-		return strings.ToLower(filtered[i].Name) < strings.ToLower(filtered[j].Name)
+		return catalogNameLess(filtered[i].Name, filtered[j].Name)
 	})
 	total := len(filtered)
 	start := (page - 1) * pageSize
@@ -1961,9 +2113,9 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 	}
 	if category == "" {
 		subcategories = map[string]bool{}
-		qualities = map[string]bool{}
+		qualities = map[string]int{}
 	}
-	writeJSON(w, map[string]any{"items": result, "total": total, "page": page, "pageSize": pageSize, "pages": max(1, (total+pageSize-1)/pageSize), "filters": map[string]any{"categories": sortedKeys(categories), "subcategories": sortedKeys(subcategories), "qualities": sortedKeys(qualities)}})
+	writeJSON(w, map[string]any{"items": result, "total": total, "page": page, "pageSize": pageSize, "pages": max(1, (total+pageSize-1)/pageSize), "filters": map[string]any{"categories": sortedItemCategories(categories), "subcategories": sortedKeys(subcategories), "qualities": sortedQualityKeys(qualities)}})
 }
 
 func itemSetMemberPresentationOrder(member ItemSetMember) int {
@@ -1988,6 +2140,266 @@ func itemSetForPresentation(value ItemSet) ItemSet {
 		return itemSetMemberPresentationOrder(value.Items[i]) < itemSetMemberPresentationOrder(value.Items[j])
 	})
 	return value
+}
+
+func recipeSourceTypeLabel(source string) string {
+	switch source {
+	case "Выпадение монстра":
+		return "Монстр"
+	case "Мировое выпадение":
+		return "Мировая добыча"
+	case "Сундук":
+		return "Сундук"
+	case "Квестовое выпадение", "Квестовый дроп":
+		return "Задание"
+	default:
+		if strings.TrimSpace(source) != "" {
+			return source
+		}
+		return "Источник"
+	}
+}
+
+func recipeSourceName(drop ItemDrop) string {
+	switch drop.Source {
+	case "Мировое выпадение":
+		if strings.TrimSpace(drop.Monster) != "" {
+			return drop.Monster
+		}
+		return "Мировая добыча"
+	case "Сундук":
+		if strings.TrimSpace(drop.Container) != "" {
+			return drop.Container
+		}
+		return "Сундук"
+	case "Квестовое выпадение", "Квестовый дроп":
+		if strings.TrimSpace(drop.Quest) != "" {
+			return drop.Quest
+		}
+		return "Задание"
+	default:
+		if strings.TrimSpace(drop.Monster) != "" {
+			return drop.Monster
+		}
+		return "Источник"
+	}
+}
+
+func recipeSummary(item *Item, rt *runtimeData) map[string]any {
+	result := itemSummary(item)
+	materials := itemRecipeMaterials(item.ID)
+	result["materials"] = materials
+	result["materialKinds"] = len(materials)
+	totalQuantity := 0
+	for _, material := range materials {
+		totalQuantity += max(1, material.Quantity)
+	}
+	result["materialQuantity"] = totalQuantity
+	result["masteryLevel"] = recipeMasteryLevel(item)
+	result["makeSkill"] = item.MakeSkill
+	drops := itemDropSources(item.ID, rt)
+	result["sourceCount"] = len(drops)
+	if len(drops) > 0 {
+		result["sourcePreview"] = map[string]any{
+			"type": recipeSourceTypeLabel(drops[0].Source),
+			"name": recipeSourceName(drops[0]),
+		}
+	}
+	return result
+}
+
+func handleRecipes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if r.URL.Path != "/api/recipes" {
+		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
+		return
+	}
+	qv := r.URL.Query()
+	query, queryOK := limitedQueryValue(qv, "q", 160)
+	recipeType, typeOK := limitedQueryValue(qv, "type", 120)
+	quality, qualityOK := limitedQueryValue(qv, "quality", 120)
+	if !queryOK || !typeOK || !qualityOK {
+		http.Error(w, "Слишком длинное значение фильтра.\n", http.StatusBadRequest)
+		return
+	}
+	knownSource := qv.Get("knownSource")
+	if knownSource != "" && knownSource != "1" {
+		http.Error(w, "Некорректное значение фильтра источника.\n", http.StatusBadRequest)
+		return
+	}
+	rt := activeRuntime(qv.Get("server"))
+	minLevel := clampInt(parseInt(qv, "minLevel", 0), 0, 10000)
+	maxLevel := clampInt(parseInt(qv, "maxLevel", 0), 0, 10000)
+	sortMode, sortOK := limitedQueryValue(qv, "sort", 20)
+	if !sortOK || (sortMode != "" && sortMode != "name" && sortMode != "level" && sortMode != "mastery" && sortMode != "rarity") {
+		http.Error(w, "Некорректный режим сортировки.\n", http.StatusBadRequest)
+		return
+	}
+	page := clampInt(parseInt(qv, "page", 1), 1, 100000)
+	pageSize := clampInt(parseInt(qv, "pageSize", 20), 8, 48)
+
+	filtered := make([]*Item, 0, len(store.itemRecipes))
+	types := map[string]bool{}
+	qualities := map[string]int{}
+	for id, sourceMaterials := range store.itemRecipes {
+		item := store.itemsByID[id]
+		if item == nil {
+			continue
+		}
+		if strings.TrimSpace(item.Subcategory) != "" {
+			types[item.Subcategory] = true
+		}
+		if qualityName := strings.TrimSpace(item.Quality); qualityName != "" {
+			if qualityID, ok := qualities[qualityName]; !ok || item.QualityID < qualityID {
+				qualities[qualityName] = item.QualityID
+			}
+		}
+		if recipeType != "" && item.Subcategory != recipeType {
+			continue
+		}
+		if quality != "" && item.Quality != quality {
+			continue
+		}
+		masteryLevel := recipeMasteryLevel(item)
+		if minLevel > 0 && masteryLevel < minLevel {
+			continue
+		}
+		if maxLevel > 0 && masteryLevel > maxLevel {
+			continue
+		}
+		if knownSource == "1" {
+			if _, ok := rt.knownSourceItems[item.ID]; !ok {
+				continue
+			}
+		}
+		if query != "" {
+			var search strings.Builder
+			fmt.Fprintf(&search, "%d %s %s %s %s", item.ID, item.Name, item.TypeLine, item.Subcategory, item.Quality)
+			for _, material := range sourceMaterials {
+				if materialItem := store.itemsByID[material.ItemID]; materialItem != nil {
+					fmt.Fprintf(&search, " %d %s", material.ItemID, materialItem.Name)
+				} else {
+					fmt.Fprintf(&search, " %d", material.ItemID)
+				}
+			}
+			if !matchesSearch(newSearchDocument(search.String()), query) {
+				continue
+			}
+		}
+		filtered = append(filtered, item)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		leftNameClass := catalogNameClass(filtered[i].Name)
+		rightNameClass := catalogNameClass(filtered[j].Name)
+		if leftNameClass == 4 || rightNameClass == 4 {
+			if leftNameClass != rightNameClass {
+				return leftNameClass < rightNameClass
+			}
+		}
+		if sortMode == "level" || sortMode == "mastery" {
+			li, lj := recipeMasteryLevel(filtered[i]), recipeMasteryLevel(filtered[j])
+			if li != lj {
+				return li < lj
+			}
+		}
+		if sortMode == "rarity" && filtered[i].QualityID != filtered[j].QualityID {
+			return filtered[i].QualityID < filtered[j].QualityID
+		}
+		return catalogNameLess(filtered[i].Name, filtered[j].Name)
+	})
+	total := len(filtered)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := min(total, start+pageSize)
+	result := make([]map[string]any, 0, end-start)
+	for _, item := range filtered[start:end] {
+		result = append(result, recipeSummary(item, rt))
+	}
+	writeJSON(w, map[string]any{
+		"recipes":  result,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+		"pages":    max(1, (total+pageSize-1)/pageSize),
+		"filters":  map[string]any{"types": sortedKeys(types), "qualities": sortedQualityKeys(qualities)},
+	})
+}
+
+func itemBonuses(item *Item) []map[string]any {
+	bonuses := make([]map[string]any, 0, len(item.Options))
+	for _, option := range item.Options {
+		spec, ok := store.data.EffectSpecs[strconv.Itoa(option.Type)]
+		name := spec.Name
+		if !ok || name == "" {
+			name = fmt.Sprintf("Неизвестный эффект (код %d)", option.Type)
+		}
+		value := fmt.Sprintf("%+d", option.Value)
+		if spec.Percent {
+			value = fmt.Sprintf("%+.2f%%", float64(option.Value))
+		}
+		bonuses = append(bonuses, map[string]any{"type": option.Type, "name": name, "value": value, "known": ok && strings.TrimSpace(spec.Name) != ""})
+	}
+	return bonuses
+}
+
+func recipeProductNameKey(name string) string {
+	value := strings.TrimSpace(name)
+	lower := strings.ToLower(value)
+	const recipePrefix = "[рецепт]"
+	if strings.HasPrefix(lower, recipePrefix) {
+		value = strings.TrimSpace(value[len(recipePrefix):])
+	}
+
+	// Some recipe names include only a display-level prefix such as "65ур.".
+	// It is not part of the crafted item's name, so remove it only when the
+	// prefix is syntactically unambiguous.
+	idx := 0
+	for idx < len(value) && value[idx] >= '0' && value[idx] <= '9' {
+		idx++
+	}
+	if idx > 0 {
+		rest := strings.TrimSpace(value[idx:])
+		lowerRest := strings.ToLower(rest)
+		if strings.HasPrefix(lowerRest, "ур.") {
+			value = strings.TrimSpace(rest[len("ур."):])
+		} else if strings.HasPrefix(lowerRest, "ур ") {
+			value = strings.TrimSpace(rest[len("ур "):])
+		}
+	}
+	return strings.ToLower(strings.Join(strings.Fields(value), " "))
+}
+
+func recipeProduct(item *Item) *Item {
+	if item == nil {
+		return nil
+	}
+	key := recipeProductNameKey(item.Name)
+	if key == "" {
+		return nil
+	}
+	var match *Item
+	for i := range store.data.Items {
+		candidate := &store.data.Items[i]
+		if candidate.ID == item.ID {
+			continue
+		}
+		if _, isRecipe := store.itemRecipes[candidate.ID]; isRecipe {
+			continue
+		}
+		if recipeProductNameKey(candidate.Name) != key {
+			continue
+		}
+		if match != nil {
+			return nil
+		}
+		match = candidate
+	}
+	return match
 }
 
 func handleItem(w http.ResponseWriter, r *http.Request) {
@@ -2015,20 +2427,18 @@ func handleItem(w http.ResponseWriter, r *http.Request) {
 			set = &value
 		}
 	}
-	bonuses := make([]map[string]any, 0, len(item.Options))
-	for _, option := range item.Options {
-		spec, ok := store.data.EffectSpecs[strconv.Itoa(option.Type)]
-		name := spec.Name
-		if !ok || name == "" {
-			name = fmt.Sprintf("Неизвестный эффект (код %d)", option.Type)
+	bonuses := itemBonuses(item)
+	var product map[string]any
+	if _, isRecipe := store.itemRecipes[id]; isRecipe {
+		if crafted := recipeProduct(item); crafted != nil {
+			product = map[string]any{
+				"item":    crafted,
+				"level":   itemLevel(crafted),
+				"bonuses": itemBonuses(crafted),
+			}
 		}
-		value := fmt.Sprintf("%+d", option.Value)
-		if spec.Percent {
-			value = fmt.Sprintf("%+.2f%%", float64(option.Value))
-		}
-		bonuses = append(bonuses, map[string]any{"type": option.Type, "name": name, "value": value, "known": ok && strings.TrimSpace(spec.Name) != ""})
 	}
-	writeJSON(w, map[string]any{"item": item, "level": itemLevel(item), "bonuses": bonuses, "set": set, "recipe": itemRecipeMaterials(id), "chest": chestContents(id, rt), "drops": itemDropSources(id, rt)})
+	writeJSON(w, map[string]any{"item": item, "level": itemLevel(item), "bonuses": bonuses, "set": set, "recipe": itemRecipeMaterials(id), "recipeProduct": product, "chest": chestContents(id, rt), "drops": itemDropSources(id, rt)})
 }
 
 func handleWorldSourceMonsters(w http.ResponseWriter, r *http.Request) {
@@ -2078,12 +2488,13 @@ func handleMonsterWorldDrops(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Некорректный идентификатор монстра.\n", http.StatusBadRequest)
 		return
 	}
+	rt := activeRuntime(q.Get("server"))
 	monster := store.monstersByID[monsterID]
-	if monster == nil {
+	if monster == nil || !monsterVisible(rt, monsterID) {
 		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
 		return
 	}
-	slots := monsterWorldDropView(monster, activeRuntime(q.Get("server")))
+	slots := monsterWorldDropView(monster, rt)
 	writeJSON(w, map[string]any{
 		"monsterId":         monsterID,
 		"slots":             slots,
@@ -2101,6 +2512,7 @@ func handleMonsters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	qv := r.URL.Query()
+	rt := activeRuntime(qv.Get("server"))
 	query, queryOK := limitedQueryValue(qv, "q", 160)
 	category, categoryOK := limitedQueryValue(qv, "category", 120)
 	typeName, typeOK := limitedQueryValue(qv, "type", 120)
@@ -2126,6 +2538,9 @@ func handleMonsters(w http.ResponseWriter, r *http.Request) {
 	filtered := make([]*Monster, 0, 256)
 	for i := range store.data.Monsters {
 		mon := &store.data.Monsters[i]
+		if !monsterVisible(rt, mon.ID) {
+			continue
+		}
 		categories[mon.Category] = true
 		types[mon.TypeName] = true
 		if category != "" && mon.Category != category {
@@ -2146,10 +2561,17 @@ func handleMonsters(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, mon)
 	}
 	sort.SliceStable(filtered, func(i, j int) bool {
+		leftNameClass := catalogNameClass(filtered[i].Name)
+		rightNameClass := catalogNameClass(filtered[j].Name)
+		if leftNameClass == 4 || rightNameClass == 4 {
+			if leftNameClass != rightNameClass {
+				return leftNameClass < rightNameClass
+			}
+		}
 		if sortMode == "level" && filtered[i].Level != filtered[j].Level {
 			return filtered[i].Level < filtered[j].Level
 		}
-		return strings.ToLower(filtered[i].Name) < strings.ToLower(filtered[j].Name)
+		return catalogNameLess(filtered[i].Name, filtered[j].Name)
 	})
 	total := len(filtered)
 	start := (page - 1) * pageSize
@@ -2177,12 +2599,12 @@ func handleMonster(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Некорректный идентификатор монстра.\n", http.StatusBadRequest)
 		return
 	}
+	rt := activeRuntime(r.URL.Query().Get("server"))
 	mon := store.monstersByID[id]
-	if mon == nil {
+	if mon == nil || !monsterVisible(rt, id) {
 		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
 		return
 	}
-	rt := activeRuntime(r.URL.Query().Get("server"))
 	groups, slots := monsterDropView(mon, rt)
 	writeJSON(w, map[string]any{"monster": mon, "groups": groups, "slots": slots, "worldRuleCount": monsterWorldRuleCount(mon, rt)})
 }
@@ -2206,8 +2628,8 @@ func monsterSummary(mon *Monster) map[string]any {
 		stats = append(stats, map[string]any{"name": name, "value": value})
 	}
 	add("HP", mon.HP)
-	add("Физ. защита", mon.Defense)
-	add("Маг. защита", mon.MagicDefense)
+	add("Физическая защита", mon.Defense)
+	add("Магическая защита", mon.MagicDefense)
 	return map[string]any{"id": mon.ID, "name": mon.Name, "category": mon.Category, "typeName": mon.TypeName, "level": mon.Level, "aggressive": mon.Aggressive, "stats": stats}
 }
 
@@ -2220,19 +2642,19 @@ func itemStats(item *Item) []map[string]any {
 	}
 
 	if item.PhysicalMin != 0 || item.PhysicalMax != 0 {
-		add("Физ. атака", fmt.Sprintf("%d–%d", item.PhysicalMin, item.PhysicalMax))
+		add("Физическая атака", fmt.Sprintf("%d–%d", item.PhysicalMin, item.PhysicalMax))
 	}
 	if item.MagicMin != 0 || item.MagicMax != 0 {
-		add("Маг. атака", fmt.Sprintf("%d–%d", item.MagicMin, item.MagicMax))
+		add("Магическая атака", fmt.Sprintf("%d–%d", item.MagicMin, item.MagicMax))
 	}
 	if item.Heal != 0 {
 		add("Лечение", item.Heal)
 	}
 	if item.PhysicalDefense != 0 {
-		add("Физ. защита", item.PhysicalDefense)
+		add("Физическая защита", item.PhysicalDefense)
 	}
 	if item.MagicDefense != 0 {
-		add("Маг. защита", item.MagicDefense)
+		add("Магическая защита", item.MagicDefense)
 	}
 	if len(item.CardSlots) != 0 {
 		add("Слоты карт", len(item.CardSlots))
@@ -2249,6 +2671,77 @@ func itemStats(item *Item) []map[string]any {
 	return stats
 }
 
+func isRussianCatalogLetter(r rune) bool {
+	r = unicode.ToLower(r)
+	return (r >= 'а' && r <= 'я') || r == 'ё'
+}
+
+func russianCatalogLetterOrder(r rune) int {
+	r = unicode.ToLower(r)
+	const alphabet = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+	for index, letter := range []rune(alphabet) {
+		if r == letter {
+			return index
+		}
+	}
+	return -1
+}
+
+func catalogNameClass(name string) int {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return 4
+	}
+	for _, first := range trimmed {
+		if isRussianCatalogLetter(first) {
+			return 0
+		}
+		if unicode.IsLetter(first) {
+			return 1
+		}
+		if unicode.IsDigit(first) {
+			return 2
+		}
+		return 3
+	}
+	return 4
+}
+
+func catalogFoldedTextLess(left, right string) bool {
+	leftRunes := []rune(strings.ToLower(left))
+	rightRunes := []rune(strings.ToLower(right))
+	limit := min(len(leftRunes), len(rightRunes))
+	for i := 0; i < limit; i++ {
+		if leftRunes[i] == rightRunes[i] {
+			continue
+		}
+		leftRussian := russianCatalogLetterOrder(leftRunes[i])
+		rightRussian := russianCatalogLetterOrder(rightRunes[i])
+		if leftRussian >= 0 && rightRussian >= 0 {
+			return leftRussian < rightRussian
+		}
+		return leftRunes[i] < rightRunes[i]
+	}
+	return len(leftRunes) < len(rightRunes)
+}
+
+func catalogNameLess(left, right string) bool {
+	leftTrimmed := strings.TrimSpace(left)
+	rightTrimmed := strings.TrimSpace(right)
+	leftClass := catalogNameClass(leftTrimmed)
+	rightClass := catalogNameClass(rightTrimmed)
+	if leftClass != rightClass {
+		return leftClass < rightClass
+	}
+	if leftClass == 4 {
+		return false
+	}
+	if strings.EqualFold(leftTrimmed, rightTrimmed) {
+		return leftTrimmed < rightTrimmed
+	}
+	return catalogFoldedTextLess(leftTrimmed, rightTrimmed)
+}
+
 func sortedKeys(values map[string]bool) []string {
 	out := make([]string, 0, len(values))
 	for key := range values {
@@ -2256,7 +2749,59 @@ func sortedKeys(values map[string]bool) []string {
 			out = append(out, key)
 		}
 	}
-	sort.Strings(out)
+	sort.SliceStable(out, func(i, j int) bool {
+		return catalogNameLess(out[i], out[j])
+	})
+	return out
+}
+
+func itemCategoryFilterRank(category string) int {
+	category = strings.TrimSpace(category)
+	switch {
+	case category == "Оружие/щит":
+		return 0
+	case strings.HasPrefix(category, "Броня"):
+		return 1
+	case category == "Бижутерия":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func sortedItemCategories(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for key := range values {
+		if strings.TrimSpace(key) != "" {
+			out = append(out, key)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		leftRank := itemCategoryFilterRank(out[i])
+		rightRank := itemCategoryFilterRank(out[j])
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		return catalogNameLess(out[i], out[j])
+	})
+	return out
+}
+
+func sortedQualityKeys(values map[string]int) []string {
+	out := make([]string, 0, len(values))
+	for key := range values {
+		if strings.TrimSpace(key) != "" {
+			out = append(out, key)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		leftID := values[out[i]]
+		rightID := values[out[j]]
+		if leftID != rightID {
+			return leftID < rightID
+		}
+		return catalogNameLess(out[i], out[j])
+	})
 	return out
 }
 
@@ -2287,6 +2832,7 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONRequest(w, r, &request, 1<<20) {
 		return
 	}
+	rt := activeRuntime(request.Server)
 	legacyRequest := request.Page == 0 && request.PageSize == 0
 	maximumKeys := 5000
 	if legacyRequest {
@@ -2324,7 +2870,7 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 				missing++
 			}
 		case "monster":
-			if store.monstersByID[id] != nil {
+			if store.monstersByID[id] != nil && monsterVisible(rt, id) {
 				references = append(references, favoriteReference{kind: "monster", id: id})
 			} else {
 				missing++

@@ -1,16 +1,16 @@
 ﻿$ErrorActionPreference = "Stop"
 
-$Version = "1.0.1"
+$Version = "1.1.0"
 $ExpectedGo = "go$((Get-Content (Join-Path $PSScriptRoot '.go-version') -Raw).Trim())"
 $ActualGo = ((& go version) -split '\s+')[2]
 $IsDiagnostic = $ActualGo -ne $ExpectedGo
 
 if ($IsDiagnostic -and $env:IRIS_ALLOW_UNSUPPORTED_GO -ne "1") {
-    throw "Требуется $ExpectedGo, обнаружен $ActualGo. Для диагностической сборки задайте IRIS_ALLOW_UNSUPPORTED_GO=1."
+    throw "Требуется $ExpectedGo, но обнаружен $ActualGo. Для диагностической сборки задайте IRIS_ALLOW_UNSUPPORTED_GO=1."
 }
 
 if (-not $IsDiagnostic -and $env:IRIS_SKIP_CHECKS -eq "1") {
-    throw "IRIS_SKIP_CHECKS=1 разрешён только для диагностической сборки. Публикационная сборка должна пройти все проверки."
+    throw "IRIS_SKIP_CHECKS=1 разрешён только для диагностической сборки. Сборка для публикации должна пройти все проверки."
 }
 
 $EnvironmentNames = @("CGO_ENABLED", "GOOS", "GOARCH", "GOAMD64", "GO386")
@@ -35,7 +35,7 @@ try {
         if ([string]::IsNullOrWhiteSpace($CompilerName)) { $CompilerName = "gcc" }
         $Compiler = Get-Command $CompilerName -ErrorAction SilentlyContinue
         if ($null -eq $Compiler) {
-            throw "Для go test -race требуется GCC/CGO. Установите GCC или задайте CC на доступный C-компилятор."
+            throw "Для go test -race требуется GCC/CGO. Установите GCC или укажите в CC доступный C-компилятор."
         }
         $env:CGO_ENABLED = "1"
         & go test -race -count=1 ./...
@@ -47,7 +47,7 @@ try {
         & node --check web/app.js
         if ($LASTEXITCODE -ne 0) { throw "node --check завершился с ошибкой." }
         & python3 -m unittest discover -s tools -p "test_*.py"
-        if ($LASTEXITCODE -ne 0) { throw "Python tests завершились с ошибкой." }
+        if ($LASTEXITCODE -ne 0) { throw "Python-тесты завершились с ошибкой." }
     }
 
     foreach ($Resource in @("resource_windows_amd64.syso", "resource_windows_386.syso", "resource_windows_arm64.syso")) {

@@ -58,7 +58,7 @@ ITEM_SUPPLEMENT_PRESENTATION = {
     "limitExtraRaw": "technical", "kindOf": "technical", "eventType": "technical",
     "buyCurrency": "technical", "buyPrice": "technical", "maxInventory": "restriction",
     "termSet": "restriction-or-technical", "termDuration": "restriction-or-technical",
-    "printableFlag": "action", "limitIndex": "technical", "tarotIndex": "technical",
+    "printableFlag": "technical", "limitIndex": "technical", "tarotIndex": "technical",
     "spreadIndex": "technical", "degradationIndex": "action-and-technical", "cardSlotIndex": "technical",
     "enhanceProbabilityIndex": "technical", "enhancedIndex": "action-and-technical",
     "reinforcingIndex": "technical", "changeIndex": "technical", "titleIndex": "technical",

@@ -23,7 +23,7 @@ import (
 
 const (
 	sessionHeartbeatTimeout  = 90 * time.Second
-	sessionShutdownGrace     = 6 * time.Second
+	sessionShutdownGrace     = 3 * time.Second
 	startupSessionTimeout    = 55 * time.Second
 	serverShutdownTimeout    = 8 * time.Second
 	maxSessionCount          = 128
@@ -50,6 +50,7 @@ type application struct {
 	autoExit                  bool
 	shutdownOnHeartbeatExpiry bool
 	startupTimeout            time.Duration
+	updates                   *updateChecker
 }
 
 type sessionEmptyReason uint8
@@ -272,10 +273,14 @@ func (s *sessionManager) ShouldShutdown(now time.Time, allowHeartbeatExpiry ...b
 	if s.emptyReason == sessionEmptyExplicitClose && len(s.expiredSessions) == 0 {
 		return true
 	}
-	if s.emptyReason == sessionEmptyExpiredTombstone && len(s.expiredSessions) == 0 {
-		return true
+	allowLeaseExpiry := len(allowHeartbeatExpiry) > 0 && allowHeartbeatExpiry[0]
+	if !allowLeaseExpiry {
+		// A browser may suspend JavaScript timers for a background/sleeping tab.
+		// Missing heartbeats (including expiry of their tombstones) are therefore
+		// never authoritative evidence that a normal browser window was closed.
+		return false
 	}
-	return len(allowHeartbeatExpiry) > 0 && allowHeartbeatExpiry[0] && s.emptyReason == sessionEmptyHeartbeatExpiry
+	return s.emptyReason == sessionEmptyHeartbeatExpiry || s.emptyReason == sessionEmptyExpiredTombstone
 }
 
 func (s *sessionManager) FirstOpened() <-chan struct{} { return s.firstOpened }
@@ -466,7 +471,7 @@ func validateListenAddress(address string) error {
 	}
 	ip := net.ParseIP(host)
 	if ip == nil || !ip.IsLoopback() {
-		return errors.New("приложение разрешает прослушивание только loopback-адреса")
+		return errors.New("приложение может прослушивать только локальные адреса обратной петли")
 	}
 	return nil
 }

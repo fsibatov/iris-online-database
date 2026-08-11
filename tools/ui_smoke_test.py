@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 from smoke_common import RunningApp, json_request, require_binary
 
@@ -25,20 +26,29 @@ def main() -> None:
         app.wait_ready()
         status, seeded_profile = json_request(app.base_url, "/api/user-data")
         assert status == 200, seeded_profile
-        seeded_profile["itemFilters"] = {"q": "старый поиск", "sort": "name"}
-        seeded_profile["monsterFilters"] = {"q": "старый монстр", "sort": "name"}
+        seeded_profile["itemFilters"] = {"q": "старый поиск", "category": "Оружие/щит", "quality": "Редкий", "minLevel": "40", "sort": "level"}
+        seeded_profile["monsterFilters"] = {"q": "старый монстр", "category": "Монстр", "type": "boss", "minLevel": "50", "sort": "level"}
         status, _ = json_request(app.base_url, "/api/user-data", method="PUT", payload=seeded_profile)
         assert status == 200
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
+            try:
+                browser = playwright.chromium.launch(headless=True)
+            except PlaywrightError:
+                executable = shutil.which("chromium") or shutil.which("chromium-browser") or shutil.which("google-chrome")
+                if not executable:
+                    raise
+                browser = playwright.chromium.launch(headless=True, executable_path=executable)
             page = browser.new_page(viewport={"width": 375, "height": 900})
             def proxy_request(route):
                 request = route.request
                 parsed = urlsplit(request.url)
                 target = app.base_url + parsed.path + (("?" + parsed.query) if parsed.query else "")
+                if parsed.path == "/api/update-check":
+                    route.fulfill(status=200, headers={"Content-Type": "application/json"}, body=b'{"currentVersion":"1.1.0","latestVersion":"1.1.0","updateAvailable":false,"checked":true}')
+                    return
                 if parsed.path.startswith("/api/items/"):
                     time.sleep(0.015)
-                if parsed.path in {"/api/items", "/api/monsters"}:
+                if parsed.path in {"/api/items", "/api/monsters", "/api/recipes"}:
                     time.sleep(0.04)
                 headers = {"Accept": request.headers.get("accept", "*/*")}
                 if request.headers.get("content-type"):
@@ -66,8 +76,8 @@ def main() -> None:
               });
             }""")
             page.evaluate("""() => {
-              localStorage.setItem('iris-item-filters', JSON.stringify({q:'локальный старый поиск', sort:'name'}));
-              localStorage.setItem('iris-monster-filters', JSON.stringify({q:'локальный старый монстр', sort:'name'}));
+              localStorage.setItem('iris-item-filters', JSON.stringify({q:'локальный старый поиск', category:'Оружие/щит', quality:'Редкий', minLevel:'40', sort:'level'}));
+              localStorage.setItem('iris-monster-filters', JSON.stringify({q:'локальный старый монстр', category:'Монстр', type:'boss', minLevel:'50', sort:'level'}));
             }""")
             with urllib.request.urlopen(app.base_url + "/", timeout=10) as response:
                 html = response.read().decode("utf-8")
@@ -85,7 +95,7 @@ def main() -> None:
             page.wait_for_selector("#globalSearch")
             assert page.locator("#globalSearch").input_value() == "", "global search was restored from a previous launch"
 
-            assert page.locator(".home-resources", has_text="Ресурсы Iris Online").count() == 1
+            assert page.locator(".home-resources", has_text="Полезные ссылки").count() == 1
             assert page.locator('.home-resources a[href="https://irisonline.ru/"]').count() == 1
             assert page.locator('.home-resources a[href="https://wiki.irisonline.ru/"]').count() == 1
             assert page.locator('.home-resources a[href="https://vk.com/irisonru"]').count() == 1
@@ -101,6 +111,22 @@ def main() -> None:
             page.evaluate("location.hash = 'items'")
             page.wait_for_selector('.catalog-page[data-catalog-kind="items"]')
             assert page.locator('[data-catalog-search]').input_value() == "", "item catalog search persisted across launch"
+
+            page.evaluate("location.hash = 'recipes'")
+            page.wait_for_selector('.catalog-page[data-catalog-kind="recipes"]')
+            assert page.locator('.recipe-result-row').count() > 0, "recipe catalog rendered no rows"
+            assert page.locator('.recipe-material-preview').count() > 0, "recipe material preview is missing"
+            page.locator('[data-action="open-filters"]').click()
+            recipe_source_checkbox = page.locator('#filterDrawer input[name="knownSource"]')
+            assert recipe_source_checkbox.count() == 1, "recipe known-source checkbox is missing"
+            recipe_source_checkbox.check()
+            page.keyboard.press('Escape')
+            page.wait_for_timeout(500)
+            page.locator('.recipe-result-row .result-main').first.click()
+            page.wait_for_selector('.detail-page[data-route^="recipe/"]')
+            assert page.locator('.recipe-materials', has_text="Материалы рецепта").count() == 1
+            page.evaluate("location.hash = 'items'")
+            page.wait_for_selector('.catalog-page[data-catalog-kind="items"]')
             page.evaluate("""() => {
               window.__irisCatalogTransitionAudit = {stateMessages: 0, catalogMissing: 0};
               const host = document.querySelector('main');
@@ -168,10 +194,21 @@ def main() -> None:
 
             page.evaluate("location.hash = 'items'")
             page.wait_for_selector('[data-action="open-filters"]')
+            assert page.locator('[data-catalog-search]').input_value() == "", "item catalog search survived restart"
+            assert page.locator('[data-catalog-sort]').input_value() == "name", "item sort survived restart"
+            assert page.locator('[data-filter-count]').inner_text().strip() == "", "item filters survived restart"
             page.locator('[data-action="open-filters"]').click()
             assert page.locator("#filterDrawer").is_visible()
+            assert page.locator('#filterDrawerBody [name="category"]').input_value() == ""
+            assert page.locator('#filterDrawerBody [name="minLevel"]').input_value() == ""
             page.keyboard.press("Escape")
             assert page.locator("#filterDrawer").is_hidden()
+
+            page.evaluate("location.hash = 'monsters'")
+            page.wait_for_selector('[data-action="open-filters"]')
+            assert page.locator('[data-catalog-search]').input_value() == "", "monster catalog search survived restart"
+            assert page.locator('[data-catalog-sort]').input_value() == "name", "monster sort survived restart"
+            assert page.locator('[data-filter-count]').inner_text().strip() == "", "monster filters survived restart"
 
             page.locator("#moreButton").click()
             assert page.locator("#moreMenu").is_visible()
@@ -202,14 +239,14 @@ def main() -> None:
             sources = page.locator('.item-sources')
             assert sources.count() == 1
             sources.locator('summary').click()
-            quest_section = page.locator('.source-section', has_text='Квестовые источники')
+            quest_section = page.locator('.source-section', has_text='Задания')
             assert quest_section.count() == 1
             quest_row = quest_section.locator('.source-row').first
             assert quest_row.locator(':scope > span:nth-child(2) > strong').inner_text().strip() == 'Поленьи поленья'
             assert quest_row.locator(':scope > span:nth-child(2) > small').inner_text().strip() == 'Квест'
             sources.locator('[data-dialog="chance"]').click()
             chance_text = page.locator('#infoDialogBody').inner_text()
-            for expected in ('Шанс группы', 'Если группа выбрана', 'оба шага'):
+            for expected in ('Шанс группы', 'Если группа выбрана', 'оба выбора'):
                 assert expected.lower() in chance_text.lower(), f"simple chance explanation missing: {expected}"
             for forbidden in ('накопительн', 'item_change', '.txt', 'вес в исходной таблице'):
                 assert forbidden not in chance_text.lower(), f"technical chance wording remains: {forbidden}"
@@ -293,7 +330,7 @@ def main() -> None:
             assert item_heading.locator(".set-label").count() == 1
             properties = page.locator(".game-properties")
             property_text = re.sub(r"\s+", " ", properties.inner_text()).strip()
-            for expected in ("Физ. защита: 487", "Маг. защита: 189", "Вес: 98", "Физ. атака: +44", "Выносливость: +47", "Цена продажи: 2,950 тер"):
+            for expected in ("Физическая защита: 487", "Магическая защита: 189", "Вес: 98", "Физ. атака: +44", "Выносливость: +47", "Цена продажи: 2,950 тер"):
                 assert expected in property_text, f"missing item property: {expected}"
             slot_row = properties.locator(".property-card-slots")
             assert slot_row.count() == 1
@@ -306,28 +343,31 @@ def main() -> None:
             assert "Класс:" not in property_text
 
             # Recently viewed persists compact item/monster records and keeps equal numeric IDs distinct.
-            page.evaluate("location.hash = 'item/253'")
-            page.wait_for_selector('.detail-page[data-route="item/253"]')
-            item_253_name = page.locator('.detail-heading h1').inner_text()
-            page.evaluate("location.hash = 'monster/253'")
-            page.wait_for_selector('.detail-page[data-route="monster/253"]')
-            monster_253_name = page.locator('.detail-heading h1').inner_text()
+            page.evaluate("location.hash = 'item/1'")
+            page.wait_for_selector('.detail-page[data-route="item/1"]')
+            item_1_name = page.locator('.detail-heading h1').inner_text()
+            page.evaluate("location.hash = 'monster/1'")
+            page.wait_for_selector('.detail-page[data-route="monster/1"]')
+            monster_1_name = page.locator('.detail-heading h1').inner_text()
             page.evaluate("location.hash = 'home'")
             page.wait_for_selector('.recent-viewed-list')
             recent_hrefs = page.locator('.recent-viewed-list a').evaluate_all("links => links.map(link => link.getAttribute('href'))")
-            assert recent_hrefs[:2] == ['#monster/253', '#item/253'], recent_hrefs
-            assert page.locator('.recent-viewed-list a[href="#monster/253"]', has_text=monster_253_name).count() == 1
-            assert page.locator('.recent-viewed-list a[href="#item/253"]', has_text=item_253_name).count() == 1
-            page.evaluate("location.hash = 'monster/253'")
-            page.wait_for_selector('.detail-page[data-route="monster/253"]')
+            assert recent_hrefs[:2] == ['#monster/1', '#item/1'], recent_hrefs
+            assert page.locator('.recent-viewed-list a[href="#monster/1"]', has_text=monster_1_name).count() == 1
+            assert page.locator('.recent-viewed-list a[href="#item/1"]', has_text=item_1_name).count() == 1
+            assert page.locator('.recent-viewed-card').count() == 0
+            assert page.locator('.recent-viewed-list a[href="#monster/1"] small').inner_text().strip() == 'Монстр'
+            assert page.locator('.recent-viewed-list a[href="#item/1"] small').inner_text().strip() == 'Предмет'
+            page.evaluate("location.hash = 'monster/1'")
+            page.wait_for_selector('.detail-page[data-route="monster/1"]')
             page.evaluate("location.hash = 'home'")
             page.wait_for_selector('.recent-viewed-list')
             recent_hrefs = page.locator('.recent-viewed-list a').evaluate_all("links => links.map(link => link.getAttribute('href'))")
-            assert recent_hrefs.count('#monster/253') == 1 and recent_hrefs[0] == '#monster/253', recent_hrefs
+            assert recent_hrefs.count('#monster/1') == 1 and recent_hrefs[0] == '#monster/1', recent_hrefs
             page.wait_for_function("""async () => {
               const response = await fetch('/api/user-data');
               const profile = await response.json();
-              return Array.isArray(profile.recentlyViewed) && profile.recentlyViewed.some(row => row.type === 'monster' && row.id === 253) && profile.recentlyViewed.some(row => row.type === 'item' && row.id === 253);
+              return Array.isArray(profile.recentlyViewed) && profile.recentlyViewed.some(row => row.type === 'monster' && row.id === 1) && profile.recentlyViewed.some(row => row.type === 'item' && row.id === 1);
             }""", timeout=3000)
 
             page.evaluate("location.hash = 'item/80243'")
@@ -562,7 +602,7 @@ def main() -> None:
             page.wait_for_selector('.world-monster-row')
             initial_world = world_source.locator('.world-monster-row').count()
             assert 0 < initial_world <= 50, initial_world
-            assert 'нет подтверждённой привязки конкретного монстра к типу карты' in world_source.inner_text()
+            assert 'нет подтверждённой связи конкретного монстра с типом карты' in world_source.inner_text()
             assert '%' in world_source.locator('.world-monster-row').first.inner_text()
             assert not page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"), "expanded world source overflows the mobile viewport"
 
@@ -674,6 +714,20 @@ def main() -> None:
             page.evaluate("location.hash = 'items'")
             page.wait_for_selector('[data-action="open-filters"]')
             assert page.locator('[data-drop-group-host] > a').count() == 0, "lazy drop DOM survived route change"
+
+            # Known-source filter is a real server-aware catalog filter, not only a visual checkbox.
+            total_before = int(page.locator('[data-catalog-count]').inner_text().split(':', 1)[1].strip().replace('\u00a0', '').replace(' ', ''))
+            page.locator('[data-action="open-filters"]').click()
+            known_source = page.locator('#filterDrawerBody input[name="knownSource"]')
+            assert known_source.count() == 1 and not known_source.is_checked()
+            known_source.check()
+            page.wait_for_function("() => document.querySelector('[data-filter-count]')?.textContent.trim() === '1'")
+            assert page.locator('[data-active-filters]', has_text='Известно, где получить').count() == 1
+            total_known = int(page.locator('[data-catalog-count]').inner_text().split(':', 1)[1].strip().replace('\u00a0', '').replace(' ', ''))
+            assert 0 < total_known <= total_before, (total_known, total_before)
+            page.locator('#resetFiltersButton').click()
+            page.wait_for_function("() => document.querySelector('[data-filter-count]')?.textContent.trim() === ''")
+            page.locator('#closeFiltersButton').click()
 
             for route in ("items", "monsters", "favorites", "items", "monster/10042", "items") * 4:
                 page.evaluate("route => { location.hash = route; }", route)

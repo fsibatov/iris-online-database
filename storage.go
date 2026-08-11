@@ -79,9 +79,11 @@ type userSettings struct {
 }
 
 type recentViewEntry struct {
-	Type string `json:"type"`
-	ID   int    `json:"id"`
-	Name string `json:"name"`
+	Type   string `json:"type"`
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Meta   string `json:"meta,omitempty"`
+	Server string `json:"server,omitempty"`
 }
 
 type userProfile struct {
@@ -225,15 +227,10 @@ func sanitizeProfile(profile userProfile) userProfile {
 	if profile.Settings.View != "cards" && profile.Settings.View != "list" {
 		profile.Settings.View = "cards"
 	}
-	profile.ItemFilters = sanitizeFilterMap(profile.ItemFilters, map[string]bool{"q": true, "category": true, "subcategory": true, "quality": true, "minLevel": true, "maxLevel": true, "sort": true})
-	if profile.ItemFilters["category"] == "" {
-		profile.ItemFilters["subcategory"] = ""
-		profile.ItemFilters["quality"] = ""
-	}
-	profile.MonsterFilters = sanitizeFilterMap(profile.MonsterFilters, map[string]bool{"q": true, "category": true, "type": true, "minLevel": true, "maxLevel": true, "sort": true})
-	if profile.MonsterFilters["category"] == "" {
-		profile.MonsterFilters["type"] = ""
-	}
+	// Catalog filters are session-only state. Keep the schema fields for
+	// backward compatibility, but never retain values across application runs.
+	profile.ItemFilters = map[string]string{}
+	profile.MonsterFilters = map[string]string{}
 	profile.Favorites = sanitizeStringList(profile.Favorites, 5000, 80, func(value string) bool {
 		parts := strings.Split(value, ":")
 		if len(parts) != 2 || (parts[0] != "item" && parts[0] != "monster") {
@@ -262,10 +259,21 @@ func sanitizeRecentViews(values []recentViewEntry, maxCount int) []recentViewEnt
 	for _, entry := range values {
 		entry.Type = strings.TrimSpace(entry.Type)
 		entry.Name = strings.TrimSpace(entry.Name)
+		entry.Meta = strings.TrimSpace(entry.Meta)
 		if (entry.Type != "item" && entry.Type != "monster") || entry.ID <= 0 || entry.Name == "" || len([]rune(entry.Name)) > 160 {
 			continue
 		}
-		key := fmt.Sprintf("%s:%d", entry.Type, entry.ID)
+		if len([]rune(entry.Meta)) > 240 {
+			entry.Meta = string([]rune(entry.Meta)[:240])
+		}
+		entry.Server = normalizeServerDataKey(entry.Server)
+		if entry.Type == "monster" && entry.Server != "" && entry.Server != "kiss" && entry.Server != "original" {
+			continue
+		}
+		if entry.Type == "item" {
+			entry.Server = ""
+		}
+		key := fmt.Sprintf("%s:%d:%s", entry.Type, entry.ID, entry.Server)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -308,24 +316,6 @@ func copyRawMessageMap(values map[string]json.RawMessage) map[string]json.RawMes
 	result := make(map[string]json.RawMessage, len(values))
 	for key, value := range values {
 		result[key] = append(json.RawMessage(nil), value...)
-	}
-	return result
-}
-
-func sanitizeFilterMap(values map[string]string, allowed map[string]bool) map[string]string {
-	result := make(map[string]string, len(values))
-	for key, value := range values {
-		if !allowed[key] {
-			continue
-		}
-		value = strings.TrimSpace(value)
-		if len([]rune(value)) > 160 {
-			continue
-		}
-		if key == "sort" && value != "" && value != "name" && value != "level" && value != "rarity" {
-			continue
-		}
-		result[key] = value
 	}
 	return result
 }
@@ -681,7 +671,7 @@ func cleanupDirectory(root string, maxAge time.Duration, maxBytes int64, current
 func cleanupVersions(root string, keep int, currentExecutable string, logger interface{ Printf(string, ...any) }) []string {
 	rootAbs, ok := safeMaintenanceRoot(root)
 	if !ok {
-		logger.Printf("очистка Versions пропущена: небезопасный путь")
+		logger.Printf("очистка каталога Versions пропущена: небезопасный путь")
 		return nil
 	}
 	entries, err := os.ReadDir(rootAbs)
