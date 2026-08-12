@@ -96,6 +96,27 @@ def read_text(path: Path) -> str | None:
         raise AssertionError(f"{relative(path)}: invalid UTF-8: {exc}") from exc
 
 
+def safe_failure_message(item: str) -> str:
+    """Return a log-safe category without echoing the original failure payload."""
+    if item.startswith("possible "):
+        return "possible secret detected: [redacted]"
+    if item.startswith("absolute developer path"):
+        return "absolute developer path detected: [redacted]"
+    if item.startswith("forbidden release directory:"):
+        return "forbidden release directory detected"
+    if item.startswith("forbidden release file:"):
+        return "forbidden release file detected"
+    if item.startswith("generated Windows resource stored in source:"):
+        return "generated Windows resource stored in source"
+    if item.startswith("Python shebang is not allowed in tools:"):
+        return "Python shebang is not allowed in tools"
+    if item.startswith("invalid JSON "):
+        return "invalid JSON detected"
+    if "invalid UTF-8:" in item:
+        return "invalid UTF-8 detected"
+    return "repository audit finding: [details redacted]"
+
+
 def main() -> int:
     failures: list[str] = []
     warnings: list[str] = []
@@ -123,6 +144,13 @@ def main() -> int:
             continue
         if text is None:
             continue
+
+        if (
+            path.suffix.lower() == ".py"
+            and path.parent == ROOT / "tools"
+            and text.startswith("#!")
+        ):
+            failures.append(f"Python shebang is not allowed in tools: {rel}")
 
         if path.name != "repository_audit.py":
             for label, pattern in SECRET_PATTERNS.items():
@@ -154,10 +182,7 @@ def main() -> int:
     if failures:
         print("Repository audit: FAIL")
         for item in failures:
-            if item.startswith("possible "):
-                print("FAIL: possible secret detected: [redacted]")
-            else:
-                print(f"FAIL: {item}")
+            print(f"FAIL: {safe_failure_message(item)}")
         return 1
 
     print("Repository audit: PASS")

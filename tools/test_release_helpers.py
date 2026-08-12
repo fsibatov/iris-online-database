@@ -154,8 +154,10 @@ class ReleaseHelperTests(unittest.TestCase):
                 check=False,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("forbidden release directory: __pycache__/", result.stdout)
-            self.assertIn("forbidden release file: $coverage", result.stdout)
+            self.assertIn("forbidden release directory detected", result.stdout)
+            self.assertNotIn("__pycache__/", result.stdout)
+            self.assertIn("forbidden release file detected", result.stdout)
+            self.assertNotIn("$coverage", result.stdout)
         finally:
             coverage_file.unlink(missing_ok=True)
             shutil.rmtree(cache_dir, ignore_errors=True)
