@@ -154,7 +154,10 @@ def main() -> int:
     if failures:
         print("Repository audit: FAIL")
         for item in failures:
-            print(f"FAIL: {item}")
+            if item.startswith("possible "):
+                print("FAIL: possible secret detected: [redacted]")
+            else:
+                print(f"FAIL: {item}")
         return 1
 
     print("Repository audit: PASS")

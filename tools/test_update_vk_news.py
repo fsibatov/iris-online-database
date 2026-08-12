@@ -32,6 +32,25 @@ class VKNewsUpdaterTests(unittest.TestCase):
         self.assertIn('meta[property="og:description"]', module.POST_META_SELECTORS)
         self.assertIn('meta[name="twitter:description"]', module.POST_META_SELECTORS)
 
+    def test_metadata_from_html_extracts_preview_and_timestamp(self):
+        raw = (
+            "<html><head>"
+            '<meta property="og:description" content="  Текст   новости  ">'
+            '<meta property="article:published_time" content="2026-08-12T15:00:00+03:00">'
+            "</head></html>"
+        )
+        text, published_at = module._metadata_from_html(raw)
+        self.assertEqual(text, "Текст новости")
+        self.assertEqual(published_at, "2026-08-12T12:00:00Z")
+
+    def test_error_summary_does_not_echo_navigation_url(self):
+        error = RuntimeError(
+            "Page.goto: net::ERR_ABORTED at https://example.invalid/private/path"
+        )
+        summary = module._error_summary(error)
+        self.assertEqual(summary, "net::ERR_ABORTED")
+        self.assertNotIn("example.invalid", summary)
+
     def test_update_file_does_not_rewrite_unchanged_post(self):
         payload = {
             "schema": 1,
@@ -87,6 +106,8 @@ class VKNewsUpdaterTests(unittest.TestCase):
         self.assertIn("-r tools/requirements-audit.txt", workflow)
         self.assertNotIn("playwright==", workflow)
         self.assertIn("git diff --quiet -- data/latest-vk.json", workflow)
+        self.assertIn("for attempt in 1 2 3", workflow)
+        self.assertIn("VK update failed after 3 attempts", workflow)
         self.assertNotIn("VK_ACCESS_TOKEN", workflow)
 
     def test_seed_news_file_is_valid(self):
