@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build the additive set-effect projection from original Iris Online resources.
 
 The source resources are intentionally NOT bundled with the public/source release.

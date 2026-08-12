@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Reproducible API smoke test for Iris Online."""
 
 from __future__ import annotations

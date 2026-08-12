@@ -17,6 +17,7 @@ const (
 	vkNewsJSONURL              = "https://raw.githubusercontent.com/fsibatov/iris-online-database/main/data/latest-vk.json"
 	maxCommunityNewsBytes      = 256 << 10
 	maxCommunityPostTextLength = 4000
+	communityCacheTTL          = 2 * time.Minute
 )
 
 type communityStatusResult struct {
@@ -42,6 +43,7 @@ type communityNewsFile struct {
 type communityChecker struct {
 	mu        sync.Mutex
 	attempted bool
+	checkedAt time.Time
 	result    communityStatusResult
 	client    *http.Client
 	newsURL   string
@@ -81,11 +83,12 @@ func (c *communityChecker) Check(ctx context.Context, force bool) communityStatu
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.attempted && !force {
+	if c.attempted && c.result.Available && !force && time.Since(c.checkedAt) < communityCacheTTL {
 		return c.result
 	}
 	c.result = checkCommunityNewsJSON(ctx, c.client, c.newsURL, force)
 	c.attempted = true
+	c.checkedAt = time.Now()
 	return c.result
 }
 
@@ -99,13 +102,15 @@ func checkCommunityNewsJSON(ctx context.Context, client *http.Client, target str
 	}
 
 	requestURL := target
-	if force {
-		if parsed, err := url.Parse(target); err == nil {
-			query := parsed.Query()
-			query.Set("refresh", strconv.FormatInt(time.Now().UnixNano(), 10))
-			parsed.RawQuery = query.Encode()
-			requestURL = parsed.String()
+	if parsed, err := url.Parse(target); err == nil {
+		query := parsed.Query()
+		refresh := time.Now().UTC().Truncate(time.Minute).Unix()
+		if force {
+			refresh = time.Now().UnixNano()
 		}
+		query.Set("refresh", strconv.FormatInt(refresh, 10))
+		parsed.RawQuery = query.Encode()
+		requestURL = parsed.String()
 	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
@@ -114,9 +119,8 @@ func checkCommunityNewsJSON(ctx context.Context, client *http.Client, target str
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", "IrisOnlineDatabase/1.1.0")
-	if force {
-		request.Header.Set("Cache-Control", "no-cache")
-	}
+	request.Header.Set("Cache-Control", "no-cache")
+	request.Header.Set("Pragma", "no-cache")
 
 	response, err := client.Do(request)
 	if err != nil {

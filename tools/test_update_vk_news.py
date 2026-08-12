@@ -26,6 +26,12 @@ class VKNewsUpdaterTests(unittest.TestCase):
             module.normalize_text("  Один  \\n\\n Два   слова "), "Один\nДва слова"
         )
 
+    def test_post_text_fallback_selectors_cover_dom_and_metadata(self):
+        self.assertIn('[data-testid="post_text"]', module.POST_TEXT_SELECTORS)
+        self.assertIn('[data-testid="wall_post_text"]', module.POST_TEXT_SELECTORS)
+        self.assertIn('meta[property="og:description"]', module.POST_META_SELECTORS)
+        self.assertIn('meta[name="twitter:description"]', module.POST_META_SELECTORS)
+
     def test_update_file_does_not_rewrite_unchanged_post(self):
         payload = {
             "schema": 1,
@@ -46,14 +52,40 @@ class VKNewsUpdaterTests(unittest.TestCase):
             loaded = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(loaded["post_id"], 62336)
 
+    def test_update_file_rewrites_same_post_when_preview_appears(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "latest-vk.json"
+            old = {
+                "schema": 1,
+                "community_url": module.COMMUNITY_URL,
+                "post_id": 62336,
+                "post_url": "https://vk.ru/wall-59626511_62336",
+                "text": "",
+                "published_at": "",
+                "source_updated_at": "2026-08-11T20:00:00Z",
+            }
+            path.write_text(
+                json.dumps(old, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            new = dict(
+                old,
+                text="Текст превью",
+                source_updated_at="2026-08-12T01:00:00Z",
+            )
+            self.assertTrue(module.update_file(path, new))
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(loaded["text"], "Текст превью")
+
     def test_workflow_has_schedule_manual_run_and_no_vk_secret(self):
         workflow = (ROOT / ".github" / "workflows" / "update-vk-news.yml").read_text(
             encoding="utf-8"
         )
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("cron: '17 * * * *'", workflow)
+        self.assertIn("cron: '7,17,27,37,47,57 * * * *'", workflow)
         self.assertIn("contents: write", workflow)
-        self.assertIn("playwright==1.61.0", workflow)
+        self.assertIn("-r tools/requirements-audit.txt", workflow)
+        self.assertNotIn("playwright==", workflow)
         self.assertIn("git diff --quiet -- data/latest-vk.json", workflow)
         self.assertNotIn("VK_ACCESS_TOKEN", workflow)
 

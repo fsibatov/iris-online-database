@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Shared helpers for reproducible Iris Online smoke tests."""
 
 from __future__ import annotations

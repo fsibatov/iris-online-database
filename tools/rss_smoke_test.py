@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Short RSS smoke test. This is not proof that memory leaks are absent."""
 
 from __future__ import annotations

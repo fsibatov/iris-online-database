@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build a lossless additive projection of monsterlist fields omitted by game_data.
 
 The asset does not reinterpret opaque client/server fields. Fields without a

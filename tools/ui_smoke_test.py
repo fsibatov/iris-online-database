@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Chromium UI smoke test for accessibility, responsiveness and lazy DOM."""
 
 from __future__ import annotations

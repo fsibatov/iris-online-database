@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Verify Go build metadata and application marker for Iris Online Windows executables."""
 
 from __future__ import annotations

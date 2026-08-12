@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Update slot-preserving drop rules in the embedded Iris Online data file.
 
 The source tables are not redistributed by this project. Supply them explicitly.

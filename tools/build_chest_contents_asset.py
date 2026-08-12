@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build the additive chest-content projection from Iris Online item_change.txt.
 
 The original server tables are intentionally not bundled with the application.

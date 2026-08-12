@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Update data/latest-vk.json from the public Iris Online VK wall.
 
 The script intentionally uses a real browser instead of VK API credentials.
@@ -38,6 +37,19 @@ GENERIC_DESCRIPTIONS = (
     "вконтакте — универсальное средство",
     "vk — крупнейшая",
     "vk объединяет",
+)
+POST_TEXT_SELECTORS = (
+    '[data-testid="post_text"]',
+    '[data-testid="wall_post_text"]',
+    ".wall_post_text",
+    '[class*="wall_post_text"]',
+    '[class*="PostText"]',
+    '[class*="post_text"]',
+)
+POST_META_SELECTORS = (
+    'meta[property="og:description"]',
+    'meta[name="twitter:description"]',
+    'meta[name="description"]',
 )
 
 
@@ -134,6 +146,53 @@ def _meta_content(page, selectors: tuple[str, ...]) -> str:
     return ""
 
 
+def _post_text_from_wall(page, post_id: int) -> str:
+    """Read the matching post text from the already loaded wall when possible."""
+    needle = f"wall-{COMMUNITY_ID}_{post_id}"
+    try:
+        link = page.locator(f'a[href*="{needle}"]').first
+        if link.count() == 0:
+            return ""
+        value = link.evaluate(
+            """
+            anchor => {
+                let node = anchor;
+                const selector = [
+                    '[data-testid="post_text"]',
+                    '[data-testid="wall_post_text"]',
+                    '.wall_post_text',
+                    '[class*="wall_post_text"]',
+                    '[class*="PostText"]',
+                    '[class*="post_text"]'
+                ].join(', ');
+
+                for (let depth = 0; node && depth < 9; depth += 1, node = node.parentElement) {
+                    const candidate = node.matches?.(selector) ? node : node.querySelector?.(selector);
+                    if (!candidate) continue;
+                    const text = candidate.innerText || candidate.textContent || '';
+                    if (text.trim()) return text;
+                }
+                return '';
+            }
+            """
+        )
+    except PlaywrightError:
+        return ""
+    return useful_text(value or "")
+
+
+def _wait_for_post_text(page, fallback: str = "") -> str:
+    """Wait briefly for dynamically rendered post text, then use wall fallback."""
+    for _ in range(8):
+        text = _first_locator_text(page, POST_TEXT_SELECTORS)
+        if not text:
+            text = _meta_content(page, POST_META_SELECTORS)
+        if text:
+            return text
+        page.wait_for_timeout(750)
+    return useful_text(fallback)
+
+
 def scrape_latest_post() -> dict[str, object]:
     if sync_playwright is None:
         raise RuntimeError(
@@ -179,31 +238,14 @@ def scrape_latest_post() -> dict[str, object]:
                 f"Не удалось определить последнюю запись на публичной стене VK{suffix}"
             )
 
+        wall_text = _post_text_from_wall(page, found_id)
         post_url = f"https://vk.ru/wall-{COMMUNITY_ID}_{found_id}"
         try:
             page.goto(post_url, wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(2500)
         except PlaywrightError as exc:
             last_error = exc
 
-        text = _first_locator_text(
-            page,
-            (
-                '[data-testid="post_text"]',
-                ".wall_post_text",
-                '[class*="wall_post_text"]',
-                '[class*="PostText"]',
-                '[class*="post_text"]',
-            ),
-        )
-        if not text:
-            text = _meta_content(
-                page,
-                (
-                    'meta[property="og:description"]',
-                    'meta[name="description"]',
-                ),
-            )
+        text = _wait_for_post_text(page, fallback=wall_text)
 
         published_at = ""
         for selector, attr in (
@@ -219,6 +261,14 @@ def scrape_latest_post() -> dict[str, object]:
             published_at = clean_published_at(raw)
             if published_at:
                 break
+
+        if text:
+            print(f"VK: запись #{found_id}, получено {len(text)} символов текста")
+        else:
+            print(
+                f"VK: запись #{found_id} найдена, но текст извлечь не удалось",
+                file=sys.stderr,
+            )
 
         browser.close()
         return {

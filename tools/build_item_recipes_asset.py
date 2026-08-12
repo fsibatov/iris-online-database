@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build the additive recipe-material projection from original Iris Online resources.
 
 The original resource files are intentionally not bundled with the application.

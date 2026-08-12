@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Audit Iris Online data projection and presentation coverage.
 
 The validator starts from the packaged immutable game projection plus deterministic

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate deterministic Windows COFF .syso resources for Go builds.
 
 Uses only the Python standard library. It embeds one manifest and all images from

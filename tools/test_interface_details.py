@@ -221,6 +221,8 @@ class InterfaceDetailTests(unittest.TestCase):
         self.assertIn("vk-fallback.svg", self.script)
         self.assertIn("latestPostId", self.script)
         self.assertIn("latestPostText", self.script)
+        self.assertIn("function vkNewsPreviewText", self.script)
+        self.assertIn("limit = 700", self.script)
         self.assertIn("frame-src 'none'", self.server)
 
     def test_badges_center_internally_but_item_layout_stays_left_aligned(self):

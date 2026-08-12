@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Read-only validator and deterministic reference model for Iris Online drops.
 
 The model follows the relevant control flow in the supplied Drop.cpp and

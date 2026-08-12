@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Verify PE architecture and embedded Windows icon/manifest resources."""
 
 from __future__ import annotations

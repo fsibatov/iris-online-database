@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Lifecycle smoke tests for startup, sessions, signals and port reuse."""
 
 from __future__ import annotations

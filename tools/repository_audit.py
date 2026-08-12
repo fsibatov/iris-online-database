@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Repository hygiene/security audit for release gating."""
 
 from __future__ import annotations

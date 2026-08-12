@@ -7,10 +7,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCheckCommunityNewsJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("refresh") == "" {
+			t.Fatal("refresh cache-buster is missing")
+		}
+		if r.Header.Get("Cache-Control") != "no-cache" || r.Header.Get("Pragma") != "no-cache" {
+			t.Fatalf("cache bypass headers are missing: Cache-Control=%q Pragma=%q", r.Header.Get("Cache-Control"), r.Header.Get("Pragma"))
+		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"schema":1,"community_url":"https://vk.ru/wall-59626511","post_id":62336,"post_url":"https://vk.ru/wall-59626511_62336","text":"Первая строка\\nВторая строка","published_at":"2026-08-11T18:30:00Z","source_updated_at":"2026-08-11T19:00:00Z"}`)
 	}))
@@ -52,6 +59,27 @@ func TestCommunityCheckerForceBypassesCachedResult(t *testing.T) {
 	forced := checker.Check(context.Background(), true)
 	if first.LatestPostID != 62336 || cached.LatestPostID != 62336 || forced.LatestPostID != 62337 || calls != 2 {
 		t.Fatalf("unexpected cache behavior: first=%+v cached=%+v forced=%+v calls=%d", first, cached, forced, calls)
+	}
+}
+
+func TestCommunityCheckerRefreshesExpiredCachedResult(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		fmt.Fprint(w, `{"schema":1,"post_id":62337,"post_url":"https://vk.ru/wall-59626511_62337"}`)
+	}))
+	defer server.Close()
+
+	checker := &communityChecker{
+		client:    server.Client(),
+		newsURL:   server.URL,
+		attempted: true,
+		checkedAt: time.Now().Add(-communityCacheTTL - time.Second),
+		result:    communityStatusResult{Available: true, CommunityURL: vkCommunityPageURL, LatestPostID: 62336},
+	}
+	result := checker.Check(context.Background(), false)
+	if result.LatestPostID != 62337 || calls != 1 {
+		t.Fatalf("expired cache was not refreshed: result=%+v calls=%d", result, calls)
 	}
 }
 

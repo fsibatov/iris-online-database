@@ -1854,10 +1854,16 @@
     </div>`;
   }
 
+  function vkNewsPreviewText(value, limit = 700) {
+    const chars = Array.from(String(value || '').trim());
+    if (chars.length <= limit) return chars.join('');
+    return `${chars.slice(0, limit).join('').trimEnd()}…`;
+  }
+
   function vkNewsCardHTML() {
     const postId = Number(state.vkNews.latestPostId || 0);
     const postUrl = String(state.vkNews.latestPostUrl || '').trim();
-    const text = String(state.vkNews.latestPostText || '').trim();
+    const text = vkNewsPreviewText(state.vkNews.latestPostText);
     if (!postId || !postUrl) return vkNewsFallbackHTML('Не удалось определить последнюю запись. Нажмите «Проверить новую запись», чтобы повторить попытку.');
     const body = text
       ? `<p class="vk-news-text">${multilineHTML(text)}</p>`
@@ -1892,7 +1898,7 @@
   }
 
   async function checkVkNews({ force = false } = {}) {
-    if (routeBase() !== 'home' || state.vkNews.checking || (state.vkNews.checked && !force)) {
+    if (routeBase() !== 'home' || state.vkNews.checking) {
       if (routeBase() === 'home') renderVkNews();
       return;
     }

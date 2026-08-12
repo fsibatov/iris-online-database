@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Focused UI smoke test for the header version status and VK news block."""
 
 from __future__ import annotations
@@ -141,6 +140,13 @@ def main() -> None:
                 assert (
                     page.locator(
                         '.vk-news-card a[href="https://vk.ru/wall-59626511_62336"]'
+                    ).count()
+                    == 1
+                )
+                assert (
+                    page.locator(
+                        ".vk-news-text",
+                        has_text="Тестовая последняя запись сообщества.",
                     ).count()
                     == 1
                 )

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build additive item details omitted by the legacy game-data projection.
 
 Existing JSON keys in game_data.json.gz are authoritative and never overwritten.

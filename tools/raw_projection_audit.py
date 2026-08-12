@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Compare original resource tables with the embedded published projection.
 
 The original resource files are not distributed with the app. This tool accepts
