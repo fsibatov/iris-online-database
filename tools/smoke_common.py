@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Shared helpers for reproducible Iris Online smoke tests."""
+
 from __future__ import annotations
 
 import contextlib
@@ -14,7 +15,8 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
+from urllib.parse import urlsplit
 
 
 def free_port() -> int:
@@ -23,15 +25,49 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def json_request(base_url: str, path: str, *, method: str = "GET", payload: Any | None = None, timeout: float = 5.0) -> tuple[int, Any]:
+def open_loopback_url(
+    target: str | urllib.request.Request,
+    *,
+    timeout: float,
+):
+    """Open an HTTP request only to the local smoke-test server."""
+    raw_url = (
+        target.full_url if isinstance(target, urllib.request.Request) else str(target)
+    )
+    parsed = urlsplit(raw_url)
+    if parsed.scheme != "http" or parsed.hostname not in {
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    }:
+        raise ValueError(
+            f"smoke request must use http and target loopback only: {raw_url!r}"
+        )
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("smoke request URL must not contain userinfo")
+    # B310 is suppressed only at this single sink because scheme and host are
+    # explicitly allowlisted immediately above.
+    return urllib.request.urlopen(target, timeout=timeout)  # nosec B310
+
+
+def json_request(
+    base_url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    payload: Any | None = None,
+    timeout: float = 5.0,
+) -> tuple[int, Any]:
     data = None
     headers = {"Accept": "application/json"}
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(base_url + path, data=data, headers=headers, method=method)
+    request = urllib.request.Request(
+        base_url + path, data=data, headers=headers, method=method
+    )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with open_loopback_url(request, timeout=timeout) as response:
             raw = response.read()
             parsed = json.loads(raw.decode("utf-8")) if raw else None
             return response.status, parsed
@@ -39,7 +75,7 @@ def json_request(base_url: str, path: str, *, method: str = "GET", payload: Any 
         raw = error.read()
         try:
             parsed = json.loads(raw.decode("utf-8")) if raw else None
-        except Exception:
+        except (UnicodeDecodeError, json.JSONDecodeError):
             parsed = raw.decode("utf-8", errors="replace")
         return error.code, parsed
 
@@ -52,7 +88,11 @@ def wait_health(base_url: str, timeout: float = 10.0) -> None:
             status, payload = json_request(base_url, "/api/health", timeout=1.0)
             if status == 200 and payload and payload.get("status") == "ok":
                 return
-        except Exception as error:  # pragma: no cover - diagnostic path
+        except (
+            OSError,
+            TimeoutError,
+            ValueError,
+        ) as error:
             last_error = error
         time.sleep(0.05)
     raise RuntimeError(f"health endpoint did not become ready: {last_error}")
@@ -71,13 +111,15 @@ class RunningApp:
         self.temp = tempfile.TemporaryDirectory(prefix="iris-smoke-")
         root = Path(self.temp.name)
         process_env = os.environ.copy()
-        process_env.update({
-            "HOME": str(root / "home"),
-            "XDG_CONFIG_HOME": str(root / "config"),
-            "XDG_CACHE_HOME": str(root / "cache"),
-            "APPDATA": str(root / "config"),
-            "LOCALAPPDATA": str(root / "cache"),
-        })
+        process_env.update(
+            {
+                "HOME": str(root / "home"),
+                "XDG_CONFIG_HOME": str(root / "config"),
+                "XDG_CACHE_HOME": str(root / "cache"),
+                "APPDATA": str(root / "config"),
+                "LOCALAPPDATA": str(root / "cache"),
+            }
+        )
         if self.env:
             process_env.update(self.env)
         command = [str(self.binary), f"-addr=127.0.0.1:{self.port}", *self.args]
@@ -121,7 +163,7 @@ class RunningApp:
             self.stop()
         self.temp.cleanup()
 
-    def __enter__(self) -> "RunningApp":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

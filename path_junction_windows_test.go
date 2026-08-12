@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// This is a native Windows regression for the exact junction-ancestor escape
-// shape that lexical filepath.Rel checks cannot detect. It is Windows-only and
-// is not executed by the Linux packaging environment.
 func TestWindowsJunctionAncestorCannotEscape(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "allowed")

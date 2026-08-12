@@ -5,6 +5,7 @@ Existing JSON keys in game_data.json.gz are authoritative and never overwritten.
 The generated supplement only restores data that is absent from that projection,
 plus raw technical/restriction fields for which the embedded JSON has no key.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -107,7 +108,14 @@ def load_game(path: Path):
         return json.load(handle)
 
 
-def build(game_data: Path, item_define: Path, item_ability: Path, item_limit: Path, item_tooltips: Path, skill_effects: Path):
+def build(
+    game_data: Path,
+    item_define: Path,
+    item_ability: Path,
+    item_limit: Path,
+    item_tooltips: Path,
+    skill_effects: Path,
+):
     game = load_game(game_data)
     items = {row["id"]: row for row in game["items"]}
     tooltips = read_indexed_text(item_tooltips)
@@ -146,7 +154,11 @@ def build(game_data: Path, item_define: Path, item_ability: Path, item_limit: Pa
         row = {}
 
         for field, position in DEFINE_META_FIELDS.items():
-            value = safe_int(source_define[position]) if len(source_define) > position else None
+            value = (
+                safe_int(source_define[position])
+                if len(source_define) > position
+                else None
+            )
             if value is not None and value != 0:
                 row[field] = value
 
@@ -161,7 +173,14 @@ def build(game_data: Path, item_define: Path, item_ability: Path, item_limit: Pa
                     if value != 0:
                         row[field] = value
                 elif item[field] != value:
-                    conflicts.append({"itemId": item_id, "field": field, "embedded": item[field], "source": value})
+                    conflicts.append(
+                        {
+                            "itemId": item_id,
+                            "field": field,
+                            "embedded": item[field],
+                            "source": value,
+                        }
+                    )
 
             for field, position in ABILITY_META_FIELDS.items():
                 value = safe_int(source[position]) if len(source) > position else None
@@ -176,40 +195,54 @@ def build(game_data: Path, item_define: Path, item_ability: Path, item_limit: Pa
             influence_index = safe_int(source[27]) if len(source) > 27 else 0
             if influence_index:
                 duration_ms = influence_durations.get(influence_index)
-                # The game tooltip suppresses indefinite (-1) and zero durations.
+
                 if duration_ms is not None and duration_ms > 0:
                     row["effectDurationMs"] = duration_ms
 
             source_options = []
             options_valid = True
             for position in OPTION_POSITIONS:
-                option_type = safe_int(source[position]) if len(source) > position else None
-                option_value = safe_int(source[position + 1]) if len(source) > position + 1 else None
+                option_type = (
+                    safe_int(source[position]) if len(source) > position else None
+                )
+                option_value = (
+                    safe_int(source[position + 1])
+                    if len(source) > position + 1
+                    else None
+                )
                 if option_type is None or option_value is None:
                     options_valid = False
                     break
                 if option_type:
-                    # value=0 is still an explicit game-data row and must survive.
                     source_options.append({"type": option_type, "value": option_value})
             if options_valid:
                 if "options" not in item:
                     if source_options:
                         row["options"] = source_options
                 elif item["options"] != source_options:
-                    conflicts.append({"itemId": item_id, "field": "options", "embedded": item["options"], "source": source_options})
+                    conflicts.append(
+                        {
+                            "itemId": item_id,
+                            "field": "options",
+                            "embedded": item["options"],
+                            "source": source_options,
+                        }
+                    )
 
         limit_id = safe_int(source_define[23]) if len(source_define) > 23 else None
         source_limit = limits.get(limit_id)
         if source_limit is not None:
             make_skill = safe_int(source_limit[8]) if len(source_limit) > 8 else 0
             for field, position in LIMIT_FIELDS.items():
-                value = safe_int(source_limit[position]) if len(source_limit) > position else None
+                value = (
+                    safe_int(source_limit[position])
+                    if len(source_limit) > position
+                    else None
+                )
                 if value is None:
                     continue
-                if field == "makeSkillExp" and make_skill:
-                    # Zero is a valid beginner-profession requirement.
-                    row[field] = value
-                elif value != 0:
+
+                if (field == "makeSkillExp" and make_skill) or value != 0:
                     row[field] = value
 
         if row:
@@ -228,17 +261,32 @@ def main():
     parser.add_argument("--skill-effects", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    data = build(args.game_data, args.item_define, args.item_ability, args.item_limit, args.item_tooltips, args.skill_effects)
+    data = build(
+        args.game_data,
+        args.item_define,
+        args.item_ability,
+        args.item_limit,
+        args.item_tooltips,
+        args.skill_effects,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=False).encode("utf-8")
-    with args.output.open("wb") as output:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0, compresslevel=9) as gz:
-            gz.write(payload)
+    payload = json.dumps(
+        data, ensure_ascii=False, separators=(",", ":"), sort_keys=False
+    ).encode("utf-8")
+    with (
+        args.output.open("wb") as output,
+        gzip.GzipFile(
+            filename="", mode="wb", fileobj=output, mtime=0, compresslevel=9
+        ) as gz,
+    ):
+        gz.write(payload)
     field_counts = {}
     for patch in data["items"].values():
         for key in patch:
             field_counts[key] = field_counts.get(key, 0) + 1
-    print(f"items={len(data['items'])} conflictsPreserved={len(data['conflictsPreserved'])}")
+    print(
+        f"items={len(data['items'])} conflictsPreserved={len(data['conflictsPreserved'])}"
+    )
     print(json.dumps(dict(sorted(field_counts.items())), ensure_ascii=False))
 
 

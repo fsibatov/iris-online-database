@@ -988,7 +988,7 @@ func TestSecurityHeadersSetStrictBrowserProtections(t *testing.T) {
 		t.Fatalf("status=%d", recorder.Code)
 	}
 	csp := recorder.Header().Get("Content-Security-Policy")
-	for _, required := range []string{"default-src 'self'", "script-src 'self'", "style-src 'self'", "connect-src 'self'", "object-src 'none'", "frame-ancestors 'none'"} {
+	for _, required := range []string{"default-src 'self'", "script-src 'self'", "style-src 'self'", "connect-src 'self'", "frame-src 'none'", "object-src 'none'", "frame-ancestors 'none'"} {
 		if !strings.Contains(csp, required) {
 			t.Fatalf("CSP missing %q: %s", required, csp)
 		}
@@ -2133,7 +2133,7 @@ func TestSearchStartsEmptyAndRecentlyViewedCanBeCleared(t *testing.T) {
 		"function clearRecentlyViewed()",
 		"knownSource: ''",
 		"Известно, где получить",
-		"Original и Kiss: в чём разница?",
+		"The Original и Iris Kiss Kiss: в чём разница?",
 	} {
 		if !strings.Contains(script, marker) {
 			t.Fatalf("startup-search/recent-view marker is missing: %s", marker)
@@ -2373,8 +2373,7 @@ func TestItemAbilitySupplementRestoresOnlyMissingProjectionFields(t *testing.T) 
 	if err := ensureLoaded(); err != nil {
 		t.Fatal(err)
 	}
-	// This equipment row existed in the embedded catalogue, but the legacy JSON
-	// projection omitted its complete ability record.
+
 	item := store.itemsByID[130010000]
 	if item == nil {
 		t.Fatal("expected item 130010000")
@@ -2386,9 +2385,6 @@ func TestItemAbilitySupplementRestoresOnlyMissingProjectionFields(t *testing.T) 
 		t.Fatalf("restored options=%#v", item.Options)
 	}
 
-	// A source conflict is deliberately not used to overwrite an existing
-	// embedded value. The published embedded record remains authoritative where
-	// it already had an explicit value.
 	conflict := store.itemsByID[151201001]
 	if conflict == nil || len(conflict.Options) != 1 || conflict.Options[0].Type != 120 || conflict.Options[0].Value != 52 {
 		t.Fatalf("embedded conflicting option was overwritten: %#v", conflict)
@@ -2603,6 +2599,21 @@ func TestLegacyProfilePreservesSafeUnknownTopLevelData(t *testing.T) {
 	var future map[string]any
 	if err := json.Unmarshal(raw["futureSafe"], &future); err != nil || future["keep"] != true || future["value"] != float64(17) {
 		t.Fatalf("safe unknown profile data was lost: %s", raw["futureSafe"])
+	}
+}
+
+func TestProfileUnknownFieldAfterOversizedKeyIsPreserved(t *testing.T) {
+	extra := map[string]json.RawMessage{
+		strings.Repeat("a", 81): json.RawMessage(`{"discard":true}`),
+		"zFutureSafe":           json.RawMessage(`{"keep":true}`),
+	}
+
+	sanitized := sanitizeProfileExtra(extra)
+	if _, ok := sanitized["zFutureSafe"]; !ok {
+		t.Fatal("safe unknown profile field after oversized key was dropped")
+	}
+	if _, ok := sanitized[strings.Repeat("a", 81)]; ok {
+		t.Fatal("oversized unknown profile key must be discarded")
 	}
 }
 

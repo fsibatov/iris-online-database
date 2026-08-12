@@ -9,7 +9,9 @@ APP = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
 
 
 def extract_function(name: str) -> str:
-    match = re.search(rf"  function {re.escape(name)}\([^\n]*\) \{{\n(?:.*\n)*?  \}}", APP)
+    match = re.search(
+        rf"  function {re.escape(name)}\([^\n]*\) \{{\n(?:.*\n)*?  \}}", APP
+    )
     if not match:
         raise AssertionError(f"function {name} not found")
     return match.group(0).replace("  function", "function", 1)
@@ -40,7 +42,11 @@ class RussianPluralTests(unittest.TestCase):
             122: "предмета",
             125: "предметов",
         }
-        script = plural + "\n" + f"console.log(JSON.stringify(Object.fromEntries({json.dumps(list(cases.keys()))}.map(n => [n, russianPlural(n, 'предмет', 'предмета', 'предметов')]))));"
+        script = (
+            plural
+            + "\n"
+            + f"console.log(JSON.stringify(Object.fromEntries({json.dumps(list(cases.keys()))}.map(n => [n, russianPlural(n, 'предмет', 'предмета', 'предметов')]))));"
+        )
         result = subprocess.run(
             ["node", "-e", script],
             cwd=ROOT,

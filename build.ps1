@@ -20,7 +20,6 @@ foreach ($Name in $EnvironmentNames) {
 }
 
 try {
-    # Host-side checks must not inherit an accidental cross-compilation target.
     Remove-Item Env:GOOS -ErrorAction SilentlyContinue
     Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
     Remove-Item Env:GOAMD64 -ErrorAction SilentlyContinue
@@ -46,14 +45,22 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "go vet завершился с ошибкой." }
         & node --check web/app.js
         if ($LASTEXITCODE -ne 0) { throw "node --check завершился с ошибкой." }
-        & python3 -m unittest discover -s tools -p "test_*.py"
+        & python -B -m unittest discover -s tools -p "test_*.py"
         if ($LASTEXITCODE -ne 0) { throw "Python-тесты завершились с ошибкой." }
     }
 
-    foreach ($Resource in @("resource_windows_amd64.syso", "resource_windows_386.syso", "resource_windows_arm64.syso")) {
-        if (-not (Test-Path (Join-Path $PSScriptRoot $Resource) -PathType Leaf)) {
-            throw "Отсутствует Windows-ресурс $Resource. Восстановите его командой tools/generate_windows_resources.py."
-        }
+    $ResourceSpecs = @(
+        @{ Arch = "amd64"; File = "resource_windows_amd64.syso" },
+        @{ Arch = "386"; File = "resource_windows_386.syso" },
+        @{ Arch = "arm64"; File = "resource_windows_arm64.syso" }
+    )
+    foreach ($Resource in $ResourceSpecs) {
+        & python (Join-Path $PSScriptRoot "tools\generate_windows_resources.py") `
+            --icon (Join-Path $PSScriptRoot "resources\icon.ico") `
+            --manifest (Join-Path $PSScriptRoot "resources\app.manifest") `
+            --arch $Resource.Arch `
+            --output (Join-Path $PSScriptRoot $Resource.File)
+        if ($LASTEXITCODE -ne 0) { throw "Не удалось создать Windows-ресурс $($Resource.File)." }
     }
 
     $Output = Join-Path $PSScriptRoot "dist"
@@ -94,6 +101,7 @@ try {
     }
 }
 finally {
+    Remove-Item (Join-Path $PSScriptRoot "resource_windows_*.syso") -Force -ErrorAction SilentlyContinue
     foreach ($Name in $EnvironmentNames) {
         $Value = $SavedEnvironment[$Name]
         if ($null -eq $Value) {

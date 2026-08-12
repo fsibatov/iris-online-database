@@ -10,6 +10,7 @@ Source row order and the original item/count/enhanced/changerate values are
 preserved; probability interpretation stays in the Go runtime so it can be
 tested together with the API contract.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,12 +40,18 @@ def load_container_ids(item_abilities: Path) -> set[int]:
         item_id = _int(key)
         if item_id <= 0:
             continue
-        if patch.get("kindOf") == 3 and patch.get("eventType") == 3 and patch.get("changeIndex") == item_id:
+        if (
+            patch.get("kindOf") == 3
+            and patch.get("eventType") == 3
+            and patch.get("changeIndex") == item_id
+        ):
             result.add(item_id)
     return result
 
 
-def parse_profiles(path: Path, items: dict[int, dict], container_ids: set[int]) -> dict[str, dict]:
+def parse_profiles(
+    path: Path, items: dict[int, dict], container_ids: set[int]
+) -> dict[str, dict]:
     profiles: dict[str, dict] = {}
     current: dict[str, list[str] | int] | None = None
 
@@ -72,13 +79,15 @@ def parse_profiles(path: Path, items: dict[int, dict], container_ids: set[int]) 
             threshold = thresholds[position]
             if item_id <= 0 or threshold <= 0:
                 continue
-            rows.append({
-                "itemId": item_id,
-                "quantity": max(1, counts[position]),
-                "enhanced": max(0, enhanced[position]),
-                "threshold": threshold,
-                "position": position + 1,
-            })
+            rows.append(
+                {
+                    "itemId": item_id,
+                    "quantity": max(1, counts[position]),
+                    "enhanced": max(0, enhanced[position]),
+                    "threshold": threshold,
+                    "position": position + 1,
+                }
+            )
 
         profiles[str(source_id)] = {
             "drawCount": max(0, _int(str((current.get("rate") or ["0"])[0]))),
@@ -93,7 +102,13 @@ def parse_profiles(path: Path, items: dict[int, dict], container_ids: set[int]) 
         if key == "index":
             flush()
             current = {"index": _int(values[0]) if values else 0}
-        elif current is not None and key in {"rate", "item", "count", "enhanced", "changerate"}:
+        elif current is not None and key in {
+            "rate",
+            "item",
+            "count",
+            "enhanced",
+            "changerate",
+        }:
             current[key] = values
     flush()
     return profiles
@@ -120,12 +135,23 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
-    data = build(args.game_data, args.item_abilities, args.kiss_item_change, args.original_item_change)
+    data = build(
+        args.game_data,
+        args.item_abilities,
+        args.kiss_item_change,
+        args.original_item_change,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=False).encode("utf-8")
-    with args.output.open("wb") as output:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0, compresslevel=9) as gz:
-            gz.write(payload)
+    payload = json.dumps(
+        data, ensure_ascii=False, separators=(",", ":"), sort_keys=False
+    ).encode("utf-8")
+    with (
+        args.output.open("wb") as output,
+        gzip.GzipFile(
+            filename="", mode="wb", fileobj=output, mtime=0, compresslevel=9
+        ) as gz,
+    ):
+        gz.write(payload)
 
     for server, payload_server in data["servers"].items():
         profiles = payload_server["profiles"]

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-labelledby="title desc">
+  <title id="title">Фэнтезийная заставка Iris Online</title>
+  <desc id="desc">Стилизованный ночной пейзаж с горами, башнями и сияющей звездой.</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#10192d"/>
+      <stop offset="0.55" stop-color="#33275e"/>
+      <stop offset="1" stop-color="#171f37"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d9c8ff"/>
+      <stop offset="1" stop-color="#8e6aff"/>
+    </linearGradient>
+    <radialGradient id="moon" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#fff" stop-opacity=".95"/>
+      <stop offset=".35" stop-color="#d9c8ff" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#9c7cff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="720" height="420" rx="26" fill="url(#sky)"/>
+  <circle cx="516" cy="108" r="92" fill="url(#moon)"/>
+  <circle cx="516" cy="108" r="33" fill="#ece6ff" opacity=".92"/>
+  <g fill="#eee8ff" opacity=".8">
+    <circle cx="105" cy="82" r="2.5"/><circle cx="169" cy="129" r="1.8"/><circle cx="236" cy="64" r="2"/><circle cx="334" cy="109" r="1.7"/><circle cx="617" cy="61" r="2.2"/>
+  </g>
+  <path d="M0 318 116 218l74 64 96-129 109 120 65-72 118 117 72-50 70 50v102H0Z" fill="#18233d"/>
+  <path d="M0 348 126 274l80 56 112-97 104 95 72-48 93 68 133-64v136H0Z" fill="#11192b"/>
+  <g fill="#0b1220">
+    <path d="M279 316h131v104H279z"/>
+    <path d="M298 268h32v152h-32zM358 250h34v170h-34z"/>
+    <path d="m291 268 23-31 23 31zm59-18 25-38 25 38z"/>
+    <path d="M328 293h33v127h-33z"/>
+  </g>
+  <g fill="#9c7cff" opacity=".78">
+    <rect x="310" y="302" width="8" height="14" rx="2"/><rect x="370" y="287" width="8" height="14" rx="2"/><rect x="341" y="320" width="8" height="16" rx="2"/>
+  </g>
+  <g transform="translate(152 143)">
+    <circle cx="0" cy="0" r="54" fill="url(#moon)" opacity=".58"/>
+    <path d="M0-42 10-12 42 0 10 12 0 42-10 12-42 0-10-12Z" fill="url(#glow)"/>
+    <circle cx="0" cy="0" r="8" fill="#fff"/>
+  </g>
+  <path d="M0 385c116-28 204-11 305 4 122 19 244-12 415-24v55H0Z" fill="#0a101c" opacity=".9"/>
+</svg>

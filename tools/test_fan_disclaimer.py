@@ -27,16 +27,23 @@ class FanDisclaimerTests(unittest.TestCase):
         cls.script = (ROOT / "web/app.js").read_text(encoding="utf-8")
         cls.styles = (ROOT / "web/styles.css").read_text(encoding="utf-8")
         cls.readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        cls.notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+        cls.notices = (ROOT / "docs" / "THIRD_PARTY_NOTICES.md").read_text(
+            encoding="utf-8"
+        )
 
     def test_footer_contains_required_russian_disclaimer(self):
         self.assertIn('class="app-footer"', self.html)
         self.assertIn("неофициальное фанатское приложение", self.html)
-        self.assertIn("не связан с разработчиками, издателями или правообладателями", self.html)
+        self.assertIn(
+            "не связан с разработчиками, издателями или правообладателями", self.html
+        )
         self.assertIn(DISCLAIMER, self.html)
 
     def test_official_link_is_safe_and_accessible(self):
-        link = re.search(r'<a\s+[^>]*href="https://irisonline\.ru/"[^>]*>Официальный сайт игры: irisonline\.ru</a>', self.html)
+        link = re.search(
+            r'<a\s+[^>]*href="https://irisonline\.ru/"[^>]*>Официальный сайт игры: irisonline\.ru</a>',
+            self.html,
+        )
         self.assertIsNotNone(link, "footer official-site link is missing")
         tag = link.group(0)
         self.assertIn('target="_blank"', tag)
@@ -44,11 +51,11 @@ class FanDisclaimerTests(unittest.TestCase):
         self.assertIn('aria-label="Официальный сайт игры Iris Online', tag)
 
     def test_primary_brand_remains_iris_online(self):
-        self.assertIn('<strong>Iris Online</strong>', self.html)
-        self.assertIn('<title>Iris Online — база данных</title>', self.html)
+        self.assertIn("<strong>Iris Online</strong>", self.html)
+        self.assertIn("<title>Iris Online — база данных</title>", self.html)
 
     def test_footer_is_not_fixed_or_sticky(self):
-        match = re.search(r'\.app-footer\s*\{([^}]*)\}', self.styles, re.S)
+        match = re.search(r"\.app-footer\s*\{([^}]*)\}", self.styles, re.DOTALL)
         self.assertIsNotNone(match, "footer CSS block is missing")
         declarations = match.group(1).lower()
         self.assertNotIn("position: fixed", declarations)
@@ -56,7 +63,7 @@ class FanDisclaimerTests(unittest.TestCase):
 
     def test_about_dialog_contains_same_legal_meaning(self):
         self.assertIn(DISCLAIMER, self.script)
-        self.assertIn('Официальный сайт игры: irisonline.ru', self.script)
+        self.assertIn("Официальный сайт игры: irisonline.ru", self.script)
         self.assertIn('rel="noopener noreferrer"', self.script)
 
     def test_readme_and_notices_are_consistent(self):
@@ -67,11 +74,13 @@ class FanDisclaimerTests(unittest.TestCase):
 
     def test_rarity_colors_are_exactly_preserved(self):
         for quality, color in RARITY_COLORS.items():
-            pattern = rf'\.rarity-label\.quality-{quality}\s*\{{[^}}]*color:\s*{re.escape(color)}\s*;'
+            pattern = rf"\.rarity-label\.quality-{quality}\s*\{{[^}}]*color:\s*{re.escape(color)}\s*;"
             self.assertRegex(self.styles, pattern)
 
     def test_embedded_game_database_is_unchanged(self):
-        digest = hashlib.sha256((ROOT / "assets/game_data.json.gz").read_bytes()).hexdigest()
+        digest = hashlib.sha256(
+            (ROOT / "assets/game_data.json.gz").read_bytes()
+        ).hexdigest()
         self.assertEqual(digest, GAME_DATA_SHA256)
 
 

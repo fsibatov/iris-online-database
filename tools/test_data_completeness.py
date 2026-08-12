@@ -3,7 +3,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("data_presentation_audit", ROOT / "tools/data_presentation_audit.py")
+SPEC = importlib.util.spec_from_file_location(
+    "data_presentation_audit", ROOT / "tools/data_presentation_audit.py"
+)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
@@ -15,9 +17,15 @@ class DataCompletenessTests(unittest.TestCase):
 
     def test_all_embedded_fields_are_classified_and_retained_by_go(self):
         checks = self.result["checks"]
-        for key in ("item_unclassified", "monster_unclassified", "server_unclassified",
-                    "item_missing_go_fields", "monster_missing_go_fields", "server_missing_go_fields",
-                    "effect_spec_missing_go_fields"):
+        for key in (
+            "item_unclassified",
+            "monster_unclassified",
+            "server_unclassified",
+            "item_missing_go_fields",
+            "monster_missing_go_fields",
+            "server_missing_go_fields",
+            "effect_spec_missing_go_fields",
+        ):
             self.assertEqual(checks[key], [], key)
 
     def test_all_set_rows_and_thresholds_are_present(self):
@@ -38,11 +46,19 @@ class DataCompletenessTests(unittest.TestCase):
         self.assertEqual(checks["unknown_active_states"], {})
         self.assertEqual(checks["unknown_card_slot_types"], [])
 
-    def test_item_ability_projection_restores_missing_rows_without_overwriting_conflicts(self):
+    def test_item_ability_projection_restores_missing_rows_without_overwriting_conflicts(
+        self,
+    ):
         self.assertEqual(self.result["itemAbilitySupplementItems"], 13927)
-        self.assertEqual(self.result["itemAbilitySupplementFieldCounts"]["options"], 783)
-        self.assertEqual(self.result["itemAbilitySupplementFieldCounts"]["physicalDefense"], 95)
-        self.assertEqual(self.result["itemAbilitySupplementFieldCounts"]["magicDefense"], 95)
+        self.assertEqual(
+            self.result["itemAbilitySupplementFieldCounts"]["options"], 783
+        )
+        self.assertEqual(
+            self.result["itemAbilitySupplementFieldCounts"]["physicalDefense"], 95
+        )
+        self.assertEqual(
+            self.result["itemAbilitySupplementFieldCounts"]["magicDefense"], 95
+        )
         self.assertEqual(self.result["preservedRawAbilityConflicts"], 38)
         self.assertEqual(self.result["restoredAbilityDescriptions"], 3086)
         self.assertEqual(self.result["restoredItemLimitUsageRules"], 632)
@@ -55,13 +71,11 @@ class DataCompletenessTests(unittest.TestCase):
         self.assertEqual(checks["unknown_guild_use_codes"], [])
 
     def test_unknown_item_effect_enum_is_reported_not_dropped(self):
-        # Type 320 exists in the embedded database and has no known label. The
-        # backend/frontend deliberately render a neutral diagnostic label.
         self.assertEqual(self.result["unknownItemEffectTypes"], {320: 2})
         script = (ROOT / "web/app.js").read_text(encoding="utf-8")
         go = (ROOT / "main.go").read_text(encoding="utf-8")
         self.assertIn("Неизвестный эффект (код ${option.type})", script)
-        self.assertIn('Неизвестный эффект (код %d)', go)
+        self.assertIn("Неизвестный эффект (код %d)", go)
 
     def test_explicit_zero_item_options_are_preserved(self):
         self.assertGreater(self.result["explicitZeroItemOptions"], 0)
@@ -77,7 +91,9 @@ class DataCompletenessTests(unittest.TestCase):
         self.assertNotIn("group.seen.has(row)", script)
         self.assertIn("group.rows.push(row)", script)
 
-    def test_restored_descriptions_and_restrictions_have_explicit_presentation_paths(self):
+    def test_restored_descriptions_and_restrictions_have_explicit_presentation_paths(
+        self,
+    ):
         script = (ROOT / "web/app.js").read_text(encoding="utf-8")
         self.assertIn("item.abilityDescription", script)
         self.assertIn("bonusTexts", script)
@@ -89,17 +105,26 @@ class DataCompletenessTests(unittest.TestCase):
         self.assertIn("item.printableFlag", script)
 
     def test_chest_projection_is_complete_and_fail_closed(self):
-        self.assertEqual(self.result["chestProfilesByServer"], {"kiss": 399, "original": 399})
-        self.assertEqual(self.result["chestItemRowsByServer"], {"kiss": 4944, "original": 4944})
-        self.assertEqual(self.result["chestContentsSha256"], "2b77350006cfb7f992c1707b9d0c703ebb82206dac1810084aa105d0878fe98b")
+        self.assertEqual(
+            self.result["chestProfilesByServer"], {"kiss": 399, "original": 399}
+        )
+        self.assertEqual(
+            self.result["chestItemRowsByServer"], {"kiss": 4944, "original": 4944}
+        )
+        self.assertEqual(
+            self.result["chestContentsSha256"],
+            "2b77350006cfb7f992c1707b9d0c703ebb82206dac1810084aa105d0878fe98b",
+        )
         checks = self.result["checks"]
         self.assertEqual(checks["chest_source_ids_missing_from_game_data"], [])
         self.assertEqual(checks["invalid_chest_profiles"], [])
-        self.assertEqual(checks["chest_probability_unknown_profiles"], ["kiss:873079", "original:873079"])
+        self.assertEqual(
+            checks["chest_probability_unknown_profiles"],
+            ["kiss:873079", "original:873079"],
+        )
         self.assertFalse(checks["chest_supplement_not_merged"])
         self.assertFalse(checks["chest_missing_item_fallback_absent"])
-        # These IDs are intentionally retained even though the public item table
-        # does not contain names for them; the UI renders a neutral ID fallback.
+
         self.assertEqual(self.result["chestOutputIDsMissingFromGameData"], 24)
 
     def test_item_rank_is_not_mislabeled_as_level(self):

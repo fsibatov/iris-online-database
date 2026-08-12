@@ -6,14 +6,18 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("build_monster_presence_asset", ROOT / "tools/build_monster_presence_asset.py")
+SPEC = importlib.util.spec_from_file_location(
+    "build_monster_presence_asset", ROOT / "tools/build_monster_presence_asset.py"
+)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
 class MonsterPresenceTests(unittest.TestCase):
     def test_embedded_presence_counts_and_known_differences(self):
-        with gzip.open(ROOT / "assets/monster_presence.json.gz", "rt", encoding="utf-8") as handle:
+        with gzip.open(
+            ROOT / "assets/monster_presence.json.gz", "rt", encoding="utf-8"
+        ) as handle:
             data = json.load(handle)
         self.assertEqual(data["schemaVersion"], 1)
         original = set(data["servers"]["original"])
@@ -52,8 +56,7 @@ class MonsterPresenceTests(unittest.TestCase):
 //}
 """
             (original / "monsterregen1_0.txt").write_text(fixture, encoding="ascii")
-            # Variable-length header and malformed non-ID header token must not
-            # affect parsing of the actual spawn rows.
+
             (kiss / "monsterregen1_0.txt").write_text(
                 "4\n{\n 1 50 3s00 10000 0 0 2 5 6\n 400 1 2 3 4 0 0 0\n}\n",
                 encoding="ascii",

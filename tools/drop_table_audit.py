@@ -9,15 +9,16 @@ row prevention inside one rule cycle, field/instance gating and fallback/event
 attempt counts. It deliberately does not invent a final per-kill probability
 when runtime state is required.
 """
+
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
 from collections import Counter, defaultdict
+from collections.abc import Iterable, Mapping, MutableSet, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, MutableSet, Sequence
 
 CHANCE_SCALE = 1_000_000
 
@@ -28,7 +29,7 @@ class WeightedEntry:
     weight: int
 
     @property
-    def chance(self) -> int:  # compatibility with earlier audit callers
+    def chance(self) -> int:
         return self.weight
 
 
@@ -47,7 +48,7 @@ class DropRule:
         return sum(entry.weight for entry in self.entries)
 
     @property
-    def chance_total(self) -> int:  # compatibility
+    def chance_total(self) -> int:
         return self.weight_total
 
     @property
@@ -73,13 +74,11 @@ class GroupItem:
     quantity: int
 
     @property
-    def chance(self) -> int:  # compatibility
+    def chance(self) -> int:
         return self.weight
 
     @property
     def row_key(self) -> tuple[int, int]:
-        # Drop.cpp stores the selected sDropItemScript pointer. In a deterministic
-        # table model, group+source-order identifies that script row.
         return self.group_id, self.position
 
 
@@ -105,7 +104,7 @@ class DropRestriction:
 
 @dataclass(frozen=True)
 class ItemPickResult:
-    status: str  # selected | duplicate | none
+    status: str
     item_id: int | None
     quantity: int
     source_line: int | None
@@ -178,15 +177,17 @@ def parse_normal(path: Path) -> dict[int, list[DropRule]]:
             entries = parse_pairs(columns, 6)
             if monster_id is None or not entries:
                 continue
-            rows[monster_id].append(DropRule(
-                source_line=source_line,
-                owner_id=monster_id,
-                add1_count=max(0, _int(columns[2])),
-                add1_rate=max(0, _int(columns[3])),
-                add2_count=max(0, _int(columns[4])),
-                add2_rate=max(0, _int(columns[5])),
-                entries=entries,
-            ))
+            rows[monster_id].append(
+                DropRule(
+                    source_line=source_line,
+                    owner_id=monster_id,
+                    add1_count=max(0, _int(columns[2])),
+                    add1_rate=max(0, _int(columns[3])),
+                    add2_count=max(0, _int(columns[4])),
+                    add2_rate=max(0, _int(columns[5])),
+                    entries=entries,
+                )
+            )
     return dict(rows)
 
 
@@ -200,19 +201,21 @@ def parse_world(path: Path) -> list[WorldDropRule]:
             entries = parse_pairs(columns, 9)
             if not entries:
                 continue
-            rows.append(WorldDropRule(
-                source_line=source_line,
-                owner_id=source_line,
-                min_level=_int(columns[1]),
-                max_level=_int(columns[2]),
-                server_type_check=_int(columns[3]),
-                monster_type=_int(columns[4]),
-                add1_count=max(0, _int(columns[5])),
-                add1_rate=max(0, _int(columns[6])),
-                add2_count=max(0, _int(columns[7])),
-                add2_rate=max(0, _int(columns[8])),
-                entries=entries,
-            ))
+            rows.append(
+                WorldDropRule(
+                    source_line=source_line,
+                    owner_id=source_line,
+                    min_level=_int(columns[1]),
+                    max_level=_int(columns[2]),
+                    server_type_check=_int(columns[3]),
+                    monster_type=_int(columns[4]),
+                    add1_count=max(0, _int(columns[5])),
+                    add1_rate=max(0, _int(columns[6])),
+                    add2_count=max(0, _int(columns[7])),
+                    add2_rate=max(0, _int(columns[8])),
+                    entries=entries,
+                )
+            )
     return rows
 
 
@@ -230,7 +233,11 @@ def parse_groups(path: Path) -> dict[int, list[GroupItem]]:
             if None in (group_id, item_id, weight, quantity):
                 continue
             group = groups[group_id]
-            group.append(GroupItem(source_line, group_id, len(group) + 1, item_id, weight, quantity))
+            group.append(
+                GroupItem(
+                    source_line, group_id, len(group) + 1, item_id, weight, quantity
+                )
+            )
     return dict(groups)
 
 
@@ -249,11 +256,15 @@ def parse_quest(path: Path | None) -> list[QuestDrop]:
             rate = _positive_int(columns[3])
             if None in (quest_id, monster_id, item_id, rate):
                 continue
-            rows.append(QuestDrop(source_line, quest_id, monster_id, item_id, min(100, rate)))
+            rows.append(
+                QuestDrop(source_line, quest_id, monster_id, item_id, min(100, rate))
+            )
     return rows
 
 
-def quest_roll_selects(drop_rate_percent: int, roll_1_100: int, *, conditions_met: bool = True) -> bool:
+def quest_roll_selects(
+    drop_rate_percent: int, roll_1_100: int, *, conditions_met: bool = True
+) -> bool:
     """Probability gate for one quest-drop row after active-quest lookup."""
     if not 1 <= roll_1_100 <= 100:
         raise ValueError("roll_1_100 must be in 1..100")
@@ -290,7 +301,12 @@ def parse_penalties(path: Path | None) -> dict[int, dict[int, float]]:
     """Parse DropIncrease.txt into {0: field, 1: instance/theme} tables."""
     if path is None:
         return {}
-    tokens = path.read_text(encoding="utf-8-sig", errors="replace").replace("{", " { ").replace("}", " } ").split()
+    tokens = (
+        path.read_text(encoding="utf-8-sig", errors="replace")
+        .replace("{", " { ")
+        .replace("}", " } ")
+        .split()
+    )
     result: dict[int, dict[int, float]] = defaultdict(dict)
     index = 0
     while index < len(tokens):
@@ -369,12 +385,10 @@ def event_attempts(drop_add_percent: int, roll_0_99: int) -> int:
 
 def world_rule_applies(server_type_check: int, *, is_normal_map: bool) -> bool:
     """Drop.cpp field/instance gate; it does not identify a concrete dungeon."""
-    # eDROPSERVERTYPE_FIELD and eDROPSERVERTYPE_INDUN are 1/2 in the supplied tables.
+
     if server_type_check == 1 and not is_normal_map:
         return False
-    if server_type_check == 2 and is_normal_map:
-        return False
-    return True
+    return not (server_type_check == 2 and is_normal_map)
 
 
 def reference_item_pick(
@@ -409,19 +423,21 @@ def reference_item_pick(
         restriction = restrictions.get(item.item_id)
         if restriction is not None:
             if item.item_id in disabled_restricted_items:
-                # Server continues after the failed time check, preserving the
-                # cumulative boundary accumulated so far.
                 continue
-            multiplier = restriction.weight_am if period == "am" else restriction.weight_pm
+            multiplier = (
+                restriction.weight_am if period == "am" else restriction.weight_pm
+            )
             cumulative = int(cumulative * multiplier)
         if cumulative < roll:
             continue
         if item.row_key in selected_rows:
-            # DropMonItemSelect returns false immediately; it does not continue
-            # to a later row after selecting a duplicate script row.
-            return ItemPickResult("duplicate", item.item_id, item.quantity, item.source_line, cumulative)
+            return ItemPickResult(
+                "duplicate", item.item_id, item.quantity, item.source_line, cumulative
+            )
         selected_rows.add(item.row_key)
-        return ItemPickResult("selected", item.item_id, item.quantity, item.source_line, cumulative)
+        return ItemPickResult(
+            "selected", item.item_id, item.quantity, item.source_line, cumulative
+        )
     return ItemPickResult("none", None, 0, None, cumulative)
 
 
@@ -466,17 +482,33 @@ def audit(
     quests = parse_quest(quest_path)
 
     normal_rows = [row for rows in normal.values() for row in rows]
-    normal_overflow = [_row_dict(row) for row in normal_rows if row.weight_total > CHANCE_SCALE]
-    normal_duplicate = [_row_dict(row) for row in normal_rows if _duplicates(entry.identifier for entry in row.entries)]
-    world_overflow = [_row_dict(row) for row in world if row.weight_total > CHANCE_SCALE]
-    world_duplicate = [_row_dict(row) for row in world if _duplicates(entry.identifier for entry in row.entries)]
+    normal_overflow = [
+        _row_dict(row) for row in normal_rows if row.weight_total > CHANCE_SCALE
+    ]
+    normal_duplicate = [
+        _row_dict(row)
+        for row in normal_rows
+        if _duplicates(entry.identifier for entry in row.entries)
+    ]
+    world_overflow = [
+        _row_dict(row) for row in world if row.weight_total > CHANCE_SCALE
+    ]
+    world_duplicate = [
+        _row_dict(row)
+        for row in world
+        if _duplicates(entry.identifier for entry in row.entries)
+    ]
 
     group_overflow: list[dict] = []
     group_duplicate_items: list[dict] = []
     quantity_over_one = 0
     for group_id, items in groups.items():
         weight_total = sum(item.weight for item in items)
-        record = {"groupId": group_id, "weightTotal": weight_total, "entries": len(items)}
+        record = {
+            "groupId": group_id,
+            "weightTotal": weight_total,
+            "entries": len(items),
+        }
         if weight_total > CHANCE_SCALE:
             group_overflow.append(record)
         if _duplicates(item.item_id for item in items):
@@ -488,17 +520,24 @@ def audit(
         for row in rows:
             for entry in row.entries:
                 if entry.identifier not in groups:
-                    missing.append({
-                        "source": source_kind,
-                        "sourceLine": row.source_line,
-                        "ownerId": row.owner_id,
-                        "groupId": entry.identifier,
-                    })
+                    missing.append(
+                        {
+                            "source": source_kind,
+                            "sourceLine": row.source_line,
+                            "ownerId": row.owner_id,
+                            "groupId": entry.identifier,
+                        }
+                    )
 
     distribution = Counter(len(rows) for rows in normal.values())
     more_than_seven = [
-        {"monsterId": monster_id, "rows": len(rows), "sourceLines": [row.source_line for row in rows]}
-        for monster_id, rows in sorted(normal.items()) if len(rows) > 7
+        {
+            "monsterId": monster_id,
+            "rows": len(rows),
+            "sourceLines": [row.source_line for row in rows],
+        }
+        for monster_id, rows in sorted(normal.items())
+        if len(rows) > 7
     ]
     server_type_values = Counter(row.server_type_check for row in world)
     return AuditResult(
@@ -508,11 +547,19 @@ def audit(
         normal_more_than_seven=more_than_seven,
         normal_overflow_rows=normal_overflow,
         normal_duplicate_group_rows=normal_duplicate,
-        normal_rows_with_additional_attempts=sum(1 for row in normal_rows if row.add1_count or row.add1_rate or row.add2_count or row.add2_rate),
+        normal_rows_with_additional_attempts=sum(
+            1
+            for row in normal_rows
+            if row.add1_count or row.add1_rate or row.add2_count or row.add2_rate
+        ),
         world_rows=len(world),
         world_overflow_rows=world_overflow,
         world_duplicate_group_rows=world_duplicate,
-        world_rows_with_additional_attempts=sum(1 for row in world if row.add1_count or row.add1_rate or row.add2_count or row.add2_rate),
+        world_rows_with_additional_attempts=sum(
+            1
+            for row in world
+            if row.add1_count or row.add1_rate or row.add2_count or row.add2_rate
+        ),
         world_server_type_values=dict(sorted(server_type_values.items())),
         groups=len(groups),
         group_overflow=group_overflow,
@@ -574,16 +621,28 @@ def main() -> int:
     parser.add_argument("--reference-drop-script", type=Path)
     parser.add_argument("--json", type=Path)
     parser.add_argument("--report", type=Path)
-    parser.add_argument("--strict", action="store_true", help="return non-zero when structural anomalies are found")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="return non-zero when structural anomalies are found",
+    )
     args = parser.parse_args()
 
     result = audit(
-        args.normal, args.groups, args.world, args.limits, args.penalty, args.quest,
-        args.reference_drop_cpp, args.reference_drop_script,
+        args.normal,
+        args.groups,
+        args.world,
+        args.limits,
+        args.penalty,
+        args.quest,
+        args.reference_drop_cpp,
+        args.reference_drop_script,
     )
     payload = asdict(result)
     if args.json:
-        args.json.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        args.json.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
     else:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     if args.report:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify PE architecture and embedded Windows icon/manifest resources."""
+
 from __future__ import annotations
 
 import argparse
@@ -8,10 +9,12 @@ import pathlib
 import struct
 
 MACHINES = {"x64": 0x8664, "x86": 0x014C, "arm64": 0xAA64}
-EXPECTED_TYPES = {3, 14, 24}  # RT_ICON, RT_GROUP_ICON, RT_MANIFEST
+EXPECTED_TYPES = {3, 14, 24}
 
 
-def parse_pe(path: pathlib.Path) -> tuple[int, dict[str, tuple[int, int, int, int]], bytes]:
+def parse_pe(
+    path: pathlib.Path,
+) -> tuple[int, dict[str, tuple[int, int, int, int]], bytes]:
     data = path.read_bytes()
     if len(data) < 0x40 or data[:2] != b"MZ":
         raise ValueError(f"{path.name}: not a PE file")
@@ -27,7 +30,9 @@ def parse_pe(path: pathlib.Path) -> tuple[int, dict[str, tuple[int, int, int, in
         if off + 40 > len(data):
             raise ValueError(f"{path.name}: truncated section table")
         name = data[off : off + 8].split(b"\0", 1)[0].decode("ascii", "replace")
-        virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from("<IIII", data, off + 8)
+        virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
+            "<IIII", data, off + 8
+        )
         result[name] = (virtual_size, virtual_address, raw_size, raw_offset)
     return machine, result, data
 
@@ -45,7 +50,9 @@ def resource_type_ids(path: pathlib.Path) -> set[int]:
         raise ValueError(f"{path.name}: truncated resource directory")
     types: set[int] = set()
     for index in range(count):
-        name_or_id, _target = struct.unpack_from("<II", data, raw_offset + 16 + index * 8)
+        name_or_id, _target = struct.unpack_from(
+            "<II", data, raw_offset + 16 + index * 8
+        )
         if name_or_id & 0x80000000 == 0:
             types.add(name_or_id)
     return types
@@ -64,7 +71,9 @@ def resource_payloads(path: pathlib.Path, wanted_type: int) -> list[bytes]:
         count = named + ids
         if base + 16 + count * 8 > section_end:
             raise ValueError(f"{path.name}: truncated resource directory entries")
-        return [struct.unpack_from("<II", data, base + 16 + i * 8) for i in range(count)]
+        return [
+            struct.unpack_from("<II", data, base + 16 + i * 8) for i in range(count)
+        ]
 
     type_target = None
     for name_or_id, target in directory_entries(0):
@@ -105,23 +114,34 @@ def main() -> None:
     suffix = f"-diagnostic-{args.go_version}" if args.diagnostic else ""
     icon_fingerprints: dict[str, tuple[list[str], str]] = {}
     for label, expected_machine in MACHINES.items():
-        path = args.directory / f"IrisOnlineDB-{args.version}{suffix}-Windows-{label}.exe"
+        path = (
+            args.directory / f"IrisOnlineDB-{args.version}{suffix}-Windows-{label}.exe"
+        )
         machine, sections, _data = parse_pe(path)
         if machine != expected_machine:
-            raise SystemExit(f"{path.name}: machine=0x{machine:04x}, expected 0x{expected_machine:04x}")
+            raise SystemExit(
+                f"{path.name}: machine=0x{machine:04x}, expected 0x{expected_machine:04x}"
+            )
         if ".rsrc" not in sections or sections[".rsrc"][2] == 0:
             raise SystemExit(f"{path.name}: missing non-empty .rsrc section")
         types = resource_type_ids(path)
         missing = EXPECTED_TYPES - types
         if missing:
-            raise SystemExit(f"{path.name}: missing Windows resource types {sorted(missing)}")
-        icons = [hashlib.sha256(payload).hexdigest() for payload in resource_payloads(path, 3)]
+            raise SystemExit(
+                f"{path.name}: missing Windows resource types {sorted(missing)}"
+            )
+        icons = [
+            hashlib.sha256(payload).hexdigest()
+            for payload in resource_payloads(path, 3)
+        ]
         groups = resource_payloads(path, 14)
         manifests = resource_payloads(path, 24)
         if not icons or len(groups) != 1 or len(manifests) != 1:
             raise SystemExit(f"{path.name}: incomplete icon/manifest resource payloads")
         icon_fingerprints[label] = (icons, hashlib.sha256(groups[0]).hexdigest())
-        print(f"{path.name}: resource PASS (.rsrc, {len(icons)} icon images, group icon, manifest)")
+        print(
+            f"{path.name}: resource PASS (.rsrc, {len(icons)} icon images, group icon, manifest)"
+        )
     values = list(icon_fingerprints.values())
     if any(value != values[0] for value in values[1:]):
         raise SystemExit("Windows icon resources differ between architectures")

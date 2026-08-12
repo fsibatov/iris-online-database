@@ -8,9 +8,6 @@ import (
 
 var errUnsafeDestructivePath = errors.New("unsafe destructive path")
 
-// safeMaintenanceRoot validates the application-owned root itself. Maintenance
-// is intentionally fail-closed when any existing component is a symlink or a
-// Windows reparse point; cleanup is optional, deleting outside our roots is not.
 func safeMaintenanceRoot(root string) (string, bool) {
 	if root == "" {
 		return "", false
@@ -72,8 +69,7 @@ func validatedDestructivePath(path, root, currentExecutable string) (string, boo
 	if currentExecutable != "" && (sameFilePath(pathAbs, currentExecutable) || insideRoot(currentExecutable, pathAbs)) {
 		return "", false
 	}
-	// Lstat every component, not just the final object. This blocks
-	// allowed/link/victim where link redirects outside the maintenance root.
+
 	if !pathComponentsArePlain(pathAbs) {
 		return "", false
 	}
@@ -97,9 +93,6 @@ func destructiveRootForPath(path string, roots []string, currentExecutable strin
 	return "", "", false
 }
 
-// safeOwnedFilePath validates a fixed application-owned file location for
-// read/write operations. The parent directory must be a real, non-reparse
-// directory and an existing final object must not be a symlink/reparse point.
 func safeOwnedFilePath(path string) bool {
 	if path == "" {
 		return false

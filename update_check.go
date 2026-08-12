@@ -31,10 +31,11 @@ type updateCheckResult struct {
 }
 
 type updateChecker struct {
-	once   sync.Once
-	result updateCheckResult
-	client *http.Client
-	apiURL string
+	mu        sync.Mutex
+	attempted bool
+	result    updateCheckResult
+	client    *http.Client
+	apiURL    string
 }
 
 func newUpdateChecker() *updateChecker {
@@ -54,13 +55,17 @@ func newUpdateChecker() *updateChecker {
 	}
 }
 
-func (c *updateChecker) Check(ctx context.Context) updateCheckResult {
+func (c *updateChecker) Check(ctx context.Context, force bool) updateCheckResult {
 	if c == nil {
 		return updateCheckResult{CurrentVersion: appVersion}
 	}
-	c.once.Do(func() {
-		c.result = checkLatestRelease(ctx, c.client, c.apiURL, appVersion)
-	})
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.attempted && !force {
+		return c.result
+	}
+	c.result = checkLatestRelease(ctx, c.client, c.apiURL, appVersion)
+	c.attempted = true
 	return c.result
 }
 
@@ -132,7 +137,6 @@ func normalizeVersion(value string) (string, error) {
 			parts[i] = 0
 			continue
 		}
-
 		number, err := strconv.Atoi(raw)
 		if err != nil || number < 0 {
 			return "", errors.New("invalid version")

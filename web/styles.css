@@ -472,7 +472,6 @@ html[data-theme="light"] .control-select { color-scheme: light; }
   line-height: 1;
   white-space: nowrap;
 }
-/* Игровые цвета редкости Iris Online — значения сохранены без изменений. */
 .rarity-label.quality-unique { color: #fff600; border-color: color-mix(in srgb, #fff600 58%, var(--border)); background: color-mix(in srgb, #fff600 10%, var(--surface-2)); }
 .rarity-label.quality-epic { color: #d800ff; border-color: color-mix(in srgb, #d800ff 58%, var(--border)); background: color-mix(in srgb, #d800ff 10%, var(--surface-2)); }
 .rarity-label.quality-rare { color: #00fffc; border-color: color-mix(in srgb, #00fffc 52%, var(--border)); background: color-mix(in srgb, #00fffc 8%, var(--surface-2)); }
@@ -880,7 +879,6 @@ a.link-row:hover { background: var(--surface-2); }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
-/* Главная: компактная композиция без рекламного оформления. */
 .home-page { width: min(100%, 980px); max-width: 980px; align-content: center; gap: 24px; }
 .home-primary {
   width: 100%;
@@ -947,7 +945,6 @@ a.link-row:hover { background: var(--surface-2); }
 .community-links > div { display: flex; flex-wrap: wrap; gap: 6px 12px; }
 .community-links a { color: var(--muted); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
 
-/* Содержимое сундуков и ленивое раскрытие мировых источников. */
 .chest-contents {
   min-width: 0;
   display: grid;
@@ -1030,11 +1027,9 @@ a.link-row:hover { background: var(--surface-2); }
   .recent-viewed-list, .resource-links { grid-template-columns: 1fr; }
 }
 
-/* Текстовые игровые эффекты используют отдельную цветовую роль. */
 .property-text { min-width: 0; overflow-wrap: anywhere; font-size: 14px; line-height: 1.42; }
 .property-text--bonus { color: var(--game-bonus); }
 
-/* Материалы рецепта остаются компактным списком ссылок. */
 .recipe-materials {
   margin-top: 18px;
   min-width: 0;
@@ -1084,14 +1079,12 @@ a.link-row:hover { background: var(--surface-2); }
 @media (max-width: 620px) { .home-update-notice { align-items:stretch; flex-direction:column; } .home-update-notice .secondary-button { width:100%; } }
 
 
-/* Каталог рецептов: материалы видны прямо в строке, но не конкурируют с названием. */
 .recipe-result-row .result-tertiary { align-items: center; }
 .recipe-material-preview { min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .result-list.card-view .recipe-material-preview { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .recipe-source-preview { display: block; margin-top: 3px; color: var(--soft); font-size: 12px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .result-list.card-view .recipe-source-preview { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
-/* Результат рецепта: готовый предмет и его фактический эффект из базы. */
 .recipe-product {
   margin-top: 18px;
   display: grid;
@@ -1133,3 +1126,98 @@ a.link-row:hover { background: var(--surface-2); }
   overflow-wrap: anywhere;
 }
 .recipe-product-stats { padding: 2px 0; }
+
+.section-tabs-row {
+  width: min(100%, calc(var(--content-max) + 2 * var(--page-padding)));
+  min-height: 46px;
+  margin-inline: auto;
+  padding: 0 var(--page-padding);
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+}
+.section-tabs-row .section-tabs { width: auto; min-width: 0; flex: 1 1 auto; margin: 0; padding: 0; }
+.version-status {
+  min-width: 0;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 4px 5px 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+.version-status-number { color: var(--text); font-weight: 700; white-space: nowrap; }
+.version-status-text { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.version-status-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--soft); box-shadow: 0 0 0 3px color-mix(in srgb, var(--soft) 16%, transparent); }
+.version-status[data-status="current"] .version-status-dot { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 16%, transparent); }
+.version-status[data-status="current"] .version-status-text { color: var(--good); }
+.version-status[data-status="update"] .version-status-dot { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent); }
+.version-status[data-status="update"] .version-status-text { color: var(--warn); }
+.version-status[data-status="checking"] .version-status-dot { background: var(--accent); animation: status-pulse 1.25s ease-in-out infinite; }
+.version-check-button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+}
+.version-check-button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+.version-check-button:disabled { cursor: default; opacity: .55; }
+.version-check-button svg { width: 16px; height: 16px; }
+.version-check-button[aria-busy="true"] svg { animation: status-spin .9s linear infinite; }
+@keyframes status-pulse { 50% { opacity: .45; } }
+@keyframes status-spin { to { transform: rotate(360deg); } }
+
+.home-vk-news { min-width: 0; overflow: hidden; }
+.home-section-heading--news { align-items: flex-start; margin-bottom: 12px; }
+.home-section-heading--news > div { min-width: 0; }
+.home-section-heading--news h2 { margin-bottom: 2px; }
+.home-section-heading--news p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.vk-news-refresh { flex: 0 0 auto; min-height: 36px; padding-inline: 12px; white-space: nowrap; }
+.vk-news-host { min-width: 0; min-height: 220px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.vk-news-card { min-height: 220px; display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 16px; align-items: start; padding: clamp(18px, 3vw, 28px); }
+.vk-news-card-mark { width: 56px; height: 56px; display: grid; place-items: center; border-radius: 16px; background: #2787f5; color: #fff; font-weight: 850; font-size: 19px; letter-spacing: -.04em; }
+.vk-news-card-body { min-width: 0; display: grid; gap: 12px; }
+.vk-news-card-meta { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.vk-news-card-meta strong { font-size: 17px; }
+.vk-news-card-meta span { color: var(--muted); font-size: 12px; }
+.vk-news-text { margin: 0; max-width: 82ch; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.55; }
+.vk-news-text--muted { color: var(--muted); }
+.vk-news-open { width: fit-content; max-width: 100%; }
+.vk-news-fallback { min-height: 220px; position: relative; display: grid; grid-template-columns: minmax(180px, .8fr) minmax(220px, 1fr); align-items: center; gap: clamp(18px, 4vw, 42px); padding: clamp(18px, 3vw, 30px); overflow: hidden; }
+.vk-news-fallback::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface) 28%, transparent)); }
+.vk-news-fallback img { width: 100%; max-height: 210px; object-fit: contain; filter: drop-shadow(0 14px 26px rgba(0,0,0,.24)); }
+.vk-news-fallback > div { position: relative; z-index: 1; min-width: 0; }
+.vk-news-fallback strong { display: block; margin-bottom: 6px; color: var(--text); font-size: clamp(18px, 2.4vw, 24px); }
+.vk-news-fallback p { margin: 0; max-width: 48ch; color: var(--muted); overflow-wrap: anywhere; }
+.vk-news-fallback.is-loading img { opacity: .72; }
+
+@media (max-width: 900px) {
+  .section-tabs-row { padding-inline: 12px; }
+}
+@media (max-width: 640px) {
+  .version-status-text { max-width: 120px; }
+  .version-status { gap: 6px; padding-left: 9px; }
+  .home-section-heading--news { flex-wrap: wrap; }
+  .vk-news-refresh { width: 100%; }
+  .vk-news-card { grid-template-columns: 1fr; }
+  .vk-news-card-mark { width: 48px; height: 48px; border-radius: 14px; }
+  .vk-news-fallback { min-height: 300px; grid-template-columns: 1fr; text-align: center; }
+  .vk-news-fallback img { max-height: 150px; margin-inline: auto; }
+  .vk-news-fallback p { margin-inline: auto; }
+}
+@media (max-width: 380px) {
+  .version-status-text { max-width: 96px; }
+  .version-status-number { font-size: 11px; }
+  .section-tabs-row { padding-bottom: 6px; }
+}

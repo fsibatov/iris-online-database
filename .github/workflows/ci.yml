@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: .go-version
+          cache: false
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.13'
+
+      - name: Install quality tools
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@2026.1
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          python -m pip install --disable-pip-version-check ruff==0.16.2 pip-audit==2.10.1
+
+      - name: Repository audit
+        run: python -B tools/repository_audit.py
+
+      - name: Go format
+        shell: bash
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            printf '%s\n' "$files"
+            exit 1
+          fi
+
+      - name: Go module integrity
+        run: |
+          go mod verify
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Go build
+        run: go build -o "$RUNNER_TEMP/iris-online-build-check" .
+
+      - name: Go test
+        run: go test -count=1 ./...
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Staticcheck
+        run: staticcheck ./...
+
+      - name: Govulncheck
+        run: govulncheck ./...
+
+      - name: Python compile
+        run: PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python -m compileall -q tools
+
+      - name: Python tests
+        run: python -B -m unittest discover -s tools -p 'test_*.py'
+
+      - name: Ruff lint
+        run: python -m ruff check tools
+
+      - name: Ruff format
+        run: python -m ruff format --check tools
+
+      - name: Python dependency audit
+        run: python -m pip_audit -r tools/requirements-audit.txt
+
+      - name: JavaScript syntax
+        run: node --check web/app.js
+
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: .go-version
+          cache: false
+      - name: Race detector
+        run: go test -race -count=1 ./...

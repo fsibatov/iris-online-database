@@ -227,8 +227,7 @@ func sanitizeProfile(profile userProfile) userProfile {
 	if profile.Settings.View != "cards" && profile.Settings.View != "list" {
 		profile.Settings.View = "cards"
 	}
-	// Catalog filters are session-only state. Keep the schema fields for
-	// backward compatibility, but never retain values across application runs.
+
 	profile.ItemFilters = map[string]string{}
 	profile.MonsterFilters = map[string]string{}
 	profile.Favorites = sanitizeStringList(profile.Favorites, 5000, 80, func(value string) bool {
@@ -297,8 +296,11 @@ func sanitizeProfileExtra(values map[string]json.RawMessage) map[string]json.Raw
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if len(result) >= 64 || len([]rune(key)) > 80 {
+		if len(result) >= 64 {
 			break
+		}
+		if len([]rune(key)) > 80 {
+			continue
 		}
 		if _, known := knownProfileKeys[key]; known {
 			continue
@@ -727,15 +729,6 @@ func removeEmptyDirectories(root, currentExecutable string) {
 	for _, dir := range dirs {
 		_ = safeRemove(dir, root, currentExecutable)
 	}
-}
-
-func insideAnyRoot(path string, roots []string) bool {
-	for _, root := range roots {
-		if insideRoot(path, root) {
-			return true
-		}
-	}
-	return false
 }
 
 func insideRoot(path, root string) bool {

@@ -25,8 +25,6 @@ import (
 
 const applicationID = "iris-online-database"
 
-// appVersion is a variable so release and diagnostic builds can pin the visible version
-// with -ldflags while development builds keep a safe diagnostic default.
 var (
 	appVersion    = "1.1.0"
 	releaseMarker = "IrisOnlineDiagnostic/1.1.0/development"
@@ -71,8 +69,6 @@ func run() int {
 
 	browserEnabled := !*noBrowser && os.Getenv("IRIS_NO_BROWSER") == ""
 
-	// Headless/test/server operation must never block on a native Windows
-	// MessageBox. Interactive launches keep the normal user-facing dialog.
 	showStartupError := func(message string) {
 		if !browserEnabled {
 			fmt.Fprintln(os.Stderr, message)
@@ -81,8 +77,6 @@ func run() int {
 		showStartupMessage(message)
 	}
 
-	// Probe before touching profile/cache/log paths so a second or different
-	// Iris Online build never performs maintenance alongside the active copy.
 	if existing := probeExistingInstance(*address); existing.Found {
 		if sameApplicationBuild(existing) {
 			if browserEnabled {
@@ -252,13 +246,10 @@ func run() int {
 		sessions:  newSessionManager(*idleGrace, *heartbeatTimeout),
 		autoExit:  browserEnabled || *shutdownWhenIdle,
 
-		// Browser heartbeats are a recovery/diagnostic lease, not a close signal.
-		// Edge and other Chromium browsers may suspend JavaScript timers while a
-		// tab is in the background. Only explicit -shutdown-when-idle mode may
-		// treat heartbeat expiry as authority to terminate the backend.
 		shutdownOnHeartbeatExpiry: *shutdownWhenIdle,
 		startupTimeout:            effectiveStartupTimeout,
 		updates:                   newUpdateChecker(),
+		community:                 newCommunityChecker(),
 	}
 
 	app.server = &http.Server{
@@ -364,7 +355,29 @@ func (a *application) handleUpdateCheck(w http.ResponseWriter, r *http.Request) 
 		}()
 	}
 
-	writeJSON(w, a.updates.Check(ctx))
+	force := r.URL.Query().Get("refresh") == "1"
+	writeJSON(w, a.updates.Check(ctx, force))
+}
+
+func (a *application) handleCommunityStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+
+	ctx := r.Context()
+	if a.ctx != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		stop := context.AfterFunc(a.ctx, cancel)
+		defer func() {
+			stop()
+			cancel()
+		}()
+	}
+
+	force := r.URL.Query().Get("refresh") == "1"
+	writeJSON(w, a.community.Check(ctx, force))
 }
 
 func (a *application) routes() http.Handler {
@@ -372,6 +385,7 @@ func (a *application) routes() http.Handler {
 
 	mux.HandleFunc("/api/health", a.handleHealth)
 	mux.HandleFunc("/api/update-check", a.handleUpdateCheck)
+	mux.HandleFunc("/api/community-status", a.handleCommunityStatus)
 	mux.HandleFunc("/api/session/open", a.handleSessionOpen)
 	mux.HandleFunc("/api/session/heartbeat", a.handleSessionHeartbeat)
 	mux.HandleFunc("/api/session/close", a.handleSessionClose)
@@ -518,7 +532,7 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 		)
 		w.Header().Set(
 			"Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+			"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 		)
 		w.Header().Set(
 			"Cross-Origin-Opener-Policy",

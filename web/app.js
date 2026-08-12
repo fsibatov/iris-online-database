@@ -65,6 +65,7 @@
     monsterWorldDrops: null,
     sessionId: '',
     updateInfo: { checked: false, checking: false, latestVersion: '', updateAvailable: false, releaseUrl: '' },
+    vkNews: { checked: false, checking: false, available: false, latestPostId: 0, latestPostUrl: '', latestPostText: '', publishedAt: '' },
   };
 
   if (!['list', 'cards'].includes(state.view)) state.view = 'list';
@@ -78,6 +79,9 @@
   const globalSearch = document.getElementById('globalSearch');
   const suggestions = document.getElementById('searchSuggestions');
   const serverSelect = document.getElementById('serverSelect');
+  const versionStatus = document.getElementById('versionStatus');
+  const versionStatusText = document.getElementById('versionStatusText');
+  const checkUpdatesButton = document.getElementById('checkUpdatesButton');
   const moreButton = document.getElementById('moreButton');
   const moreMenu = document.getElementById('moreMenu');
   const themeMenuLabel = document.getElementById('themeMenuLabel');
@@ -261,8 +265,10 @@
   }
 
   function serverName(server) {
-    if (server?.name) return server.name;
-    return normalizeServerKey(server?.key) === 'original' ? 'Original' : 'Iris Kiss Kiss';
+    const key = normalizeServerKey(server?.key);
+    if (key === 'original') return 'The Original';
+    if (key === 'kiss') return 'Iris Kiss Kiss';
+    return String(server?.name || server?.key || 'Сервер');
   }
 
   function primaryItemStat(item) {
@@ -405,18 +411,25 @@
       ? `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="https://github.com/fsibatov/iris-online-database/releases/latest" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`
       : '';
     const serverDifference = `<section class="home-server-difference home-compact-section" aria-labelledby="serverDifferenceTitle">
-      <h2 id="serverDifferenceTitle">Original и Kiss: в чём разница?</h2>
-      <p>Original и Kiss — два сервера Iris Online. Выберите вверху тот сервер, на котором играете.</p>
+      <h2 id="serverDifferenceTitle">The Original и Iris Kiss Kiss: в чём разница?</h2>
+      <p>The Original и Iris Kiss Kiss — два сервера Iris Online. Выберите вверху тот сервер, на котором играете.</p>
       <p>Предметы и их характеристики одинаковы. Могут отличаться монстры и способы получения предметов: выпадение с монстров, мировая добыча, награды за задания и содержимое сундуков.</p>
       <p>После переключения база автоматически показывает монстров и источники получения для выбранного сервера.</p>
-      <p class="home-server-counts">Сейчас в базе: Original — 609 монстров · Kiss — 677 монстров.</p>
+      <p class="home-server-counts">Сейчас в базе: The Original — 609 монстров · Iris Kiss Kiss — 677 монстров.</p>
+    </section>`;
+    const vkNews = `<section class="home-vk-news home-compact-section" aria-labelledby="vkNewsTitle">
+      <div class="home-section-heading home-section-heading--news">
+        <div><h2 id="vkNewsTitle">Последняя запись ВКонтакте</h2><p>Новости сообщества Iris Online</p></div>
+        <button class="secondary-button vk-news-refresh" type="button" data-action="refresh-vk-news">Проверить новую запись</button>
+      </div>
+      <div class="vk-news-host" data-vk-news-host aria-live="polite">${vkNewsFallbackHTML('Проверяем последнюю запись…', true)}</div>
     </section>`;
     const resources = `<section class="home-resources home-compact-section" aria-labelledby="resourcesTitle">
       <h2 id="resourcesTitle">Полезные ссылки</h2>
       <div class="resource-links">
         <a href="https://irisonline.ru/" target="_blank" rel="noopener noreferrer external"><strong>Официальный сайт</strong><small>irisonline.ru</small></a>
         <a href="https://wiki.irisonline.ru/" target="_blank" rel="noopener noreferrer external"><strong>Wiki</strong><small>wiki.irisonline.ru</small></a>
-        <a href="https://vk.com/irisonru" target="_blank" rel="noopener noreferrer external"><strong>ВКонтакте</strong><small>vk.com/irisonru</small></a>
+        <a href="https://vk.ru/wall-59626511" target="_blank" rel="noopener noreferrer external"><strong>ВКонтакте</strong><small>vk.ru/wall-59626511</small></a>
         <a href="https://vk.ru/board59626511" target="_blank" rel="noopener noreferrer external"><strong>Обсуждения</strong><small>vk.ru</small></a>
         <a href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external"><strong>GitHub проекта</strong><small>github.com/fsibatov/iris-online-database</small></a>
       </div>
@@ -438,8 +451,10 @@
       ${serverDifference}
       <div class="home-activity">${recentlyViewed}${resources}</div>
       <p class="home-database-status">Текущий сервер: <strong data-home-server-name>${escapeHTML(serverLabel)}</strong> · игровые данные берутся только из локального пакета</p>
+      ${vkNews}
     </section>`;
     positionSearchWidget(true);
+    void checkVkNews();
     requestAnimationFrame(() => globalSearch.focus({ preventScroll: true }));
   }
 
@@ -944,8 +959,6 @@
       ['Вес', hasPositiveStat(item.weight) ? formatNumber(item.weight) : ''],
       ['Максимум в стопке', Number(item.maxStack) > 1 ? formatNumber(item.maxStack) : ''],
     ]);
-    // An explicit option row is data even when its numeric value is zero. The
-    // source row, not JavaScript truthiness, decides whether the effect exists.
     const knownBonusRows = (bonuses || []).filter(row => Array.isArray(row) || row?.known !== false);
     const unknownBonusRows = (bonuses || []).filter(row => !Array.isArray(row) && row?.known === false);
     const bonusStats = uniquePropertyRows(knownBonusRows.map(row => [row.name ?? row[0], row.value ?? row[1]]), { allowZero: true });
@@ -1755,6 +1768,10 @@
     document.documentElement.dataset.theme = state.theme;
     localStorage.setItem('iris-theme', state.theme);
     updateThemeChrome();
+    if (routeBase() === 'home' && state.vkNews.available) {
+      state.vkNews.refreshToken += 1;
+      renderVkNews();
+    }
     scheduleProfileSave(0);
   }
 
@@ -1777,14 +1794,36 @@
     }
     if (info.checked) return 'Установлена актуальная версия';
     if (info.checking) return 'Проверка…';
-    return 'Не удалось проверить';
+    return 'Статус неизвестен';
   }
 
-  async function checkForUpdates() {
-    if (state.updateInfo.checking || state.updateInfo.checked) return;
+  function renderVersionStatus() {
+    if (!versionStatus || !versionStatusText || !checkUpdatesButton) return;
+    const info = state.updateInfo || {};
+    let status = 'unknown';
+    let text = 'Статус неизвестен';
+    if (info.checking) {
+      status = 'checking';
+      text = 'Проверка…';
+    } else if (info.checked && info.updateAvailable) {
+      status = 'update';
+      text = info.latestVersion ? `Доступно ${info.latestVersion}` : 'Есть обновление';
+    } else if (info.checked) {
+      status = 'current';
+      text = 'Актуальная';
+    }
+    versionStatus.dataset.status = status;
+    versionStatusText.textContent = text;
+    checkUpdatesButton.disabled = Boolean(info.checking);
+    checkUpdatesButton.setAttribute('aria-busy', info.checking ? 'true' : 'false');
+  }
+
+  async function checkForUpdates({ force = false, notify = false } = {}) {
+    if (state.updateInfo.checking || (state.updateInfo.checked && !force)) return;
     state.updateInfo.checking = true;
+    renderVersionStatus();
     try {
-      const result = await api('/api/update-check');
+      const result = await api(`/api/update-check${force ? '?refresh=1' : ''}`);
       state.updateInfo = {
         checked: Boolean(result?.checked),
         checking: false,
@@ -1793,11 +1832,96 @@
         releaseUrl: String(result?.releaseUrl || ''),
       };
       if (state.updateInfo.updateAvailable && state.updateInfo.latestVersion) {
-        showToast(`Доступна новая версия ${state.updateInfo.latestVersion}`);
-        if (routeBase() === 'home') refreshUpdateNotice();
+        if (notify || !force) showToast(`Доступна новая версия ${state.updateInfo.latestVersion}`);
+      } else if (notify && state.updateInfo.checked) {
+        showToast('Установлена актуальная версия.');
+      } else if (notify && !state.updateInfo.checked) {
+        showToast('Не удалось проверить обновления.');
       }
     } catch (_) {
       state.updateInfo = { checked: false, checking: false, latestVersion: '', updateAvailable: false, releaseUrl: '' };
+      if (notify) showToast('Не удалось проверить обновления.');
+    } finally {
+      renderVersionStatus();
+      if (routeBase() === 'home') refreshUpdateNotice();
+    }
+  }
+
+  function vkNewsFallbackHTML(message, loading = false) {
+    return `<div class="vk-news-fallback ${loading ? 'is-loading' : ''}">
+      <img src="/vk-fallback.svg" alt="" aria-hidden="true">
+      <div><strong>${loading ? 'Новости ВКонтакте' : 'Новости недоступны'}</strong><p>${escapeHTML(message)}</p></div>
+    </div>`;
+  }
+
+  function vkNewsCardHTML() {
+    const postId = Number(state.vkNews.latestPostId || 0);
+    const postUrl = String(state.vkNews.latestPostUrl || '').trim();
+    const text = String(state.vkNews.latestPostText || '').trim();
+    if (!postId || !postUrl) return vkNewsFallbackHTML('Не удалось определить последнюю запись. Нажмите «Проверить новую запись», чтобы повторить попытку.');
+    const body = text
+      ? `<p class="vk-news-text">${multilineHTML(text)}</p>`
+      : '<p class="vk-news-text vk-news-text--muted">Последняя запись найдена. Откройте её во ВКонтакте, чтобы посмотреть полный текст и вложения.</p>';
+    return `<article class="vk-news-card">
+      <div class="vk-news-card-mark" aria-hidden="true">VK</div>
+      <div class="vk-news-card-body">
+        <div class="vk-news-card-meta"><strong>Iris Online</strong><span>Последняя запись · № ${postId}</span></div>
+        ${body}
+        <a class="primary-button vk-news-open" href="${escapeHTML(postUrl)}" target="_blank" rel="noopener noreferrer external">Открыть запись ${icons.external}</a>
+      </div>
+    </article>`;
+  }
+
+  function renderVkNews() {
+    const host = main.querySelector('[data-vk-news-host]');
+    const button = main.querySelector('[data-action="refresh-vk-news"]');
+    if (!host) return;
+    if (button) {
+      button.disabled = Boolean(state.vkNews.checking);
+      button.textContent = state.vkNews.checking ? 'Проверяем…' : 'Проверить новую запись';
+    }
+    if (state.vkNews.checking && !state.vkNews.checked) {
+      host.innerHTML = vkNewsFallbackHTML('Загружаем последнюю запись сообщества…', true);
+      return;
+    }
+    if (!state.vkNews.available) {
+      host.innerHTML = vkNewsFallbackHTML('Не удалось загрузить последнюю запись. Проверьте подключение к интернету и нажмите «Проверить новую запись».');
+      return;
+    }
+    host.innerHTML = vkNewsCardHTML();
+  }
+
+  async function checkVkNews({ force = false } = {}) {
+    if (routeBase() !== 'home' || state.vkNews.checking || (state.vkNews.checked && !force)) {
+      if (routeBase() === 'home') renderVkNews();
+      return;
+    }
+    if (navigator.onLine === false) {
+      state.vkNews = { ...state.vkNews, checked: true, checking: false, available: false };
+      renderVkNews();
+      return;
+    }
+    state.vkNews.checking = true;
+    renderVkNews();
+    try {
+      const result = await api(`/api/community-status${force ? '?refresh=1' : ''}`);
+      state.vkNews = {
+        ...state.vkNews,
+        checked: true,
+        checking: false,
+        available: Boolean(result?.available),
+        latestPostId: Number(result?.latestPostId || 0),
+        latestPostUrl: String(result?.latestPostUrl || ''),
+        latestPostText: String(result?.latestPostText || ''),
+        publishedAt: String(result?.publishedAt || ''),
+      };
+      if (force) showToast(state.vkNews.available ? 'Последняя запись ВКонтакте обновлена.' : 'Не удалось получить последнюю запись ВКонтакте.');
+    } catch (_) {
+      state.vkNews = { ...state.vkNews, checked: true, checking: false, available: false };
+      if (force) showToast('Не удалось проверить новости ВКонтакте.');
+    } finally {
+      state.vkNews.checking = false;
+      renderVkNews();
     }
   }
 
@@ -1807,7 +1931,7 @@
     closeMoreMenu();
     if (type === 'about') {
       infoDialogTitle.textContent = 'О приложении';
-      infoDialogBody.innerHTML = `<p>Iris Online Database — локальная база данных о предметах, монстрах, рецептах и способах их получения.</p><dl class="kv-list"><div><dt>Версия</dt><dd>${APP_VERSION}</dd></div><div><dt>Автор</dt><dd>Хоуп (Original)</dd></div><div><dt>Данные</dt><dd>Хранятся и обрабатываются локально на этом компьютере</dd></div><div><dt>Проверка обновлений</dt><dd>${updateStatusHTML()}</dd></div></dl><p class="muted-copy">При запуске приложение не более одного раза обращается к GitHub, чтобы проверить номер последнего релиза. Профиль, история, избранное и поисковые запросы не отправляются.</p><div class="legal-notice"><p><strong>© 2026 Iris Online Database</strong></p><p>Iris Online Database — неофициальное фанатское приложение для Iris Online. Проект не связан с разработчиками, издателями или правообладателями игры. Все игровые материалы, названия, логотипы и товарные знаки принадлежат их соответствующим правообладателям.</p><p><a class="external-link" href="https://irisonline.ru/" target="_blank" rel="noopener noreferrer" aria-label="Официальный сайт игры Iris Online — открыть в новой вкладке">Официальный сайт игры: irisonline.ru ${icons.external}</a></p><p><a class="external-link" href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external" aria-label="GitHub проекта Iris Online Database — открыть в новой вкладке">GitHub проекта ${icons.external}</a></p></div>`;
+      infoDialogBody.innerHTML = `<p>Iris Online Database — локальная база данных о предметах, монстрах, рецептах и способах их получения.</p><dl class="kv-list"><div><dt>Версия</dt><dd>${APP_VERSION}</dd></div><div><dt>Автор</dt><dd>Хоуп (The Original)</dd></div><div><dt>Данные</dt><dd>Хранятся и обрабатываются локально на этом компьютере</dd></div><div><dt>Проверка обновлений</dt><dd>${updateStatusHTML()}</dd></div></dl><p class="muted-copy">Приложение обращается к GitHub для проверки версии и загрузки подготовленной копии последней публичной записи ВКонтакте. Само приложение напрямую к VK не подключается. Профиль, история, избранное и поисковые запросы в GitHub не отправляются.</p><div class="legal-notice"><p><strong>© 2026 Iris Online Database</strong></p><p>Iris Online Database — неофициальное фанатское приложение для Iris Online. Проект не связан с разработчиками, издателями или правообладателями игры. Все игровые материалы, названия, логотипы и товарные знаки принадлежат их соответствующим правообладателям.</p><p><a class="external-link" href="https://irisonline.ru/" target="_blank" rel="noopener noreferrer" aria-label="Официальный сайт игры Iris Online — открыть в новой вкладке">Официальный сайт игры: irisonline.ru ${icons.external}</a></p><p><a class="external-link" href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external" aria-label="GitHub проекта Iris Online Database — открыть в новой вкладке">GitHub проекта ${icons.external}</a></p></div>`;
     } else if (type === 'data') {
       const meta = state.meta?.meta || {};
       const server = activeServerMeta();
@@ -1888,9 +2012,6 @@
   function saveProfileBestEffort() {
     if (!state.profileLoaded || (!profileDirty && !profileSaving)) return;
     const body = JSON.stringify(profilePayload());
-    // Browser keepalive requests share a small transport quota. A large
-    // profile has already been scheduled through the normal endpoint and
-    // must not prevent the small session-close request from being queued.
     if (new Blob([body]).size > 60 * 1024) return;
     fetch('/api/user-data', {
       method: 'PUT',
@@ -2015,9 +2136,6 @@
     if (!id) return;
     const body = JSON.stringify({ id, pendingOpen: Boolean(pendingOpen) });
 
-    // Closing a browser tab is a best-effort delivery window. Queue both
-    // transports: session close is idempotent on the backend, while using two
-    // independent browser delivery paths substantially reduces orphaned EXEs.
     try { navigator.sendBeacon?.('/api/session/close', body); } catch (_) {}
     fetch('/api/session/close', {
       method: 'POST',
@@ -2045,6 +2163,7 @@
     const action = event.target.closest('[data-action]')?.dataset.action;
     if (action === 'reload') { renderRoute(); return; }
     if (action === 'clear-recently-viewed') { clearRecentlyViewed(); return; }
+    if (action === 'refresh-vk-news') { void checkVkNews({ force: true }); return; }
     if (action === 'open-filters') { openFilters(); return; }
     if (action === 'reset-filters') { resetFilters(); return; }
     const pageButton = event.target.closest('[data-page]');
@@ -2193,6 +2312,7 @@
     catalogDebounce = setTimeout(() => refreshCatalog(), SEARCH_DEBOUNCE);
   });
 
+  checkUpdatesButton?.addEventListener('click', () => void checkForUpdates({ force: true, notify: true }));
   resetFiltersButton.addEventListener('click', () => resetFilters());
   closeFiltersButton.addEventListener('click', closeFilters);
   filterDrawer.addEventListener('click', event => { if (event.target.closest('[data-close-overlay]')) closeFilters(); });
@@ -2280,8 +2400,6 @@
   window.addEventListener('beforeunload', closeApplicationSession);
   window.addEventListener('pagehide', closeApplicationSession);
   window.addEventListener('pageshow', () => {
-    // A late keepalive/beacon from the previous page lifecycle must never be
-    // able to close a restored BFCache page. Reopen it under a fresh ID.
     if (sessionCloseSent) state.sessionId = newSessionID();
     sessionClosing = false;
     sessionCloseSent = false;
@@ -2303,14 +2421,12 @@
     globalSearch.value = '';
     closeSuggestions();
 
-    // Establish the browser session immediately. On reload the old page sends
-    // an explicit close, so the replacement session must arrive before the
-    // backend's close grace expires. Do not delay it behind profile loading.
     const openingSession = openApplicationSession();
     try {
       await Promise.all([loadUserProfile(), openingSession]);
     } catch (_) { state.profileLoaded = true; }
     renderRoute();
+    renderVersionStatus();
     void checkForUpdates();
   })();
 })();

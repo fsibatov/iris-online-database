@@ -5,6 +5,7 @@ The source tables are not redistributed by this project. Supply them explicitly.
 Only server drop rules, exact drop-list order, and source-date metadata are
 changed; item and monster records remain untouched.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,7 +35,6 @@ def parse_pairs(columns: list[str], start: int) -> list[dict[str, Any]]:
     return choices
 
 
-
 def parse_drop_lists(path: Path) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = {}
     with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as source:
@@ -51,12 +51,15 @@ def parse_drop_lists(path: Path) -> dict[str, list[dict[str, Any]]]:
                 continue
             if group_id <= 0 or item_id <= 0 or raw_chance <= 0 or quantity <= 0:
                 continue
-            result.setdefault(str(group_id), []).append({
-                "itemId": item_id,
-                "chance": raw_chance / CHANCE_SCALE,
-                "quantity": quantity,
-            })
+            result.setdefault(str(group_id), []).append(
+                {
+                    "itemId": item_id,
+                    "chance": raw_chance / CHANCE_SCALE,
+                    "quantity": quantity,
+                }
+            )
     return result
+
 
 def parse_direct_slots(path: Path) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = {}
@@ -73,14 +76,18 @@ def parse_direct_slots(path: Path) -> dict[str, list[dict[str, Any]]]:
                 continue
             choices = parse_pairs(columns, 6)
             if choices:
-                result.setdefault(monster_id, []).append({
-                    "sourceLine": source_line,
-                    "addAttempt1Count": max(0, int(columns[2].strip() or 0)),
-                    "addAttempt1Rate": max(0, int(columns[3].strip() or 0)) / CHANCE_SCALE,
-                    "addAttempt2Count": max(0, int(columns[4].strip() or 0)),
-                    "addAttempt2Rate": max(0, int(columns[5].strip() or 0)) / CHANCE_SCALE,
-                    "choices": choices,
-                })
+                result.setdefault(monster_id, []).append(
+                    {
+                        "sourceLine": source_line,
+                        "addAttempt1Count": max(0, int(columns[2].strip() or 0)),
+                        "addAttempt1Rate": max(0, int(columns[3].strip() or 0))
+                        / CHANCE_SCALE,
+                        "addAttempt2Count": max(0, int(columns[4].strip() or 0)),
+                        "addAttempt2Rate": max(0, int(columns[5].strip() or 0))
+                        / CHANCE_SCALE,
+                        "choices": choices,
+                    }
+                )
     return result
 
 
@@ -101,22 +108,34 @@ def parse_world_rules(path: Path) -> list[dict[str, Any]]:
             choices = parse_pairs(columns, 9)
             if not choices:
                 continue
-            rules.append({
-                "sourceLine": source_line,
-                "minLevel": min_level,
-                "maxLevel": max_level,
-                "contextId": context_id,
-                "monsterType": monster_type,
-                "addAttempt1Count": max(0, int(columns[5].strip() or 0)),
-                "addAttempt1Rate": max(0, int(columns[6].strip() or 0)) / CHANCE_SCALE,
-                "addAttempt2Count": max(0, int(columns[7].strip() or 0)),
-                "addAttempt2Rate": max(0, int(columns[8].strip() or 0)) / CHANCE_SCALE,
-                "groups": choices,
-            })
+            rules.append(
+                {
+                    "sourceLine": source_line,
+                    "minLevel": min_level,
+                    "maxLevel": max_level,
+                    "contextId": context_id,
+                    "monsterType": monster_type,
+                    "addAttempt1Count": max(0, int(columns[5].strip() or 0)),
+                    "addAttempt1Rate": max(0, int(columns[6].strip() or 0))
+                    / CHANCE_SCALE,
+                    "addAttempt2Count": max(0, int(columns[7].strip() or 0)),
+                    "addAttempt2Rate": max(0, int(columns[8].strip() or 0))
+                    / CHANCE_SCALE,
+                    "groups": choices,
+                }
+            )
     return rules
 
 
-def update_server(server: dict[str, Any], direct_path: Path, list_path: Path, world_path: Path, direct_date: str, list_date: str, world_date: str) -> None:
+def update_server(
+    server: dict[str, Any],
+    direct_path: Path,
+    list_path: Path,
+    world_path: Path,
+    direct_date: str,
+    list_date: str,
+    world_date: str,
+) -> None:
     direct_slots = parse_direct_slots(direct_path)
     drop_lists = parse_drop_lists(list_path)
     world_rules = parse_world_rules(world_path)
@@ -124,15 +143,14 @@ def update_server(server: dict[str, Any], direct_path: Path, list_path: Path, wo
     server["dropLists"] = drop_lists
     server["worldRules"] = world_rules
     server["directDropSlots"] = sum(len(slots) for slots in direct_slots.values())
-    server["directDropEntries"] = sum(len(slot["choices"]) for slots in direct_slots.values() for slot in slots)
+    server["directDropEntries"] = sum(
+        len(slot["choices"]) for slots in direct_slots.values() for slot in slots
+    )
     server["dropListGroups"] = len(drop_lists)
     server["directDropsUpdatedAt"] = direct_date
     server["dropListsUpdatedAt"] = list_date
     server["worldDropsUpdatedAt"] = world_date
 
-    # A flattened representation loses row boundaries and can turn mutually
-    # exclusive alternatives into independent slots. Remove it rather than
-    # publish ambiguous data.
     server.pop("directRules", None)
 
 
@@ -158,16 +176,30 @@ def main() -> None:
     with gzip.open(args.data, "rt", encoding="utf-8") as source:
         data = json.load(source)
 
-    before_items = json.dumps(data["items"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    before_monsters = json.dumps(data["monsters"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    before_items = json.dumps(
+        data["items"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    before_monsters = json.dumps(
+        data["monsters"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
 
     update_server(
-        data["servers"]["kiss"], args.kiss_dropn, args.kiss_droplist, args.kiss_dropw,
-        args.kiss_direct_date, args.kiss_list_date, args.kiss_world_date,
+        data["servers"]["kiss"],
+        args.kiss_dropn,
+        args.kiss_droplist,
+        args.kiss_dropw,
+        args.kiss_direct_date,
+        args.kiss_list_date,
+        args.kiss_world_date,
     )
     update_server(
-        data["servers"]["original"], args.original_dropn, args.original_droplist, args.original_dropw,
-        args.original_direct_date, args.original_list_date, args.original_world_date,
+        data["servers"]["original"],
+        args.original_dropn,
+        args.original_droplist,
+        args.original_dropw,
+        args.original_direct_date,
+        args.original_list_date,
+        args.original_world_date,
     )
     data["meta"]["dataUpdatedAt"] = args.data_date
     data["meta"]["dropUpdatedAt"] = args.drop_date
@@ -179,13 +211,19 @@ def main() -> None:
         "временных ограничений и drop-add/event состояния и не выводится из статических таблиц как простое произведение."
     )
 
-    after_items = json.dumps(data["items"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    after_monsters = json.dumps(data["monsters"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    after_items = json.dumps(
+        data["items"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    after_monsters = json.dumps(
+        data["monsters"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
     if before_items != after_items or before_monsters != after_monsters:
         raise RuntimeError("item or monster records changed unexpectedly")
 
     temporary = args.data.with_suffix(args.data.suffix + ".tmp")
-    with gzip.open(temporary, "wt", encoding="utf-8", compresslevel=9, newline="\n") as target:
+    with gzip.open(
+        temporary, "wt", encoding="utf-8", compresslevel=9, newline="\n"
+    ) as target:
         json.dump(data, target, ensure_ascii=False, separators=(",", ":"))
     temporary.replace(args.data)
 

@@ -24,7 +24,7 @@ func acquireInstanceLock(paths appPaths) (*appInstanceLock, error) {
 	handle, err := syscall.CreateFile(
 		pathPtr,
 		syscall.GENERIC_READ|syscall.GENERIC_WRITE,
-		0, // no sharing: the open handle is the cross-process lock
+		0,
 		nil,
 		syscall.OPEN_ALWAYS,
 		syscall.FILE_ATTRIBUTE_NORMAL,

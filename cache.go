@@ -63,9 +63,7 @@ func (c *responseCache) Get(key string) (cacheEntry, bool) {
 		return cacheEntry{}, false
 	}
 	c.lru.MoveToFront(element)
-	// Entries are immutable after insertion. Returning the stored byte slice avoids
-	// allocating a full response copy on every cache hit; eviction only removes the
-	// cache's reference and does not invalidate a value already returned to a caller.
+
 	return *entry, true
 }
 

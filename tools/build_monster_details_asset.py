@@ -4,6 +4,7 @@
 The asset does not reinterpret opaque client/server fields. Fields without a
 confirmed player-facing meaning are exposed only in technical details.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -66,10 +67,16 @@ def main() -> None:
     args = parser.parse_args()
     data = build(args.monster_list)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=False).encode("utf-8")
-    with args.output.open("wb") as output:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0, compresslevel=9) as gz:
-            gz.write(payload)
+    payload = json.dumps(
+        data, ensure_ascii=False, separators=(",", ":"), sort_keys=False
+    ).encode("utf-8")
+    with (
+        args.output.open("wb") as output,
+        gzip.GzipFile(
+            filename="", mode="wb", fileobj=output, mtime=0, compresslevel=9
+        ) as gz,
+    ):
+        gz.write(payload)
     print(f"monsters={len(data['monsters'])} output={args.output}")
 
 

@@ -51,6 +51,7 @@ type application struct {
 	shutdownOnHeartbeatExpiry bool
 	startupTimeout            time.Duration
 	updates                   *updateChecker
+	community                 *communityChecker
 }
 
 type sessionEmptyReason uint8
@@ -249,13 +250,10 @@ func (s *sessionManager) Close(id string, pendingOpen ...bool) {
 		delete(s.expiredSessions, id)
 	}
 	if !active && !expired && len(pendingOpen) > 0 && pendingOpen[0] {
-		// pagehide can race an in-flight /session/open. Remember only an
-		// explicitly marked pending-open close, for a short bounded interval,
-		// so the late open cannot orphan the backend after the tab is gone.
+
 		s.addPreclosedLocked(id, now)
 	}
-	// Only a session ID that was actually opened by this process may count as
-	// an explicit close. Random/unknown IDs must never be able to stop the app.
+
 	if (active || expired) && len(s.sessions) == 0 && len(s.expiredSessions) == 0 {
 		s.lastTransition = now
 		s.emptyReason = sessionEmptyExplicitClose
@@ -275,9 +273,7 @@ func (s *sessionManager) ShouldShutdown(now time.Time, allowHeartbeatExpiry ...b
 	}
 	allowLeaseExpiry := len(allowHeartbeatExpiry) > 0 && allowHeartbeatExpiry[0]
 	if !allowLeaseExpiry {
-		// A browser may suspend JavaScript timers for a background/sleeping tab.
-		// Missing heartbeats (including expiry of their tombstones) are therefore
-		// never authoritative evidence that a normal browser window was closed.
+
 		return false
 	}
 	return s.emptyReason == sessionEmptyHeartbeatExpiry || s.emptyReason == sessionEmptyExpiredTombstone
@@ -375,8 +371,7 @@ func (a *application) monitorSessions() {
 		case <-startupC:
 			startupC = nil
 			startupTimer = nil
-			// Opening a session and timer delivery may race. Re-check the
-			// protected state before requesting shutdown.
+
 			if !a.sessions.HasEverOpened() {
 				a.requestShutdown("интерфейс не открылся за отведённое время")
 				return

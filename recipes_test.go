@@ -49,8 +49,7 @@ func TestRecipesCatalogSearchesMaterialNames(t *testing.T) {
 	if err := ensureLoaded(); err != nil {
 		t.Fatal(err)
 	}
-	// Find a material whose name differs from its recipe name, then ensure
-	// searching by that material can surface at least one recipe.
+
 	var query string
 	for recipeID, materials := range store.itemRecipes {
 		recipe := store.itemsByID[recipeID]
@@ -179,8 +178,7 @@ func TestRecipesMasterySort(t *testing.T) {
 		if recipe.MasteryLevel != expected {
 			t.Fatalf("recipe %d mastery=%d makeSkillExp=%d", recipe.ID, recipe.MasteryLevel, item.MakeSkillExp)
 		}
-		// Empty names are intentionally forced to the very end by the global
-		// catalogue rule, even when a numeric sort is selected.
+
 		if strings.TrimSpace(item.Name) == "" {
 			continue
 		}
@@ -190,7 +188,6 @@ func TestRecipesMasterySort(t *testing.T) {
 		previous = recipe.MasteryLevel
 	}
 
-	// Regression: in game this recipe is shown as "Каллиграф (20)".
 	item := store.itemsByID[891219]
 	if item == nil || item.Name != "Карта рассеяния I (B)" {
 		t.Fatalf("reference recipe missing: %#v", item)
@@ -247,9 +244,9 @@ func TestRecipeProductResolutionUsesOnlyUniqueFinishedItem(t *testing.T) {
 		recipeID  int
 		productID int
 	}{
-		{recipeID: 891001, productID: 880001},  // Шашлычки из паука
-		{recipeID: 891219, productID: 1050007}, // Карта рассеяния I (B)
-		{recipeID: 891401, productID: 835206},  // Колдовская пыль
+		{recipeID: 891001, productID: 880001},
+		{recipeID: 891219, productID: 1050007},
+		{recipeID: 891401, productID: 835206},
 	}
 	for _, tc := range cases {
 		recipe := store.itemsByID[tc.recipeID]
@@ -262,7 +259,6 @@ func TestRecipeProductResolutionUsesOnlyUniqueFinishedItem(t *testing.T) {
 		}
 	}
 
-	// Multiple real items share this name, so the application must not guess.
 	ambiguous := store.itemsByID[891415]
 	if ambiguous == nil {
 		t.Fatal("ambiguous recipe fixture missing")

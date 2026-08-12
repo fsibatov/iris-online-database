@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Lifecycle smoke tests for startup, sessions, signals and port reuse."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,7 +15,6 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -22,6 +22,7 @@ from smoke_common import (
     RunningApp,
     free_port,
     json_request,
+    open_loopback_url,
     require_binary,
     wait_health,
 )
@@ -56,7 +57,7 @@ def assert_port_closed(port: int) -> None:
 
 
 class OldVersionHealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802 - stdlib handler contract
+    def do_GET(self) -> None:
         if self.path != "/api/health":
             self.send_error(404)
             return
@@ -85,20 +86,11 @@ def fake_browser_env() -> tuple[tempfile.TemporaryDirectory, dict[str, str]]:
     temp_path = Path(temp.name)
 
     if os.name == "nt":
-        # Iris Online opens the system browser on Windows through:
-        #
-        #   rundll32 url.dll,FileProtocolHandler <url>
-        #
-        # Put a harmless executable with the same filename first in PATH.
-        # cmd.Start() succeeds, so normal browser-mode lifecycle remains active,
-        # but no real browser window/tab is opened during the smoke test.
         system_root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
         source = system_root / "System32" / "where.exe"
 
         if not source.is_file():
-            raise RuntimeError(
-                f"Windows browser stub source not found: {source}"
-            )
+            raise RuntimeError(f"Windows browser stub source not found: {source}")
 
         shutil.copy2(source, temp_path / "rundll32.exe")
     else:
@@ -125,7 +117,6 @@ def main() -> None:
     browser_dir, browser_env = fake_browser_env()
 
     try:
-        # No browser session appears: startup timeout must terminate the app.
         with RunningApp(
             binary,
             ["-startup-timeout=250ms", "-idle-grace=100ms"],
@@ -134,8 +125,6 @@ def main() -> None:
             app.wait_ready()
             assert app.wait_exit(3) == 0, app.stderr()
 
-        # A timely session cancels the startup timeout. Closing the confirmed
-        # session then shuts the application down normally.
         with RunningApp(
             binary,
             ["-startup-timeout=1s", "-idle-grace=150ms"],
@@ -147,17 +136,14 @@ def main() -> None:
 
             time.sleep(1.2)
 
-            assert (
-                app.process.poll() is None
-            ), "timely session did not cancel startup timer"
+            assert app.process.poll() is None, (
+                "timely session did not cancel startup timer"
+            )
 
             close_session(app, session_id)
 
             assert app.wait_exit(4) == 0, app.stderr()
 
-        # pagehide may race an in-flight session/open request. A close marked
-        # as pending-open must prevent that late open from creating an orphan,
-        # while an ordinary unknown close must remain harmless.
         with RunningApp(
             binary,
             ["-startup-timeout=1s", "-idle-grace=100ms"],
@@ -184,14 +170,12 @@ def main() -> None:
             ordinary_id = "ordinary-unknown-close-session-01"
             close_session(app, ordinary_id)
             reopened = open_session(app, ordinary_id)
-            assert reopened == ordinary_id, "ordinary unknown close incorrectly blocked a later open"
+            assert reopened == ordinary_id, (
+                "ordinary unknown close incorrectly blocked a later open"
+            )
             close_session(app, reopened)
             assert app.wait_exit(4) == 0, app.stderr()
 
-        # A background/sleeping Edge tab may stop JavaScript timers. Normal
-        # browser mode must keep the backend alive even after the heartbeat
-        # lease and tombstone TTL expire; returning to the tab must be able to
-        # reopen the same session.
         with RunningApp(
             binary,
             [
@@ -205,18 +189,15 @@ def main() -> None:
             session_id = open_session(app, "background-edge-session-0001")
 
             time.sleep(1.0)
-            assert (
-                app.process.poll() is None
-            ), "background heartbeat expiry terminated normal browser mode"
+            assert app.process.poll() is None, (
+                "background heartbeat expiry terminated normal browser mode"
+            )
 
             reopened = open_session(app, session_id)
             assert reopened == session_id, "suspended browser session could not recover"
             close_session(app, reopened)
             assert app.wait_exit(4) == 0, app.stderr()
 
-        # A reload closes the old page and immediately creates a replacement
-        # session. The replacement must cancel idle shutdown inside the grace
-        # interval so F5 never races the local server to ERR_CONNECTION_REFUSED.
         with RunningApp(
             binary,
             [
@@ -231,11 +212,12 @@ def main() -> None:
             time.sleep(0.15)
             new_session = open_session(app, "reload-new-session-00001")
             time.sleep(0.7)
-            assert app.process.poll() is None, "reload replacement session did not cancel shutdown"
+            assert app.process.poll() is None, (
+                "reload replacement session did not cancel shutdown"
+            )
             close_session(app, new_session)
             assert app.wait_exit(4) == 0, app.stderr()
 
-        # -no-browser must not inherit normal browser startup timeout behavior.
         with RunningApp(
             binary,
             ["-no-browser", "-startup-timeout=200ms"],
@@ -244,12 +226,10 @@ def main() -> None:
 
             time.sleep(0.45)
 
-            assert (
-                app.process.poll() is None
-            ), "-no-browser incorrectly used startup timer"
+            assert app.process.poll() is None, (
+                "-no-browser incorrectly used startup timer"
+            )
 
-        # Two explicit sessions in shutdown-when-idle mode. Closing one must
-        # not stop the backend; closing the final session must stop it.
         with RunningApp(
             binary,
             [
@@ -267,17 +247,15 @@ def main() -> None:
 
             time.sleep(0.5)
 
-            assert (
-                app.process.poll() is None
-            ), "closing one of two sessions stopped the app"
+            assert app.process.poll() is None, (
+                "closing one of two sessions stopped the app"
+            )
 
             close_session(app, second)
-            close_session(app, second)  # idempotency
+            close_session(app, second)
 
             assert app.wait_exit(4) == 0, app.stderr()
 
-        # In shutdown-when-idle mode an abandoned session may expire and allow
-        # normal idle shutdown.
         with RunningApp(
             binary,
             [
@@ -292,9 +270,6 @@ def main() -> None:
 
             assert app.wait_exit(4) == 0, app.stderr()
 
-        # Python's subprocess.send_signal(SIGINT) is not supported for this
-        # ordinary Windows process. Keep the signal-specific regression on
-        # platforms where SIGINT has the required subprocess semantics.
         if os.name != "nt":
             with RunningApp(
                 binary,
@@ -306,9 +281,6 @@ def main() -> None:
 
                 assert app.wait_exit(5) == 0, app.stderr()
 
-        # Graceful shutdown while requests are in flight. On Windows use the
-        # application's real browser-session shutdown path instead of POSIX
-        # SIGTERM semantics.
         port = free_port()
 
         shutdown_args = ["-no-browser"]
@@ -367,12 +339,11 @@ def main() -> None:
             def request_loop() -> None:
                 try:
                     for _ in range(50):
-                        urllib.request.urlopen(
-                            app.base_url
-                            + "/api/items?page=1&pageSize=48",
+                        open_loopback_url(
+                            app.base_url + "/api/items?page=1&pageSize=48",
                             timeout=2,
                         ).read()
-                except Exception as error:
+                except (OSError, TimeoutError) as error:
                     request_error.append(error)
 
             worker = threading.Thread(
@@ -395,27 +366,14 @@ def main() -> None:
 
             worker.join(timeout=3)
 
-            profile_files = list(
-                app.root.glob(
-                    "config/**/profile.json"
-                )
-            )
+            profile_files = list(app.root.glob("config/**/profile.json"))
 
-            assert (
-                profile_files
-            ), "profile was not persisted before shutdown"
+            assert profile_files, "profile was not persisted before shutdown"
 
-            saved = json.loads(
-                profile_files[0].read_text(
-                    encoding="utf-8"
-                )
-            )
+            saved = json.loads(profile_files[0].read_text(encoding="utf-8"))
 
-            assert (
-                saved["settings"]["server"] == "original"
-            )
+            assert saved["settings"]["server"] == "original"
 
-        # Listener must be reusable immediately after shutdown.
         with RunningApp(
             binary,
             ["-no-browser"],
@@ -423,14 +381,12 @@ def main() -> None:
         ) as second_run:
             second_run.wait_ready()
 
-            assert (
-                second_run.process.poll() is None
-            ), "port was not reusable after shutdown"
+            assert second_run.process.poll() is None, (
+                "port was not reusable after shutdown"
+            )
 
         assert_port_closed(port)
 
-        # A second launch of the exact same build must reuse the running
-        # backend, not start a competing writer.
         same_port = free_port()
 
         with RunningApp(
@@ -445,31 +401,26 @@ def main() -> None:
                 ["-no-browser"],
                 port=same_port,
             ) as duplicate_run:
-                assert (
-                    duplicate_run.wait_exit(4) == 0
-                ), duplicate_run.stderr()
+                assert duplicate_run.wait_exit(4) == 0, duplicate_run.stderr()
 
-            assert (
-                first_run.process.poll() is None
-            ), "same-build probe stopped the active instance"
+            assert first_run.process.poll() is None, (
+                "same-build probe stopped the active instance"
+            )
 
         assert_port_closed(same_port)
 
-        # Single-instance is an application invariant, not merely a port
-        # invariant. Two different loopback ports must not create competing
-        # profile/log writers.
-        with tempfile.TemporaryDirectory(
-            prefix="iris-shared-instance-"
-        ) as shared_root:
+        with tempfile.TemporaryDirectory(prefix="iris-shared-instance-") as shared_root:
             shared_env = os.environ.copy()
 
-            shared_env.update({
-                "HOME": str(Path(shared_root) / "home"),
-                "XDG_CONFIG_HOME": str(Path(shared_root) / "config"),
-                "XDG_CACHE_HOME": str(Path(shared_root) / "cache"),
-                "APPDATA": str(Path(shared_root) / "config"),
-                "LOCALAPPDATA": str(Path(shared_root) / "cache"),
-            })
+            shared_env.update(
+                {
+                    "HOME": str(Path(shared_root) / "home"),
+                    "XDG_CONFIG_HOME": str(Path(shared_root) / "config"),
+                    "XDG_CACHE_HOME": str(Path(shared_root) / "cache"),
+                    "APPDATA": str(Path(shared_root) / "config"),
+                    "LOCALAPPDATA": str(Path(shared_root) / "cache"),
+                }
+            )
 
             first_port = free_port()
             second_port = free_port()
@@ -489,9 +440,7 @@ def main() -> None:
             )
 
             try:
-                wait_health(
-                    f"http://127.0.0.1:{first_port}"
-                )
+                wait_health(f"http://127.0.0.1:{first_port}")
 
                 second_process = subprocess.Popen(
                     [
@@ -508,58 +457,37 @@ def main() -> None:
                 )
 
                 try:
-                    assert (
-                        second_process.wait(timeout=4) == 1
-                    ), "different-port duplicate did not fail"
-
-                    second_error = (
-                        second_process.stderr.read()
-                        if second_process.stderr
-                        else ""
+                    assert second_process.wait(timeout=4) == 1, (
+                        "different-port duplicate did not fail"
                     )
 
-                    assert (
-                        "Iris Online уже запущена"
-                        in second_error
-                    ), second_error
+                    second_error = (
+                        second_process.stderr.read() if second_process.stderr else ""
+                    )
 
-                    assert (
-                        first_process.poll() is None
-                    ), (
-                        "different-port duplicate "
-                        "stopped active instance"
+                    assert "Iris Online уже запущена" in second_error, second_error
+
+                    assert first_process.poll() is None, (
+                        "different-port duplicate stopped active instance"
                     )
 
                     assert_port_closed(second_port)
-
                 finally:
                     if second_process.poll() is None:
                         second_process.kill()
-                        second_process.wait(
-                            timeout=2
-                        )
-
+                        second_process.wait(timeout=2)
             finally:
                 if first_process.poll() is None:
-                    # This is cleanup for the duplicate-instance test,
-                    # not a graceful-shutdown assertion.
                     if os.name == "nt":
                         first_process.terminate()
                     else:
-                        first_process.send_signal(
-                            signal.SIGTERM
-                        )
+                        first_process.send_signal(signal.SIGTERM)
 
-                    first_process.wait(
-                        timeout=5
-                    )
+                    first_process.wait(timeout=5)
 
             assert_port_closed(first_port)
             assert_port_closed(second_port)
 
-        # A different Iris Online version already listening on the requested
-        # port must be reported and must not cause profile/log maintenance or a
-        # second listener.
         old_port = free_port()
 
         old_server = ThreadingHTTPServer(
@@ -579,32 +507,23 @@ def main() -> None:
                 ["-no-browser"],
                 port=old_port,
             ) as mismatched:
-                assert (
-                    mismatched.wait_exit(4) == 1
-                ), (
-                    "different-version probe "
-                    "did not fail visibly"
+                assert mismatched.wait_exit(4) == 1, (
+                    "different-version probe did not fail visibly"
                 )
 
                 stderr = mismatched.stderr()
 
-                assert (
-                    "Закройте уже запущенную Iris Online версии 0.9"
-                    in stderr
-                ), stderr
+                assert "Закройте уже запущенную Iris Online версии 0.9" in stderr, (
+                    stderr
+                )
 
-                assert not list(
-                    mismatched.root.glob(
-                        "**/profile.json"
-                    )
-                ), "mismatch touched profile"
+                assert not list(mismatched.root.glob("**/profile.json")), (
+                    "mismatch touched profile"
+                )
 
-                assert not list(
-                    mismatched.root.glob(
-                        "**/application.log"
-                    )
-                ), "mismatch touched logs"
-
+                assert not list(mismatched.root.glob("**/application.log")), (
+                    "mismatch touched logs"
+                )
         finally:
             old_server.shutdown()
             old_server.server_close()
@@ -612,8 +531,6 @@ def main() -> None:
 
         assert_port_closed(old_port)
 
-        # Ten bounded start/stop cycles catch leaked listeners/processes
-        # without a long soak test.
         cycle_port = free_port()
 
         for _ in range(10):
@@ -629,19 +546,14 @@ def main() -> None:
                 ) as cycle:
                     cycle.wait_ready()
 
-                    cycle_session = open_session(
-                        cycle
-                    )
+                    cycle_session = open_session(cycle)
 
                     close_session(
                         cycle,
                         cycle_session,
                     )
 
-                    assert (
-                        cycle.wait_exit(4) == 0
-                    ), cycle.stderr()
-
+                    assert cycle.wait_exit(4) == 0, cycle.stderr()
             else:
                 with RunningApp(
                     binary,
@@ -650,12 +562,9 @@ def main() -> None:
                 ) as cycle:
                     cycle.wait_ready()
 
-                    assert (
-                        cycle.stop(4) == 0
-                    ), cycle.stderr()
+                    assert cycle.stop(4) == 0, cycle.stderr()
 
             assert_port_closed(cycle_port)
-
     finally:
         browser_dir.cleanup()
 

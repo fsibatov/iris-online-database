@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 )
 
 type Meta struct {
@@ -818,8 +819,7 @@ func mergeSetSupplement() error {
 		if strings.TrimSpace(extra.Name) != "" {
 			set.Name = extra.Name
 		}
-		// The supplemental rows preserve the original row order and include
-		// active set effects that the legacy embedded projection omitted.
+
 		if len(extra.Effects) != 0 {
 			set.Effects = extra.Effects
 		}
@@ -1289,8 +1289,7 @@ func buildRuntime(server ServerData, chestProfiles map[int]chestProfileSource, m
 }
 
 func directSlotsForMonster(server ServerData, monsterID int) []DropSlotRule {
-	// Row boundaries are mandatory: a flattened legacy list cannot be restored
-	// safely because alternatives from one slot would become independent slots.
+
 	return server.DirectSlots[strconv.Itoa(monsterID)]
 }
 
@@ -1829,9 +1828,6 @@ func itemLevel(item *Item) int {
 	return 0
 }
 
-// recipeMasteryLevel is the crafting-profession requirement shown in game
-// next to the profession name, for example "Каллиграф (20)". It comes from
-// MakeSkillExp and is independent from the item's MinLevel/MaxLevel.
 func recipeMasteryLevel(item *Item) int {
 	if item == nil || item.MakeSkill <= 0 {
 		return 0
@@ -2123,10 +2119,7 @@ func itemSetMemberPresentationOrder(member ItemSetMember) int {
 	if item == nil {
 		return 10_000
 	}
-	// Armour middle-category IDs are grouped by material in five-slot runs:
-	// head, upper, lower, hands, feet. The in-game tooltip order requested by
-	// the UI is head, upper, hands, lower, feet. Unknown categories retain
-	// their source order through stable sorting rather than being guessed.
+
 	if item.MainCategoryID == 2 && item.MiddleCategoryID >= 201 && item.MiddleCategoryID <= 215 {
 		slot := (item.MiddleCategoryID - 201) % 5
 		return [...]int{0, 1, 3, 2, 4}[slot]
@@ -2355,9 +2348,6 @@ func recipeProductNameKey(name string) string {
 		value = strings.TrimSpace(value[len(recipePrefix):])
 	}
 
-	// Some recipe names include only a display-level prefix such as "65ур.".
-	// It is not part of the crafted item's name, so remove it only when the
-	// prefix is syntactically unambiguous.
 	idx := 0
 	for idx < len(value) && value[idx] >= '0' && value[idx] <= '9' {
 		idx++
@@ -2692,19 +2682,17 @@ func catalogNameClass(name string) int {
 	if trimmed == "" {
 		return 4
 	}
-	for _, first := range trimmed {
-		if isRussianCatalogLetter(first) {
-			return 0
-		}
-		if unicode.IsLetter(first) {
-			return 1
-		}
-		if unicode.IsDigit(first) {
-			return 2
-		}
-		return 3
+	first, _ := utf8.DecodeRuneInString(trimmed)
+	if isRussianCatalogLetter(first) {
+		return 0
 	}
-	return 4
+	if unicode.IsLetter(first) {
+		return 1
+	}
+	if unicode.IsDigit(first) {
+		return 2
+	}
+	return 3
 }
 
 func catalogFoldedTextLess(left, right string) bool {

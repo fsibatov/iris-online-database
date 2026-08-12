@@ -42,11 +42,11 @@ func TestMonsterPresenceCountsAndKnownServerDifferences(t *testing.T) {
 		id             int
 		original, kiss bool
 	}{
-		{id: 85, original: true, kiss: true},     // Враждебный дух
-		{id: 11026, original: true, kiss: false}, // Хрусталиск
-		{id: 1122, original: false, kiss: true},  // Вервиндль
-		{id: 20026, original: false, kiss: true}, // Карад
-		{id: 253, original: false, kiss: false},  // запись есть в общей таблице, но не размещена в переданном regen-наборе
+		{id: 85, original: true, kiss: true},
+		{id: 11026, original: true, kiss: false},
+		{id: 1122, original: false, kiss: true},
+		{id: 20026, original: false, kiss: true},
+		{id: 253, original: false, kiss: false},
 	}
 	for _, tc := range cases {
 		_, original := store.monsterPresence["original"][tc.id]
@@ -117,9 +117,7 @@ func TestDropSourcesAndWorldCandidatesRespectMonsterPresence(t *testing.T) {
 	if err := ensureLoaded(); err != nil {
 		t.Fatal(err)
 	}
-	// Карад (20026) has direct-drop rules in both embedded server tables, but the
-	// supplied placement data confirms it only for Kiss. The item source list
-	// therefore must not expose it for Original.
+
 	const itemID = 1055094
 	for server, wantKarat := range map[string]bool{"original": false, "kiss": true} {
 		drops := itemDropSources(itemID, activeRuntime(server))
@@ -137,7 +135,6 @@ func TestDropSourcesAndWorldCandidatesRespectMonsterPresence(t *testing.T) {
 		}
 	}
 
-	// Every expanded world-drop candidate must belong to the selected server.
 	rt := activeRuntime("kiss")
 	for _, rule := range rt.server.WorldRules {
 		if len(rule.Groups) == 0 {

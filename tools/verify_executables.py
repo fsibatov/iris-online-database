@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify Go build metadata and application marker for Iris Online Windows executables."""
+
 from __future__ import annotations
 
 import argparse
@@ -28,7 +29,9 @@ def main() -> None:
         suffix = ""
 
     for label, (arch, tuning) in expected.items():
-        path = args.directory / f"IrisOnlineDB-{args.version}{suffix}-Windows-{label}.exe"
+        path = (
+            args.directory / f"IrisOnlineDB-{args.version}{suffix}-Windows-{label}.exe"
+        )
         if not path.is_file():
             raise SystemExit(f"missing executable: {path}")
         output = subprocess.check_output(["go", "version", "-m", str(path)], text=True)

@@ -23,8 +23,18 @@ if [[ "${IRIS_SKIP_CHECKS:-}" != "1" ]]; then
   go test -race -count=1 ./...
   go vet ./...
   node --check web/app.js
-  python3 -m unittest discover -s tools -p 'test_*.py'
+  python3 -B -m unittest discover -s tools -p 'test_*.py'
 fi
+
+
+cleanup_resources() {
+  rm -f resource_windows_amd64.syso resource_windows_386.syso resource_windows_arm64.syso
+}
+trap cleanup_resources EXIT
+
+python3 tools/generate_windows_resources.py --icon resources/icon.ico --manifest resources/app.manifest --arch amd64 --output resource_windows_amd64.syso
+python3 tools/generate_windows_resources.py --icon resources/icon.ico --manifest resources/app.manifest --arch 386 --output resource_windows_386.syso
+python3 tools/generate_windows_resources.py --icon resources/icon.ico --manifest resources/app.manifest --arch arm64 --output resource_windows_arm64.syso
 
 mkdir -p dist
 if [[ "$DIAGNOSTIC" == "1" ]]; then

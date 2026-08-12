@@ -4,6 +4,7 @@
 The source resources are intentionally NOT bundled with the public/source release.
 Pass explicit paths when regenerating the asset.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,7 +54,9 @@ def read_active_skills(path: Path) -> dict[int, dict]:
     return result
 
 
-def build(item_set: Path, item_names: Path, item_tooltips: Path, active_skills: Path) -> dict:
+def build(
+    item_set: Path, item_names: Path, item_tooltips: Path, active_skills: Path
+) -> dict:
     names = read_indexed_text(item_names)
     tooltips = read_indexed_text(item_tooltips)
     active = read_active_skills(active_skills)
@@ -77,7 +80,9 @@ def build(item_set: Path, item_names: Path, item_tooltips: Path, active_skills: 
         except ValueError:
             continue
 
-        target = sets.setdefault(str(set_id), {"name": names.get(name_index, ""), "effects": []})
+        target = sets.setdefault(
+            str(set_id), {"name": names.get(name_index, ""), "effects": []}
+        )
         if not target["name"] and names.get(name_index):
             target["name"] = names[name_index]
         row = {"required": required, "options": []}
@@ -88,7 +93,9 @@ def build(item_set: Path, item_names: Path, item_tooltips: Path, active_skills: 
         if active_id:
             source = active.get(active_id)
             if source is None:
-                raise SystemExit(f"Active set effect {active_id} is missing from the active-skill resource")
+                raise SystemExit(
+                    f"Active set effect {active_id} is missing from the active-skill resource"
+                )
             active_row = dict(source)
             active_row["text"] = tooltips.get(source["tooltipIndex"], "")
             row["active"] = active_row
@@ -107,12 +114,20 @@ def main() -> None:
     args = parser.parse_args()
     data = build(args.item_set, args.item_names, args.item_tooltips, args.active_skills)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=False).encode("utf-8")
-    # mtime=0 makes the gzip artifact reproducible.
-    with args.output.open("wb") as output:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0, compresslevel=9) as gz:
-            gz.write(payload)
-    print(f"sets={len(data['sets'])} rows={sum(len(s['effects']) for s in data['sets'].values())} output={args.output}")
+    payload = json.dumps(
+        data, ensure_ascii=False, separators=(",", ":"), sort_keys=False
+    ).encode("utf-8")
+
+    with (
+        args.output.open("wb") as output,
+        gzip.GzipFile(
+            filename="", mode="wb", fileobj=output, mtime=0, compresslevel=9
+        ) as gz,
+    ):
+        gz.write(payload)
+    print(
+        f"sets={len(data['sets'])} rows={sum(len(s['effects']) for s in data['sets'].values())} output={args.output}"
+    )
 
 
 if __name__ == "__main__":

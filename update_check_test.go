@@ -34,22 +34,13 @@ func TestNormalizeVersionHumanFormats(t *testing.T) {
 		"v1.1.0.", "v1.1.0", "v1.1.", "v1.1",
 		"v 1.1.0.", "v 1.1.0", "v 1.1.", "v 1.1",
 	}
-
 	for _, input := range valid {
 		got, err := normalizeVersion(input)
 		if err != nil || got != "1.1.0" {
 			t.Fatalf("normalizeVersion(%q)=(%q,%v), want 1.1.0", input, got, err)
 		}
 	}
-
-	for _, input := range []string{
-		"1",
-		"v",
-		"1.1-beta",
-		"v1.1.0-beta",
-		"1.1..",
-		"version 1.1",
-	} {
+	for _, input := range []string{"1", "v", "1.1-beta", "v1.1.0-beta", "1.1..", "version 1.1"} {
 		if got, err := normalizeVersion(input); err == nil {
 			t.Fatalf("normalizeVersion(%q)=%q, want error", input, got)
 		}
@@ -118,7 +109,7 @@ func TestUpdateCheckValidatesAndBoundsGitHubResponse(t *testing.T) {
 	}
 }
 
-func TestUpdateCheckerRunsAtMostOncePerProcess(t *testing.T) {
+func TestUpdateCheckerCachesAutomaticCheck(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -131,13 +122,31 @@ func TestUpdateCheckerRunsAtMostOncePerProcess(t *testing.T) {
 	const goroutines = 32
 	done := make(chan struct{}, goroutines)
 	for i := 0; i < goroutines; i++ {
-		go func() { checker.Check(context.Background()); done <- struct{}{} }()
+		go func() { checker.Check(context.Background(), false); done <- struct{}{} }()
 	}
 	for i := 0; i < goroutines; i++ {
 		<-done
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("expected one update request, got %d", calls.Load())
+	}
+}
+
+func TestUpdateCheckerCanRefreshManually(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		fmt.Fprintln(w, `{"tag_name":"1.1.0"}`)
+	}))
+	defer server.Close()
+	checker := newUpdateChecker()
+	checker.apiURL = server.URL
+	checker.client = server.Client()
+	checker.Check(context.Background(), false)
+	checker.Check(context.Background(), false)
+	checker.Check(context.Background(), true)
+	if calls.Load() != 2 {
+		t.Fatalf("expected automatic check plus one manual refresh, got %d requests", calls.Load())
 	}
 }
 
@@ -195,6 +204,35 @@ func TestUpdateCheckEndpointUsesBoundedChecker(t *testing.T) {
 	}
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control=%q", got)
+	}
+}
+
+func TestUpdateCheckEndpointRefreshesOnRequest(t *testing.T) {
+	var calls atomic.Int32
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		fmt.Fprintln(w, `{"tag_name":"v1.1"}`)
+	}))
+	defer github.Close()
+	checker := newUpdateChecker()
+	checker.apiURL = github.URL
+	checker.client = github.Client()
+	app := &application{updates: checker, sessions: newSessionManager()}
+	handler := app.routes()
+	for _, target := range []string{
+		"http://127.0.0.1:8765/api/update-check",
+		"http://127.0.0.1:8765/api/update-check?refresh=1",
+	} {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.Host = "127.0.0.1:8765"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"latestVersion":"1.1.0"`) {
+			t.Fatalf("target=%s status=%d body=%s", target, rec.Code, rec.Body.String())
+		}
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("expected forced refresh to make second request, got %d", calls.Load())
 	}
 }
 

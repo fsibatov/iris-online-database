@@ -1,6 +1,6 @@
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from drop_table_audit import (
     CHANCE_SCALE,
@@ -12,8 +12,8 @@ from drop_table_audit import (
     audit,
     effective_interval_weight,
     event_attempts,
-    reference_item_pick,
     quest_roll_selects,
+    reference_item_pick,
     weighted_pick,
     world_rule_applies,
 )
@@ -21,7 +21,11 @@ from drop_table_audit import (
 
 class WeightedChoiceTests(unittest.TestCase):
     def test_exact_total_boundaries_are_one_based_and_inclusive(self):
-        entries = (WeightedEntry(1, 400000), WeightedEntry(2, 350000), WeightedEntry(3, 250000))
+        entries = (
+            WeightedEntry(1, 400000),
+            WeightedEntry(2, 350000),
+            WeightedEntry(3, 250000),
+        )
         self.assertEqual(weighted_pick(entries, 1), 1)
         self.assertEqual(weighted_pick(entries, 400000), 1)
         self.assertEqual(weighted_pick(entries, 400001), 2)
@@ -34,7 +38,11 @@ class WeightedChoiceTests(unittest.TestCase):
         self.assertEqual(weighted_pick(under, 900000), 2)
         self.assertIsNone(weighted_pick(under, 900001))
         self.assertIsNone(weighted_pick(under, CHANCE_SCALE))
-        over = (WeightedEntry(1, 700000), WeightedEntry(2, 500000), WeightedEntry(3, 100000))
+        over = (
+            WeightedEntry(1, 700000),
+            WeightedEntry(2, 500000),
+            WeightedEntry(3, 100000),
+        )
         self.assertEqual(weighted_pick(over, 700000), 1)
         self.assertEqual(weighted_pick(over, 700001), 2)
         self.assertEqual(weighted_pick(over, CHANCE_SCALE), 2)
@@ -106,15 +114,18 @@ class ItemSelectionTests(unittest.TestCase):
     def test_time_weight_adjusts_whole_cumulative_boundary(self):
         items = self.items()
         restrictions = {200: DropRestriction(1, 200, 1000, 0, 0, 0.5, 2.0)}
-        # Before item 200 cumulative is 400k; after adding 350k, AM weight halves
-        # the whole boundary to 375k. Roll 400001 therefore reaches item 300.
-        picked = reference_item_pick(items, 400001, restrictions=restrictions, period="am")
+
+        picked = reference_item_pick(
+            items, 400001, restrictions=restrictions, period="am"
+        )
         self.assertEqual(picked.item_id, 300)
 
     def test_disabled_restricted_item_is_skipped_but_boundary_is_preserved(self):
         items = self.items()
         restrictions = {100: DropRestriction(1, 100, 1000, 0, 0, 1.0, 1.0)}
-        picked = reference_item_pick(items, 1, restrictions=restrictions, disabled_restricted_items={100})
+        picked = reference_item_pick(
+            items, 1, restrictions=restrictions, disabled_restricted_items={100}
+        )
         self.assertEqual(picked.item_id, 200)
 
     def test_duplicate_row_returns_false_instead_of_falling_through(self):
@@ -158,7 +169,9 @@ class FileAuditTests(unittest.TestCase):
                 encoding="utf-8",
             )
             limits.write_text("200\t1000\t0.1\t0.2\t0.5\t1.5\n", encoding="utf-8")
-            penalty.write_text("0\n{\n-10\t0.8\n0\t1\n}\n1\n{\n-10\t0.7\n0\t1\n}\n", encoding="utf-8")
+            penalty.write_text(
+                "0\n{\n-10\t0.8\n0\t1\n}\n1\n{\n-10\t0.7\n0\t1\n}\n", encoding="utf-8"
+            )
             quest.write_text("31\t42\t870003\t80\n", encoding="utf-8")
             result = audit(normal, groups, world, limits, penalty, quest)
             self.assertEqual(result.normal_rows_with_additional_attempts, 1)
