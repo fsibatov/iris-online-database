@@ -168,7 +168,7 @@ def main() -> int:
     if failures:
         print("Repository audit: FAIL")
         for item in failures:
-            print(f"FAIL: {safe_failure_message(item)}")
+            print("FAIL: [redacted]")
         return 1
 
     print("Repository audit: PASS")
