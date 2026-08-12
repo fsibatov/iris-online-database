@@ -70,6 +70,20 @@ ABSOLUTE_PATH_PATTERNS = {
 AUDIT_MARKERS = re.compile(r"\b(?:TODO|FIXME|HACK|XXX)\b")
 
 
+def safe_failure_message(item: str) -> str:
+    if item.startswith("possible "):
+        return "possible secret detected: [redacted]"
+    if item.startswith("absolute developer path"):
+        return "absolute developer path detected: [redacted]"
+
+    sanitized = item
+    for pattern in SECRET_PATTERNS.values():
+        sanitized = pattern.sub("[redacted]", sanitized)
+    for pattern in ABSOLUTE_PATH_PATTERNS.values():
+        sanitized = pattern.sub("[redacted-path]/", sanitized)
+    return sanitized
+
+
 def iter_files():
     for path in ROOT.rglob("*"):
         if not path.is_file():
@@ -154,10 +168,7 @@ def main() -> int:
     if failures:
         print("Repository audit: FAIL")
         for item in failures:
-            if item.startswith("possible "):
-                print("FAIL: possible secret detected: [redacted]")
-            else:
-                print(f"FAIL: {item}")
+            print(f"FAIL: {safe_failure_message(item)}")
         return 1
 
     print("Repository audit: PASS")
