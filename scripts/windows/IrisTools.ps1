@@ -13,8 +13,23 @@ $StaticcheckPin = "2026.1"
 $GovulncheckPin = "v1.6.0"
 $GitleaksPin = "8.30.1"
 $ToolRoot = Join-Path $env:LOCALAPPDATA "IrisOnlineDatabase\BuildTools"
+$AuditEnvPointer = Join-Path $ToolRoot "python-audit-active.txt"
 $AuditEnv = Join-Path $ToolRoot "python-audit"
 $AuditPython = Join-Path $AuditEnv "Scripts\python.exe"
+if (Test-Path -LiteralPath $AuditEnvPointer -PathType Leaf) {
+    try {
+        $CachedAuditEnv = (Get-Content -LiteralPath $AuditEnvPointer -Raw).Trim()
+        $CachedAuditEnvFull = [IO.Path]::GetFullPath($CachedAuditEnv)
+        $ToolRootFull = [IO.Path]::GetFullPath($ToolRoot)
+        if ($CachedAuditEnvFull.StartsWith($ToolRootFull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -and
+            (Test-Path -LiteralPath (Join-Path $CachedAuditEnvFull "Scripts\python.exe") -PathType Leaf)) {
+            $AuditEnv = $CachedAuditEnvFull
+            $AuditPython = Join-Path $AuditEnv "Scripts\python.exe"
+        }
+    } catch {
+        # Ignore a stale/corrupt local cache pointer. Ensure-AuditEnvironment validates it later.
+    }
+}
 $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $ToolRoot "playwright"
 $PinnedGitleaksDirectory = Join-Path $ToolRoot "gitleaks-$GitleaksPin"
 
@@ -444,6 +459,33 @@ function Get-ToolStatus {
     return "FAIL"
 }
 
+function Test-AuditEnvironment {
+    param([string]$EnvironmentPath, [string]$ExpectedHash)
+    if (-not $EnvironmentPath) { return $false }
+    $Python = Join-Path $EnvironmentPath "Scripts\python.exe"
+    $Marker = Join-Path $EnvironmentPath ".iris-requirements-sha256"
+    if (-not (Test-Path -LiteralPath $Python -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $Marker -PathType Leaf)) {
+        return $false
+    }
+    try {
+        $Current = (Get-Content -LiteralPath $Marker -Raw).Trim()
+        if ($Current -ne $ExpectedHash) { return $false }
+        & $Python -B (Join-Path $Root "tools\verify_python_environment.py") *> $null
+        if ($LASTEXITCODE -ne 0) { return $false }
+        & $Python -m pip check *> $null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    }
+}
+
+function Use-AuditEnvironment {
+    param([string]$EnvironmentPath)
+    $script:AuditEnv = $EnvironmentPath
+    $script:AuditPython = Join-Path $EnvironmentPath "Scripts\python.exe"
+}
+
 function Ensure-AuditEnvironment {
     New-Item -ItemType Directory -Force -Path $ToolRoot | Out-Null
     $Requirements = Join-Path $Root "tools\requirements-audit.txt"
@@ -451,31 +493,78 @@ function Ensure-AuditEnvironment {
     $HashInput = ((Get-FileHash -LiteralPath $Requirements -Algorithm SHA256).Hash + "|" + $PythonVersion)
     $Bytes = [Text.Encoding]::UTF8.GetBytes($HashInput)
     $Hasher = [Security.Cryptography.SHA256]::Create()
-    $Hash = ([BitConverter]::ToString($Hasher.ComputeHash($Bytes))).Replace("-", "").ToLowerInvariant()
-    $Marker = Join-Path $AuditEnv ".iris-requirements-sha256"
-    $Current = if (Test-Path -LiteralPath $Marker) { (Get-Content -LiteralPath $Marker -Raw).Trim() } else { "" }
-    if ($Current -eq $Hash -and (Test-Path -LiteralPath $AuditPython)) {
-        & $AuditPython -B (Join-Path $Root "tools\verify_python_environment.py") *> $null
-        $PinsValid = $LASTEXITCODE -eq 0
-        & $AuditPython -m pip check *> $null
-        if ($PinsValid -and $LASTEXITCODE -eq 0) { return }
+    try {
+        $Hash = ([BitConverter]::ToString($Hasher.ComputeHash($Bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $Hasher.Dispose()
     }
-    Invoke-Checked "python" @("-m", "venv", "--clear", $AuditEnv) 180
-    $Installed = $false
-    for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
+
+    $PreferredAuditEnv = Join-Path $ToolRoot ("python-audit-" + $Hash.Substring(0, 16))
+    $Candidates = New-Object System.Collections.Generic.List[string]
+    if (Test-Path -LiteralPath $AuditEnvPointer -PathType Leaf) {
         try {
-            Invoke-Checked $AuditPython @("-m", "pip", "install", "--disable-pip-version-check", "--requirement", $Requirements) 480
-            $Installed = $true
-            break
+            $PointerCandidate = (Get-Content -LiteralPath $AuditEnvPointer -Raw).Trim()
+            $PointerCandidateFull = [IO.Path]::GetFullPath($PointerCandidate)
+            $ToolRootFull = [IO.Path]::GetFullPath($ToolRoot)
+            if ($PointerCandidateFull.StartsWith($ToolRootFull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                $Candidates.Add($PointerCandidateFull)
+            }
         } catch {
-            if ($Attempt -eq 3) { throw }
-            Start-Sleep -Seconds (5 * $Attempt)
+            # Ignore a stale/corrupt pointer and fall back to the deterministic environment path.
         }
     }
-    if (-not $Installed) { throw "Python audit environment installation failed." }
-    Invoke-Checked $AuditPython @("-B", (Join-Path $Root "tools\verify_python_environment.py")) 120
-    Invoke-Checked $AuditPython @("-m", "pip", "check") 120
-    Set-Content -LiteralPath $Marker -Value $Hash -Encoding ASCII
+    if (-not $Candidates.Contains($PreferredAuditEnv)) { $Candidates.Add($PreferredAuditEnv) }
+
+    foreach ($Candidate in $Candidates) {
+        if (Test-AuditEnvironment -EnvironmentPath $Candidate -ExpectedHash $Hash) {
+            Use-AuditEnvironment -EnvironmentPath $Candidate
+            Set-Content -LiteralPath $AuditEnvPointer -Value $Candidate -Encoding UTF8
+            return
+        }
+    }
+
+    # Never clear an existing venv in-place on Windows. Antivirus, Playwright, or a
+    # recently-exited Python child can temporarily keep DLL/PYD/EXE files open.
+    # Build a complete replacement alongside it, verify it, then select it.
+    if (Test-Path -LiteralPath $PreferredAuditEnv) {
+        $NewAuditEnv = Join-Path $ToolRoot (
+            "python-audit-" + $Hash.Substring(0, 16) + "-repair-" + [Guid]::NewGuid().ToString("N")
+        )
+    } else {
+        $NewAuditEnv = $PreferredAuditEnv
+    }
+    $NewAuditPython = Join-Path $NewAuditEnv "Scripts\python.exe"
+    $NewMarker = Join-Path $NewAuditEnv ".iris-requirements-sha256"
+
+    try {
+        Invoke-Checked "python" @("-m", "venv", $NewAuditEnv) 180
+        $Installed = $false
+        for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
+            try {
+                Invoke-Checked $NewAuditPython @("-m", "pip", "install", "--disable-pip-version-check", "--requirement", $Requirements) 480
+                $Installed = $true
+                break
+            } catch {
+                if ($Attempt -eq 3) { throw }
+                Start-Sleep -Seconds (5 * $Attempt)
+            }
+        }
+        if (-not $Installed) { throw "Python audit environment installation failed." }
+        Invoke-Checked $NewAuditPython @("-B", (Join-Path $Root "tools\verify_python_environment.py")) 120
+        Invoke-Checked $NewAuditPython @("-m", "pip", "check") 120
+        Set-Content -LiteralPath $NewMarker -Value $Hash -Encoding ASCII
+        if (-not (Test-AuditEnvironment -EnvironmentPath $NewAuditEnv -ExpectedHash $Hash)) {
+            throw "Python audit environment verification failed after installation."
+        }
+        Use-AuditEnvironment -EnvironmentPath $NewAuditEnv
+        Set-Content -LiteralPath $AuditEnvPointer -Value $NewAuditEnv -Encoding UTF8
+    } catch {
+        # Best-effort cleanup only. A locked partial venv must not hide the real failure.
+        if (Test-Path -LiteralPath $NewAuditEnv) {
+            Remove-Item -LiteralPath $NewAuditEnv -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        throw
+    }
 }
 
 function Install-Gitleaks {

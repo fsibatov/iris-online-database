@@ -286,6 +286,24 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertNotIn('"neutral", "skipped"', script)
         self.assertIn("Release artifact changed after verification", script)
 
+    def test_windows_audit_environment_rebuild_is_side_by_side(self):
+        script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn('"-m", "venv", "--clear"', script)
+        self.assertIn('"python-audit-" + $Hash.Substring(0, 16)', script)
+        self.assertIn(
+            '$AuditEnvPointer = Join-Path $ToolRoot "python-audit-active.txt"', script
+        )
+        self.assertIn(
+            'Invoke-Checked "python" @("-m", "venv", $NewAuditEnv) 180', script
+        )
+        self.assertIn("Never clear an existing venv in-place on Windows", script)
+        self.assertIn(
+            "Test-AuditEnvironment -EnvironmentPath $NewAuditEnv -ExpectedHash $Hash",
+            script,
+        )
+
     def test_windows_tool_check_elevates_and_reads_native_output_safely(self):
         launcher = (ROOT / "IrisTools.ps1").read_text(encoding="utf-8")
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
