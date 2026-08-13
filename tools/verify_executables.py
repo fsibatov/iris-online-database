@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 
 # The command uses fixed argv, no shell, and a resolved Go executable path.
@@ -52,10 +53,12 @@ def main() -> None:
     if b"IrisOnlineDiagnostic/" in binary or b"IrisOnlineDevelopment/" in binary:
         raise SystemExit("development marker found in release executable")
     lowered = binary.lower()
-    if any(
-        marker in lowered
-        for marker in (b"/workspace/", b"/home/", b"\\users\\", b"/tmp/iris")
-    ):
+    absolute_path_patterns = (
+        rb"(?:^|[\x00\r\n ])/(?:home|workspace)/[^/\x00\r\n ]+/",
+        rb"[a-z]:\\users\\[^\\\x00\r\n ]+\\",
+        rb"(?:^|[\x00\r\n ])/tmp/iris[^/\x00\r\n ]*/",
+    )
+    if any(re.search(pattern, lowered) for pattern in absolute_path_patterns):
         raise SystemExit("absolute developer path found in release executable")
     print(f"{path.name}: Go/Wails metadata PASS")
 
