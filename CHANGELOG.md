@@ -45,5 +45,6 @@
 - pip-audit использует переиспользуемое окружение вне source и проверяет полное установленное dependency graph.
 - Потенциально зависающие security/build/browser checks имеют watchdog и не превращают infrastructure failure в PASS.
 - Windows `govulncheck` повторяет канонический запрос и переключается на Google-hosted storage endpoint той же Go Vulnerability Database; недоступность обоих адресов оставляет security status `UNKNOWN` и блокирует RELEASE fingerprint.
+- Windows-wrapper считывает фактический exit code `govulncheck` через `System.Diagnostics.Process`; успешный ответ `No vulnerabilities found.` больше не классифицируется как `SECURITY FAIL`; паузы retry сокращены до 2 с.
 
 Исторические изменения выпусков 1.x доступны в Git history и соответствующих тегах.

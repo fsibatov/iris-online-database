@@ -139,6 +139,53 @@ function ConvertTo-SafeGovulncheckOutput {
     return $SafeText
 }
 
+function Invoke-CapturedNativeProcess {
+    param(
+        [string]$File,
+        [string]$ArgumentString,
+        [string]$WorkingDirectory,
+        [int]$TimeoutSeconds
+    )
+    $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $StartInfo.FileName = $File
+    $StartInfo.Arguments = $ArgumentString
+    $StartInfo.WorkingDirectory = $WorkingDirectory
+    $StartInfo.UseShellExecute = $false
+    $StartInfo.CreateNoWindow = $true
+    $StartInfo.RedirectStandardOutput = $true
+    $StartInfo.RedirectStandardError = $true
+
+    $Process = New-Object System.Diagnostics.Process
+    $Process.StartInfo = $StartInfo
+    try {
+        if (-not $Process.Start()) { throw "Native process did not start." }
+        $StdoutTask = $Process.StandardOutput.ReadToEndAsync()
+        $StderrTask = $Process.StandardError.ReadToEndAsync()
+        $TimedOut = -not $Process.WaitForExit($TimeoutSeconds * 1000)
+        if ($TimedOut) {
+            $Taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
+            if (Test-Path -LiteralPath $Taskkill -PathType Leaf) {
+                & $Taskkill /PID $Process.Id /T /F *> $null
+            }
+            if (-not $Process.HasExited) { $Process.Kill() }
+        }
+        [void]$Process.WaitForExit()
+        $StdoutText = $StdoutTask.GetAwaiter().GetResult()
+        $StderrText = $StderrTask.GetAwaiter().GetResult()
+        $ExitCode = if ($TimedOut) { -1 } else { $Process.ExitCode }
+        return [pscustomobject]@{
+            ExitCode = $ExitCode
+            TimedOut = $TimedOut
+            Stdout = [string]$StdoutText
+            Stderr = [string]$StderrText
+        }
+    } catch {
+        throw "Native process could not be started or monitored."
+    } finally {
+        $Process.Dispose()
+    }
+}
+
 function Invoke-Govulncheck {
     param([int]$TimeoutSeconds = 300)
     $Executable = Get-Command "govulncheck" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -153,34 +200,20 @@ function Invoke-Govulncheck {
         $Attempt = $AttemptIndex + 1
         $Database = $DatabaseAttempts[$AttemptIndex]
         $Attempts = $DatabaseAttempts.Count
-        $StdoutPath = [IO.Path]::GetTempFileName()
-        $StderrPath = [IO.Path]::GetTempFileName()
-        $Process = $null
-        $TimedOut = $false
-        $ExitCode = -1
-        $StdoutText = ""
-        $StderrText = ""
         try {
             Write-Host "+ govulncheck -db $($Database.URL) ./... (attempt $Attempt/$Attempts)"
-            $Process = Start-Process -FilePath $Executable.Source -ArgumentList @("-db", $Database.URL, "./...") `
-                -WorkingDirectory $Root -RedirectStandardOutput $StdoutPath `
-                -RedirectStandardError $StderrPath -NoNewWindow -PassThru
-            if (-not $Process.WaitForExit($TimeoutSeconds * 1000)) {
-                $TimedOut = $true
-                try { $Process.Kill() } catch { }
-                [void]$Process.WaitForExit()
-            } else {
-                [void]$Process.WaitForExit()
-                $ExitCode = $Process.ExitCode
-            }
-            $StdoutText = Get-Content -LiteralPath $StdoutPath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
-            $StderrText = Get-Content -LiteralPath $StderrPath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+            $Result = Invoke-CapturedNativeProcess `
+                -File $Executable.Source `
+                -ArgumentString ("-db " + $Database.URL + " ./...") `
+                -WorkingDirectory $Root `
+                -TimeoutSeconds $TimeoutSeconds
         } catch {
             throw "[SECURITY FAIL] govulncheck process could not be started or monitored."
-        } finally {
-            if ($Process) { $Process.Dispose() }
-            Remove-Item -LiteralPath $StdoutPath, $StderrPath -Force -ErrorAction SilentlyContinue
         }
+        $TimedOut = [bool]$Result.TimedOut
+        $ExitCode = [int]$Result.ExitCode
+        $StdoutText = [string]$Result.Stdout
+        $StderrText = [string]$Result.Stderr
 
         if (-not $TimedOut -and $ExitCode -eq 0) {
             if ($StdoutText) { Write-Host (ConvertTo-SafeGovulncheckOutput $StdoutText).TrimEnd() }
@@ -197,11 +230,11 @@ function Invoke-Govulncheck {
         if (-not $InfrastructureFailure) {
             if ($StdoutText) { Write-Host (ConvertTo-SafeGovulncheckOutput $StdoutText).TrimEnd() }
             if ($StderrText) { Write-Host (ConvertTo-SafeGovulncheckOutput $StderrText).TrimEnd() }
-            throw "[SECURITY FAIL] govulncheck completed without a successful result."
+            throw "[SECURITY FAIL] govulncheck completed without a successful result (exit code $ExitCode)."
         }
 
         if ($Attempt -lt $Attempts) {
-            $DelaySeconds = 5 * $Attempt
+            $DelaySeconds = 2
             $NextDatabase = $DatabaseAttempts[$AttemptIndex + 1]
             Write-Host "[NETWORK/INFRASTRUCTURE RETRY] Go vulnerability database is unavailable through $($Database.Name) (attempt $Attempt/$Attempts); retrying through $($NextDatabase.Name) in $DelaySeconds seconds." -ForegroundColor Yellow
             Start-Sleep -Seconds $DelaySeconds
@@ -278,6 +311,27 @@ function Test-WindowsTooling {
     $UnsafeProbe = $SensitiveProbe + " ghp_" + ("A" * 36)
     $SafeProbe = ConvertTo-SafeGovulncheckOutput $UnsafeProbe
     if ($SafeProbe -match [Regex]::Escape($SensitiveProbe) -or $SafeProbe -match "ghp_A") {
+        $Failures++
+    }
+    try {
+        $CmdExecutable = (Get-Command "cmd.exe" -CommandType Application -ErrorAction Stop).Source
+        $SuccessProbe = Invoke-CapturedNativeProcess `
+            -File $CmdExecutable `
+            -ArgumentString '/d /s /c "echo No vulnerabilities found. & exit /b 0"' `
+            -WorkingDirectory $Root `
+            -TimeoutSeconds 30
+        if ($SuccessProbe.TimedOut -or $SuccessProbe.ExitCode -ne 0 -or $SuccessProbe.Stdout -notmatch "No vulnerabilities found\.") {
+            $Failures++
+        }
+        $FailureProbe = Invoke-CapturedNativeProcess `
+            -File $CmdExecutable `
+            -ArgumentString '/d /s /c "exit /b 7"' `
+            -WorkingDirectory $Root `
+            -TimeoutSeconds 30
+        if ($FailureProbe.TimedOut -or $FailureProbe.ExitCode -ne 7) {
+            $Failures++
+        }
+    } catch {
         $Failures++
     }
     if ($Failures -ne 0) {
@@ -464,6 +518,7 @@ function Assert-CleanTree {
 
 function Test-Release {
     Assert-CleanTree
+    Test-WindowsTooling
     Ensure-AuditEnvironment
     Push-Location $Root
     try {
