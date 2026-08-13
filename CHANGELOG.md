@@ -46,6 +46,7 @@
 - Потенциально зависающие security/build/browser checks имеют watchdog и не превращают infrastructure failure в PASS.
 - Windows `govulncheck` повторяет канонический запрос и переключается на Google-hosted storage endpoint той же Go Vulnerability Database; недоступность обоих адресов оставляет security status `UNKNOWN` и блокирует RELEASE fingerprint.
 - Windows-wrapper считывает фактический exit code `govulncheck` через `System.Diagnostics.Process`; успешный ответ `No vulnerabilities found.` больше не классифицируется как `SECURITY FAIL`; паузы retry сокращены до 2 с.
+- Вывод Windows-инструментов захватывается прямым процессом без PowerShell Job/remoting и декодируется как UTF-8; диагностический `RemoteException` и повреждение кириллицы в VK fixture output устранены.
 - Repository audit проверяет executable mode Python-файлов по Git index, поэтому EXE001 regression одинаково работает на Windows и Linux; Windows runner сохраняет redacted traceback провалившегося tool вместо одной строки progress output.
 
 Исторические изменения выпусков 1.x доступны в Git history и соответствующих тегах.

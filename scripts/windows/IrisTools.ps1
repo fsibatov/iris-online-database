@@ -73,41 +73,6 @@ if ((Test-Path -LiteralPath (Join-Path $PinnedGitleaksDirectory "gitleaks.exe"))
     $env:PATH = $PinnedGitleaksDirectory + ";" + $env:PATH
 }
 
-function Invoke-Checked {
-    param([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds = 600)
-    Write-Host ("+ " + $File + " " + ($Arguments -join " "))
-    $Job = Start-Job -ScriptBlock {
-        param($Executable, $NativeArguments, $WorkingDirectory)
-        $ErrorActionPreference = "Continue"
-        Set-Location -LiteralPath $WorkingDirectory
-        $CommandOutput = @(& $Executable @NativeArguments 2>&1)
-        $NativeExitCode = if ($null -eq $LASTEXITCODE) { -1 } else { [int]$LASTEXITCODE }
-        [pscustomobject]@{
-            ExitCode = $NativeExitCode
-            Output = @($CommandOutput | ForEach-Object { [string]$_ })
-        }
-    } -ArgumentList $File, $Arguments, (Get-Location).Path
-    if (-not (Wait-Job -Job $Job -Timeout $TimeoutSeconds)) {
-        Stop-Job -Job $Job
-        Remove-Job -Job $Job -Force
-        throw "Tool watchdog expired after $TimeoutSeconds seconds."
-    }
-    $JobState = $Job.State
-    try {
-        $Result = Receive-Job -Job $Job -ErrorAction SilentlyContinue
-    } finally {
-        Remove-Job -Job $Job -Force
-    }
-    if ($JobState -ne "Completed" -or -not $Result) {
-        throw "Required tool process could not be completed."
-    }
-    foreach ($Line in @($Result.Output)) {
-        if ($Line) { Write-Host (ConvertTo-SafeToolOutput ([string]$Line)) }
-    }
-    $ExitCode = [int]$Result.ExitCode
-    if ($ExitCode -ne 0) { throw "Required tool failed with exit code $ExitCode." }
-}
-
 function Test-GovulncheckNetworkFailure {
     param([string]$Text)
     $Patterns = @(
@@ -154,21 +119,68 @@ function ConvertTo-SafeToolOutput {
     return $SafeText
 }
 
+function ConvertTo-NativeArgument {
+    param([AllowEmptyString()][string]$Value)
+    if ($null -eq $Value -or $Value.Length -eq 0) { return '""' }
+    if ($Value -notmatch '[\s"]') { return $Value }
+
+    $Builder = New-Object System.Text.StringBuilder
+    $Slash = [string][char]0x5C
+    [void]$Builder.Append([char]0x22)
+    $Backslashes = 0
+    foreach ($Character in $Value.ToCharArray()) {
+        if ($Character -eq [char]0x5C) {
+            $Backslashes++
+            continue
+        }
+        if ($Character -eq [char]0x22) {
+            if ($Backslashes -gt 0) {
+                [void]$Builder.Append(($Slash * ($Backslashes * 2)))
+            }
+            [void]$Builder.Append($Slash)
+            [void]$Builder.Append([char]0x22)
+            $Backslashes = 0
+            continue
+        }
+        if ($Backslashes -gt 0) {
+            [void]$Builder.Append(($Slash * $Backslashes))
+            $Backslashes = 0
+        }
+        [void]$Builder.Append($Character)
+    }
+    if ($Backslashes -gt 0) {
+        [void]$Builder.Append(($Slash * ($Backslashes * 2)))
+    }
+    [void]$Builder.Append([char]0x22)
+    return $Builder.ToString()
+}
+
+function ConvertTo-NativeArgumentString {
+    param([string[]]$Arguments)
+    $EncodedArguments = @($Arguments | ForEach-Object { ConvertTo-NativeArgument -Value $_ })
+    return $EncodedArguments -join " "
+}
+
 function Invoke-CapturedNativeProcess {
     param(
         [string]$File,
-        [string]$ArgumentString,
+        [string[]]$Arguments,
         [string]$WorkingDirectory,
         [int]$TimeoutSeconds
     )
     $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
     $StartInfo.FileName = $File
-    $StartInfo.Arguments = $ArgumentString
+    $StartInfo.Arguments = ConvertTo-NativeArgumentString $Arguments
     $StartInfo.WorkingDirectory = $WorkingDirectory
     $StartInfo.UseShellExecute = $false
     $StartInfo.CreateNoWindow = $true
     $StartInfo.RedirectStandardOutput = $true
     $StartInfo.RedirectStandardError = $true
+    $Utf8 = New-Object System.Text.UTF8Encoding($false)
+    $StartInfo.StandardOutputEncoding = $Utf8
+    $StartInfo.StandardErrorEncoding = $Utf8
+    $StartInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"
+    $StartInfo.EnvironmentVariables["PYTHONUTF8"] = "1"
 
     $Process = New-Object System.Diagnostics.Process
     $Process.StartInfo = $StartInfo
@@ -201,6 +213,30 @@ function Invoke-CapturedNativeProcess {
     }
 }
 
+function Invoke-Checked {
+    param([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds = 600)
+    Write-Host ("+ " + $File + " " + ($Arguments -join " "))
+    try {
+        $Result = Invoke-CapturedNativeProcess `
+            -File $File `
+            -Arguments $Arguments `
+            -WorkingDirectory (Get-Location).Path `
+            -TimeoutSeconds $TimeoutSeconds
+    } catch {
+        throw "Required tool process could not be completed."
+    }
+    foreach ($Text in @([string]$Result.Stdout, [string]$Result.Stderr)) {
+        if (-not $Text) { continue }
+        $SafeText = (ConvertTo-SafeToolOutput $Text).TrimEnd()
+        if ($SafeText) { Write-Host $SafeText }
+    }
+    if ($Result.TimedOut) {
+        throw "Tool watchdog expired after $TimeoutSeconds seconds."
+    }
+    $ExitCode = [int]$Result.ExitCode
+    if ($ExitCode -ne 0) { throw "Required tool failed with exit code $ExitCode." }
+}
+
 function Invoke-Govulncheck {
     param([int]$TimeoutSeconds = 300)
     $Executable = Get-Command "govulncheck" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -219,7 +255,7 @@ function Invoke-Govulncheck {
             Write-Host "+ govulncheck -db $($Database.URL) ./... (attempt $Attempt/$Attempts)"
             $Result = Invoke-CapturedNativeProcess `
                 -File $Executable.Source `
-                -ArgumentString ("-db " + $Database.URL + " ./...") `
+                -Arguments @("-db", $Database.URL, "./...") `
                 -WorkingDirectory $Root `
                 -TimeoutSeconds $TimeoutSeconds
         } catch {
@@ -332,7 +368,7 @@ function Test-WindowsTooling {
         $CmdExecutable = (Get-Command "cmd.exe" -CommandType Application -ErrorAction Stop).Source
         $SuccessProbe = Invoke-CapturedNativeProcess `
             -File $CmdExecutable `
-            -ArgumentString '/d /s /c "echo No vulnerabilities found. & exit /b 0"' `
+            -Arguments @("/d", "/s", "/c", "echo No vulnerabilities found. & exit /b 0") `
             -WorkingDirectory $Root `
             -TimeoutSeconds 30
         if ($SuccessProbe.TimedOut -or $SuccessProbe.ExitCode -ne 0 -or $SuccessProbe.Stdout -notmatch "No vulnerabilities found\.") {
@@ -340,7 +376,7 @@ function Test-WindowsTooling {
         }
         $FailureProbe = Invoke-CapturedNativeProcess `
             -File $CmdExecutable `
-            -ArgumentString '/d /s /c "exit /b 7"' `
+            -Arguments @("/d", "/s", "/c", "exit /b 7") `
             -WorkingDirectory $Root `
             -TimeoutSeconds 30
         if ($FailureProbe.TimedOut -or $FailureProbe.ExitCode -ne 7) {
@@ -358,6 +394,16 @@ function Test-WindowsTooling {
             $CheckedFailureDetected = $_.Exception.Message -eq "Required tool failed with exit code 7."
         }
         if (-not $CheckedFailureDetected) {
+            $Failures++
+        }
+        $PythonExecutable = (Get-Command "python" -CommandType Application -ErrorAction Stop).Source
+        $EncodingProbe = Invoke-CapturedNativeProcess `
+            -File $PythonExecutable `
+            -Arguments @("-c", "print('\u044f')") `
+            -WorkingDirectory $Root `
+            -TimeoutSeconds 30
+        if ($EncodingProbe.TimedOut -or $EncodingProbe.ExitCode -ne 0 -or
+            $EncodingProbe.Stdout.Trim() -ne [string][char]0x044F) {
             $Failures++
         }
     } catch {

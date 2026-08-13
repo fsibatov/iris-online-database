@@ -240,6 +240,8 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("function Invoke-Govulncheck", script)
         self.assertIn("function Test-GovulncheckNetworkFailure", script)
         self.assertIn("function ConvertTo-SafeToolOutput", script)
+        self.assertIn("function ConvertTo-NativeArgument", script)
+        self.assertIn("function ConvertTo-NativeArgumentString", script)
         self.assertIn("function Invoke-CapturedNativeProcess", script)
         self.assertIn("[NETWORK/INFRASTRUCTURE RETRY]", script)
         self.assertIn("[NETWORK/INFRASTRUCTURE FALLBACK]", script)
@@ -254,19 +256,26 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("without a successful result (exit code $ExitCode)", script)
         self.assertEqual(script.count('URL = "https://vuln.go.dev"'), 2)
         self.assertIn('URL = "https://storage.googleapis.com/go-vulndb"', script)
-        self.assertIn('("-db " + $Database.URL + " ./...")', script)
+        self.assertIn('-Arguments @("-db", $Database.URL, "./...")', script)
         self.assertIn("$DelaySeconds = 2", script)
         self.assertNotIn("Start-Process -FilePath $Executable.Source", script)
         self.assertIn("echo No vulnerabilities found. & exit /b 0", script)
-        self.assertIn("ArgumentString '/d /s /c \"exit /b 7\"'", script)
+        self.assertIn('-Arguments @("/d", "/s", "/c", "exit /b 7")', script)
         self.assertRegex(
             script, r"function Test-Release \{\s+Assert-CleanTree\s+Test-WindowsTooling"
         )
         self.assertIn("[redacted-path]", script)
         self.assertIn("[redacted-token]", script)
-        self.assertIn("$CommandOutput = @(& $Executable @NativeArguments 2>&1)", script)
+        self.assertNotIn("Start-Job -ScriptBlock", script)
+        self.assertIn("$StartInfo.StandardOutputEncoding = $Utf8", script)
+        self.assertIn("$StartInfo.StandardErrorEncoding = $Utf8", script)
+        self.assertIn(
+            '$StartInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"',
+            script,
+        )
+        self.assertIn('$StartInfo.EnvironmentVariables["PYTHONUTF8"] = "1"', script)
         self.assertIn("Required tool failed with exit code $ExitCode", script)
-        self.assertIn("ConvertTo-SafeToolOutput ([string]$Line)", script)
+        self.assertIn("ConvertTo-SafeToolOutput $Text", script)
         self.assertIn(
             'Invoke-Checked $CmdExecutable @("/d", "/c", "exit", "/b", "0") 30',
             script,
@@ -275,6 +284,8 @@ class ReleaseHelperTests(unittest.TestCase):
             'Invoke-Checked $CmdExecutable @("/d", "/c", "exit", "/b", "7") 30',
             script,
         )
+        self.assertIn('-Arguments @("-c", "print(\'\\u044f\')")', script)
+        self.assertIn("[string][char]0x044F", script)
         self.assertNotIn("Write-Host $StdoutText.TrimEnd()", script)
         self.assertNotIn("Write-Host $StderrText.TrimEnd()", script)
         self.assertIn("fetching vulnerabilities: read tcp: wsarecv", script)
