@@ -658,7 +658,17 @@ function Build-Release {
         $Head = (& git rev-parse HEAD).Trim()
         Clear-BuildGenerated
         try {
-            Invoke-Checked "wails" @("build", "-platform", "windows/amd64", "-webview2", "embed", "-trimpath", "-clean", "-skipbindings", "-s", "-nosyncgomod", "-m", "-o", "IrisOnlineDatabase.exe", "-ldflags", "-buildid= -X main.appVersion=$Version -X main.releaseMarker=IrisOnlineRelease/$Version/$Head") 1200
+            $PreviousCgoEnabled = $env:CGO_ENABLED
+            try {
+                $env:CGO_ENABLED = "0"
+                Invoke-Checked "wails" @("build", "-platform", "windows/amd64", "-webview2", "embed", "-trimpath", "-clean", "-skipbindings", "-s", "-nosyncgomod", "-m", "-o", "IrisOnlineDatabase.exe", "-ldflags", "-buildid= -X main.appVersion=$Version -X main.releaseMarker=IrisOnlineRelease/$Version/$Head") 1200
+            } finally {
+                if ($null -eq $PreviousCgoEnabled) {
+                    Remove-Item Env:\CGO_ENABLED -ErrorAction SilentlyContinue
+                } else {
+                    $env:CGO_ENABLED = $PreviousCgoEnabled
+                }
+            }
             $Artifact = Join-Path $OutputFull "iris-online-database-$Version-windows-amd64.exe"
             Copy-Item -LiteralPath (Join-Path $Root "build\bin\IrisOnlineDatabase.exe") -Destination $Artifact -Force
             $Hash = (Get-FileHash -LiteralPath $Artifact -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -48,7 +48,9 @@
 - Windows-wrapper считывает фактический exit code `govulncheck` через `System.Diagnostics.Process`; успешный ответ `No vulnerabilities found.` больше не классифицируется как `SECURITY FAIL`; паузы retry сокращены до 2 с.
 - Вывод Windows-инструментов захватывается прямым процессом без PowerShell Job/remoting и декодируется как UTF-8; диагностический `RemoteException` и повреждение кириллицы в VK fixture output устранены.
 - Windows `SelfTest` проверяет UTF-8 по детерминированной последовательности байтов через audit Python и при сбое сообщает безопасную категорию конкретного probe вместо одного непрозрачного счётчика.
-- Возвращён отдельный совместимый `01_TEST.bat` для привычного запуска строгого PowerShell RELEASE gate двойным щелчком; launcher делегирует текущему `IrisTools.ps1 -Action Test` и не дублирует логику проверок.
+- Совместимый `01_TEST.bat` для привычного запуска строгого PowerShell RELEASE gate вынесен из source archive в отдельный артефакт; launcher делегирует текущему `IrisTools.ps1 -Action Test` и не дублирует логику проверок.
+- Windows release build теперь явно фиксирует `CGO_ENABLED=0`; проверка Go metadata сообщает безопасную категорию несовпадения вместо непрозрачного общего сообщения.
+- Кнопка «Назад» в карточке использует ограниченную внутреннюю историю: переход из шкатулки в руну возвращается в исходную шкатулку, а прямой deep link безопасно откатывается к каталогу.
 - Repository audit проверяет executable mode Python-файлов по Git index, поэтому EXE001 regression одинаково работает на Windows и Linux; Windows runner сохраняет redacted traceback провалившегося tool вместо одной строки progress output.
 
 Исторические изменения выпусков 1.x доступны в Git history и соответствующих тегах.

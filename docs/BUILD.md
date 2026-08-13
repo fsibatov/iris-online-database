@@ -23,7 +23,7 @@ powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Test
 powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Build -OutputDirectory C:\IrisRelease\2.0.0
 ```
 
-Для отдельного запуска строгого теста в прежнем формате используйте `01_TEST.bat` двойным щелчком или из терминала. Это только совместимый launcher: он вызывает текущий `IrisTools.ps1 -Action Test`, возвращает тот же exit code и делает `pause`, но не содержит второй копии release-проверок.
+Для отдельного запуска строгого теста в прежнем формате используйте поставляемый отдельно `01_TEST.bat`: храните его рядом с папкой `iris-online-database`, а не внутри source. Это только совместимый launcher: он находит корневой `IrisTools.ps1`, вызывает `-Action Test`, возвращает тот же exit code и делает `pause`, но не содержит второй копии release-проверок.
 
 Корневой launcher автоматически запрашивает повышение через Windows UAC для `Check` и `Install`, в том числе при выборе этих пунктов из интерактивного меню. Таблица `Check` отдельно подтверждает версию PowerShell и роль `Administrator`. При отмене UAC операция завершается ошибкой и ничего не устанавливает.
 
@@ -38,7 +38,7 @@ scripts/release-gate.sh
 scripts/build-release.sh /absolute/path/outside/source
 ```
 
-Cross-build Wails Windows amd64 выполняется без CGO. `go test -race` исполняется на Linux, где race detector поддержан и не требует менять Windows release binary.
+Release build Wails Windows amd64 явно устанавливает `CGO_ENABLED=0` и восстанавливает исходное process environment после сборки. Поэтому native Windows и Linux cross-build имеют одинаковый pure-Go WebView2 loader и проверяемые build metadata. `go test -race` исполняется на Linux, где race detector поддержан и не требует менять Windows release binary.
 
 ## Обязательные проверки
 

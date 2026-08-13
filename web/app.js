@@ -14,6 +14,8 @@
   const PROFILE_PENDING_KEY = 'iris-profile-pending';
   const RECENT_VIEWED_KEY = 'iris-recently-viewed';
   const RECENT_VIEWED_LIMIT = 8;
+  const ROUTE_HISTORY_STATE_KEY = '__irisRoute';
+  let routeHistoryIndex = 0;
 
   function safeJSON(value, fallback) {
     try { return JSON.parse(value); } catch (_) { return fallback; }
@@ -160,9 +162,83 @@
     return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  function normalizeRouteValue(value) {
+    const raw = String(value || '').replace(/^#/, '') || 'home';
+    try {
+      const canonical = new URL(`#${raw}`, location.href).hash.replace(/^#/, '') || 'home';
+      decodeURIComponent(canonical);
+      return canonical;
+    } catch (_) { return ''; }
+  }
+
   function decodeRouteHash() {
-    const raw = location.hash.replace(/^#/, '') || 'home';
-    try { return decodeURIComponent(raw); } catch (_) { return 'home'; }
+    return normalizeRouteValue(location.hash) || 'home';
+  }
+
+  function isInternalAppRoute(route) {
+    const path = String(route || '').split('?')[0];
+    return ['home', 'items', 'monsters', 'recipes', 'favorites', 'search'].includes(path)
+      || /^(?:item|monster|recipe)\/\d+$/.test(path);
+  }
+
+  function routeHistoryState(index, route) {
+    const current = window.history.state;
+    const base = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
+    return { ...base, [ROUTE_HISTORY_STATE_KEY]: { index, route } };
+  }
+
+  function currentRouteHistoryEntry() {
+    const entry = window.history.state?.[ROUTE_HISTORY_STATE_KEY];
+    if (!entry || !Number.isInteger(entry.index) || entry.index < 0 || entry.route !== decodeRouteHash()) return null;
+    return entry;
+  }
+
+  function initializeRouteHistory() {
+    const entry = currentRouteHistoryEntry();
+    if (entry) {
+      routeHistoryIndex = entry.index;
+      return;
+    }
+    const route = decodeRouteHash();
+    routeHistoryIndex = 0;
+    window.history.replaceState(routeHistoryState(0, route), '', `#${route}`);
+  }
+
+  function navigateToRoute(value) {
+    const route = normalizeRouteValue(value);
+    if (!isInternalAppRoute(route)) return false;
+    if (route === decodeRouteHash()) {
+      renderRoute();
+      return true;
+    }
+    routeHistoryIndex += 1;
+    window.history.pushState(routeHistoryState(routeHistoryIndex, route), '', `#${route}`);
+    renderRoute();
+    return true;
+  }
+
+  function handleRouteHashChange() {
+    const route = decodeRouteHash();
+    const entry = currentRouteHistoryEntry();
+    if (entry) routeHistoryIndex = entry.index;
+    else {
+      routeHistoryIndex += 1;
+      window.history.replaceState(routeHistoryState(routeHistoryIndex, route), '', `#${route}`);
+    }
+    renderRoute();
+  }
+
+  function replaceRouteHash(route) {
+    window.history.replaceState(routeHistoryState(routeHistoryIndex, route), '', `#${route}`);
+  }
+
+  function navigateBack(fallbackRoute) {
+    if (routeHistoryIndex > 0) {
+      window.history.back();
+      return;
+    }
+    const fallback = normalizeRouteValue(fallbackRoute);
+    navigateToRoute(isInternalAppRoute(fallback) ? fallback : 'home');
   }
 
   function routeBase(route = state.route) {
@@ -342,7 +418,7 @@
   }
 
   function breadcrumb(parentRoute, parentLabel, current) {
-    return `<nav class="breadcrumbs" aria-label="Навигация по разделам"><a href="#${parentRoute}">${icons.arrowLeft}<span>${escapeHTML(parentLabel)}</span></a><span aria-current="page">${escapeHTML(current)}</span></nav>`;
+    return `<nav class="breadcrumbs" aria-label="Навигация по разделам"><button type="button" data-route-back="${parentRoute}" aria-label="Назад к предыдущей странице. Если история пуста, открыть раздел «${escapeHTML(parentLabel)}»">${icons.arrowLeft}<span>Назад</span></button><span aria-current="page">${escapeHTML(current)}</span></nav>`;
   }
 
   function renderNavigation() {
@@ -469,7 +545,7 @@
     if (!query) return;
     addHistory(query);
     closeSuggestions();
-    location.hash = `search?q=${encodeURIComponent(query)}`;
+    navigateToRoute(`search?q=${encodeURIComponent(query)}`);
   }
 
   let suggestionTimer;
@@ -1735,7 +1811,7 @@
         visibleCatalog?.removeAttribute('aria-busy');
         visibleCatalog?.removeAttribute('inert');
         state.route = visibleRoute;
-        history.replaceState(null, '', `#${visibleRoute}`);
+        replaceRouteHash(visibleRoute);
         renderNavigation();
         showToast(preserveItemDetail ? 'Не удалось открыть предмет. Повторите переход.' : 'Не удалось открыть каталог. Повторите переход.');
         return;
@@ -2109,6 +2185,8 @@
 
 
   main.addEventListener('click', event => {
+    const routeBack = event.target.closest('[data-route-back]');
+    if (routeBack) { navigateBack(routeBack.dataset.routeBack); return; }
     const favorite = event.target.closest('[data-favorite]');
     if (favorite) { toggleFavorite(favorite.dataset.favorite, favorite); return; }
     const action = event.target.closest('[data-action]')?.dataset.action;
@@ -2279,7 +2357,7 @@
         const route = suggestionRoutes[activeSuggestion];
         addHistory(globalSearch.value);
         closeSuggestions();
-        location.hash = route;
+        navigateToRoute(route);
       } else submitGlobalSearch();
     } else if (event.key === 'Escape') { closeSuggestions(); }
   });
@@ -2293,7 +2371,7 @@
     if (option) {
       addHistory(globalSearch.value);
       closeSuggestions();
-      location.hash = option.dataset.suggestion;
+      navigateToRoute(option.dataset.suggestion);
       return;
     }
     if (event.target.closest('[data-search-all]')) submitGlobalSearch();
@@ -2337,6 +2415,17 @@
 
   document.addEventListener('click', event => {
     if (handleExternalLink(event)) return;
+    const skipLink = event.target.closest('a[href="#mainContent"]');
+    if (skipLink) {
+      event.preventDefault();
+      main.focus({ preventScroll: false });
+      return;
+    }
+    const internalLink = event.target.closest('a[href^="#"]');
+    if (internalLink && navigateToRoute(internalLink.getAttribute('href'))) {
+      event.preventDefault();
+      return;
+    }
     if (!event.target.closest('.search-combobox')) closeSuggestions();
     if (!moreMenu.hidden && !event.target.closest('#moreMenu') && !event.target.closest('#moreButton')) closeMoreMenu();
   });
@@ -2363,7 +2452,7 @@
   infoDialog.addEventListener('click', event => { if (event.target === infoDialog || event.target.closest('[data-close-dialog]')) infoDialog.close(); });
   infoDialog.addEventListener('close', () => { dialogReturnFocus?.focus?.({ preventScroll: true }); dialogReturnFocus = null; });
 
-  window.addEventListener('hashchange', renderRoute);
+  window.addEventListener('hashchange', handleRouteHashChange);
   window.addEventListener('beforeunload', prepareForWindowClose);
   window.addEventListener('pagehide', prepareForWindowClose);
   window.addEventListener('pageshow', () => {
@@ -2379,6 +2468,8 @@
       return;
     }
   });
+
+  initializeRouteHistory();
 
   (async () => {
     globalSearch.value = '';

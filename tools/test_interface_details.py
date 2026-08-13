@@ -399,6 +399,17 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         ):
             self.assertEqual(self.script.count(registration), 1, registration)
 
+    def test_detail_back_action_uses_bounded_internal_history(self):
+        self.assertIn("const ROUTE_HISTORY_STATE_KEY = '__irisRoute'", self.script)
+        self.assertIn("window.history.pushState", self.script)
+        self.assertIn("window.history.back()", self.script)
+        self.assertIn('data-route-back="${parentRoute}"', self.script)
+        self.assertIn(
+            "window.addEventListener('hashchange', handleRouteHashChange)",
+            self.script,
+        )
+        self.assertNotIn('<a href="#${parentRoute}">${icons.arrowLeft}', self.script)
+
     def test_sell_restriction_wording_is_global_for_selltype_zero(self):
         self.assertIn(
             "if (Number(item.sellType) === 0) actions.push({ text: 'Нельзя продать персонажу'",

@@ -38,7 +38,7 @@ trap cleanup_generated EXIT
 cleanup_generated
 
 BEFORE="$(git status --porcelain=v1 --untracked-files=all)"
-wails build \
+CGO_ENABLED=0 wails build \
   -platform windows/amd64 \
   -webview2 embed \
   -trimpath \

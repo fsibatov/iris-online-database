@@ -85,6 +85,43 @@ MONSTER = {
     "worldRuleCount": 0,
 }
 
+CHEST_ITEM = {
+    "item": {
+        "id": 2001,
+        "name": "Тестовая шкатулка",
+        "category": "Шкатулки",
+        "typeLine": "Шкатулка",
+        "sellType": 0,
+    },
+    "bonuses": [],
+    "drops": [],
+    "chest": {
+        "drawCount": 1,
+        "items": [
+            {
+                "itemId": 2002,
+                "item": "Тестовая руна",
+                "itemKnown": True,
+                "chanceKnown": True,
+                "chance": 25,
+                "variants": [],
+            }
+        ],
+    },
+}
+
+RUNE_ITEM = {
+    "item": {
+        "id": 2002,
+        "name": "Тестовая руна",
+        "category": "Руны",
+        "typeLine": "Руна",
+        "sellType": 0,
+    },
+    "bonuses": [],
+    "drops": [],
+}
+
 
 class FixtureState:
     def __init__(self) -> None:
@@ -164,6 +201,12 @@ class FixtureHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/monsters/42":
             self.send_json(MONSTER)
+            return
+        if parsed.path == "/api/items/2001":
+            self.send_json(CHEST_ITEM)
+            return
+        if parsed.path == "/api/items/2002":
+            self.send_json(RUNE_ITEM)
             return
         self.serve_asset(parsed.path)
 
@@ -312,6 +355,21 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                     "https://github.com/fsibatov/iris-online-database",
                 ],
                 "middle-click bypassed the external URL bridge",
+            )
+
+            page.evaluate("location.hash = 'item/2001'")
+            page.wait_for_selector('.detail-page[data-route="item/2001"]')
+            page.locator('.chest-content-row[href="#item/2002"]').click()
+            page.wait_for_selector('.detail-page[data-route="item/2002"]')
+            back = page.locator("[data-route-back]")
+            require(
+                back.inner_text().strip() == "Назад", "detail back action is missing"
+            )
+            back.click()
+            page.wait_for_selector('.detail-page[data-route="item/2001"]')
+            require(
+                page.get_by_role("heading", name="Тестовая шкатулка").count() == 1,
+                "back from a contained item did not restore its chest",
             )
 
             page.evaluate("location.hash = 'monster/42'")

@@ -494,8 +494,9 @@ html[data-theme="light"] .control-select { color-scheme: light; }
 .search-result-section header a { color: var(--accent); font-size: 14px; }
 
 .breadcrumbs { min-width: 0; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
-.breadcrumbs a { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
-.breadcrumbs a svg { width: 17px; height: 17px; }
+.breadcrumbs button { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
+.breadcrumbs button:hover { color: var(--text); }
+.breadcrumbs button svg { width: 17px; height: 17px; }
 .breadcrumbs > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail-page { max-width: 1040px; }
 .detail-summary {

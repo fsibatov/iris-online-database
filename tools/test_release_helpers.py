@@ -16,6 +16,7 @@ from frontend_smoke_test import playwright_failure_category
 from playwright.sync_api import Error as PlaywrightError
 from release_fingerprint import FingerprintError, assert_release_tree, source_hash
 from repository_audit import python_mode_violation
+from verify_executables import EXPECTED_METADATA_MARKERS, missing_metadata_categories
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -79,6 +80,9 @@ class ReleaseHelperTests(unittest.TestCase):
         build = (ROOT / "scripts" / "build-release.sh").read_text(encoding="utf-8")
         gate = (ROOT / "scripts" / "release-gate.sh").read_text(encoding="utf-8")
         launcher = (ROOT / "IrisTools.ps1").read_text(encoding="utf-8")
+        windows = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
         for marker in (
             "release_fingerprint.py --verify",
             "windows/amd64",
@@ -90,19 +94,20 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("release_fingerprint.py --write", gate)
         self.assertIn("git status --porcelain", gate)
         self.assertIn("scripts\\windows\\IrisTools.ps1", launcher)
+        self.assertIn("CGO_ENABLED=0 wails build", build)
+        self.assertIn('$env:CGO_ENABLED = "0"', windows)
+        self.assertIn("Remove-Item Env:\\CGO_ENABLED", windows)
 
-    def test_legacy_test_launcher_delegates_to_the_canonical_release_gate(self):
-        launcher = (ROOT / "01_TEST.bat").read_text(encoding="utf-8")
-        self.assertIn(
-            'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0IrisTools.ps1" -Action Test',
-            launcher,
-        )
-        self.assertIn('set "code=%errorlevel%"', launcher)
-        self.assertIn("pause", launcher)
-        self.assertIn("exit /b %code%", launcher)
-        self.assertNotIn("-Action Release", launcher)
-        for duplicated_command in ("go test", "staticcheck", "govulncheck", "ruff"):
-            self.assertNotIn(duplicated_command, launcher.lower())
+    def test_optional_test_launcher_is_kept_outside_source(self):
+        self.assertFalse((ROOT / "01_TEST.bat").exists())
+
+    def test_release_metadata_diagnostic_identifies_cgo_without_raw_payload(self):
+        valid = "\n".join(marker for _category, marker in EXPECTED_METADATA_MARKERS)
+        self.assertEqual(missing_metadata_categories(valid), [])
+        cgo_enabled = valid.replace("CGO_ENABLED=0", "CGO_ENABLED=1")
+        categories = missing_metadata_categories(cgo_enabled)
+        self.assertEqual(categories, ["CGO_DISABLED"])
+        self.assertNotIn("CGO_ENABLED=1", " ".join(categories))
 
     def test_fingerprint_hashes_git_mode_and_rejects_dirty_source(self):
         with tempfile.TemporaryDirectory(

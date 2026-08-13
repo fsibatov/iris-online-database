@@ -10,6 +10,24 @@ import shutil
 import subprocess  # nosec B404
 from pathlib import Path
 
+EXPECTED_METADATA_MARKERS = (
+    ("TARGET_OS", "GOOS=windows"),
+    ("TARGET_ARCH", "GOARCH=amd64"),
+    ("TARGET_LEVEL", "GOAMD64=v1"),
+    ("CGO_DISABLED", "CGO_ENABLED=0"),
+    ("TRIMPATH", "-trimpath=true"),
+    ("PRODUCTION_TAGS", "-tags=desktop,wv2runtime.embed,production"),
+    ("WAILS_VERSION", "github.com/wailsapp/wails/v2\tv2.14.0"),
+)
+
+
+def missing_metadata_categories(metadata: str) -> list[str]:
+    return [
+        category
+        for category, marker in EXPECTED_METADATA_MARKERS
+        if marker not in metadata
+    ]
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -34,18 +52,9 @@ def main() -> None:
     if result.returncode:
         raise SystemExit("could not read Go build metadata")
     metadata = result.stdout
-    expected = (
-        "GOOS=windows",
-        "GOARCH=amd64",
-        "GOAMD64=v1",
-        "CGO_ENABLED=0",
-        "-trimpath=true",
-        "-tags=desktop,wv2runtime.embed,production",
-        "github.com/wailsapp/wails/v2\tv2.14.0",
-    )
-    missing = [marker for marker in expected if marker not in metadata]
+    missing = missing_metadata_categories(metadata)
     if missing:
-        raise SystemExit("release executable has incomplete build metadata")
+        raise SystemExit("release executable metadata mismatch: " + ",".join(missing))
     binary = path.read_bytes()
     marker = f"IrisOnlineRelease/{args.version}/".encode()
     if marker not in binary:
