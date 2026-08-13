@@ -78,19 +78,34 @@ function Invoke-Checked {
     Write-Host ("+ " + $File + " " + ($Arguments -join " "))
     $Job = Start-Job -ScriptBlock {
         param($Executable, $NativeArguments, $WorkingDirectory)
+        $ErrorActionPreference = "Continue"
         Set-Location -LiteralPath $WorkingDirectory
-        & $Executable @NativeArguments
-        if ($LASTEXITCODE -ne 0) { throw "Native command exit code: $LASTEXITCODE" }
+        $CommandOutput = @(& $Executable @NativeArguments 2>&1)
+        $NativeExitCode = if ($null -eq $LASTEXITCODE) { -1 } else { [int]$LASTEXITCODE }
+        [pscustomobject]@{
+            ExitCode = $NativeExitCode
+            Output = @($CommandOutput | ForEach-Object { [string]$_ })
+        }
     } -ArgumentList $File, $Arguments, (Get-Location).Path
     if (-not (Wait-Job -Job $Job -Timeout $TimeoutSeconds)) {
         Stop-Job -Job $Job
         Remove-Job -Job $Job -Force
         throw "Tool watchdog expired after $TimeoutSeconds seconds."
     }
-    Receive-Job -Job $Job
-    $Failed = $Job.State -ne "Completed"
-    Remove-Job -Job $Job -Force
-    if ($Failed) { throw "Required tool failed." }
+    $JobState = $Job.State
+    try {
+        $Result = Receive-Job -Job $Job -ErrorAction SilentlyContinue
+    } finally {
+        Remove-Job -Job $Job -Force
+    }
+    if ($JobState -ne "Completed" -or -not $Result) {
+        throw "Required tool process could not be completed."
+    }
+    foreach ($Line in @($Result.Output)) {
+        if ($Line) { Write-Host (ConvertTo-SafeToolOutput ([string]$Line)) }
+    }
+    $ExitCode = [int]$Result.ExitCode
+    if ($ExitCode -ne 0) { throw "Required tool failed with exit code $ExitCode." }
 }
 
 function Test-GovulncheckNetworkFailure {
@@ -118,7 +133,7 @@ function Test-GovulncheckNetworkFailure {
     return $false
 }
 
-function ConvertTo-SafeGovulncheckOutput {
+function ConvertTo-SafeToolOutput {
     param([string]$Text)
     if (-not $Text) { return "" }
     $SafeText = $Text
@@ -216,8 +231,8 @@ function Invoke-Govulncheck {
         $StderrText = [string]$Result.Stderr
 
         if (-not $TimedOut -and $ExitCode -eq 0) {
-            if ($StdoutText) { Write-Host (ConvertTo-SafeGovulncheckOutput $StdoutText).TrimEnd() }
-            if ($StderrText) { Write-Host (ConvertTo-SafeGovulncheckOutput $StderrText).TrimEnd() }
+            if ($StdoutText) { Write-Host (ConvertTo-SafeToolOutput $StdoutText).TrimEnd() }
+            if ($StderrText) { Write-Host (ConvertTo-SafeToolOutput $StderrText).TrimEnd() }
             if ($Database.Name -eq "Google storage fallback") {
                 Write-Host "[NETWORK/INFRASTRUCTURE FALLBACK] Canonical host was unavailable; the scan used the Google-hosted Go vulnerability database storage endpoint." -ForegroundColor Yellow
             }
@@ -228,8 +243,8 @@ function Invoke-Govulncheck {
         $FailureText = $StdoutText + "`n" + $StderrText
         $InfrastructureFailure = $TimedOut -or (Test-GovulncheckNetworkFailure $FailureText)
         if (-not $InfrastructureFailure) {
-            if ($StdoutText) { Write-Host (ConvertTo-SafeGovulncheckOutput $StdoutText).TrimEnd() }
-            if ($StderrText) { Write-Host (ConvertTo-SafeGovulncheckOutput $StderrText).TrimEnd() }
+            if ($StdoutText) { Write-Host (ConvertTo-SafeToolOutput $StdoutText).TrimEnd() }
+            if ($StderrText) { Write-Host (ConvertTo-SafeToolOutput $StderrText).TrimEnd() }
             throw "[SECURITY FAIL] govulncheck completed without a successful result (exit code $ExitCode)."
         }
 
@@ -309,7 +324,7 @@ function Test-WindowsTooling {
     }
     $SensitiveProbe = Join-Path $Root "private-project"
     $UnsafeProbe = $SensitiveProbe + " ghp_" + ("A" * 36)
-    $SafeProbe = ConvertTo-SafeGovulncheckOutput $UnsafeProbe
+    $SafeProbe = ConvertTo-SafeToolOutput $UnsafeProbe
     if ($SafeProbe -match [Regex]::Escape($SensitiveProbe) -or $SafeProbe -match "ghp_A") {
         $Failures++
     }
@@ -329,6 +344,20 @@ function Test-WindowsTooling {
             -WorkingDirectory $Root `
             -TimeoutSeconds 30
         if ($FailureProbe.TimedOut -or $FailureProbe.ExitCode -ne 7) {
+            $Failures++
+        }
+        try {
+            Invoke-Checked $CmdExecutable @("/d", "/c", "exit", "/b", "0") 30
+        } catch {
+            $Failures++
+        }
+        $CheckedFailureDetected = $false
+        try {
+            Invoke-Checked $CmdExecutable @("/d", "/c", "exit", "/b", "7") 30
+        } catch {
+            $CheckedFailureDetected = $_.Exception.Message -eq "Required tool failed with exit code 7."
+        }
+        if (-not $CheckedFailureDetected) {
             $Failures++
         }
     } catch {

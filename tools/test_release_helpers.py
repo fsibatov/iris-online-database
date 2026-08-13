@@ -15,6 +15,7 @@ from pathlib import Path
 from frontend_smoke_test import playwright_failure_category
 from playwright.sync_api import Error as PlaywrightError
 from release_fingerprint import FingerprintError, assert_release_tree, source_hash
+from repository_audit import python_mode_violation
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -238,7 +239,7 @@ class ReleaseHelperTests(unittest.TestCase):
         )
         self.assertIn("function Invoke-Govulncheck", script)
         self.assertIn("function Test-GovulncheckNetworkFailure", script)
-        self.assertIn("function ConvertTo-SafeGovulncheckOutput", script)
+        self.assertIn("function ConvertTo-SafeToolOutput", script)
         self.assertIn("function Invoke-CapturedNativeProcess", script)
         self.assertIn("[NETWORK/INFRASTRUCTURE RETRY]", script)
         self.assertIn("[NETWORK/INFRASTRUCTURE FALLBACK]", script)
@@ -263,6 +264,17 @@ class ReleaseHelperTests(unittest.TestCase):
         )
         self.assertIn("[redacted-path]", script)
         self.assertIn("[redacted-token]", script)
+        self.assertIn("$CommandOutput = @(& $Executable @NativeArguments 2>&1)", script)
+        self.assertIn("Required tool failed with exit code $ExitCode", script)
+        self.assertIn("ConvertTo-SafeToolOutput ([string]$Line)", script)
+        self.assertIn(
+            'Invoke-Checked $CmdExecutable @("/d", "/c", "exit", "/b", "0") 30',
+            script,
+        )
+        self.assertIn(
+            'Invoke-Checked $CmdExecutable @("/d", "/c", "exit", "/b", "7") 30',
+            script,
+        )
         self.assertNotIn("Write-Host $StdoutText.TrimEnd()", script)
         self.assertNotIn("Write-Host $StderrText.TrimEnd()", script)
         self.assertIn("fetching vulnerabilities: read tcp: wsarecv", script)
@@ -298,6 +310,9 @@ class ReleaseHelperTests(unittest.TestCase):
             self.assertNotIn("artifact.exe", output)
 
     def test_repository_audit_enforces_python_shebang_mode_coherence(self):
+        self.assertTrue(python_mode_violation("#!/usr/bin/env python3\n", 0))
+        self.assertTrue(python_mode_violation("print('x')\n", stat.S_IXUSR))
+        self.assertFalse(python_mode_violation("print('x')\n", 0))
         with tempfile.TemporaryDirectory(prefix="iris-mode-fixture-") as temporary:
             root = Path(temporary)
             tools = root / "tools"
@@ -306,7 +321,31 @@ class ReleaseHelperTests(unittest.TestCase):
             shebang.write_text("#!/usr/bin/env python3\nprint('x')\n", encoding="utf-8")
             executable = tools / "executable.py"
             executable.write_text("print('x')\n", encoding="utf-8")
-            executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+            subprocess.run(
+                ["git", "init", "--initial-branch=main", str(root)],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "tools"],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "update-index",
+                    "--chmod=+x",
+                    "tools/executable.py",
+                ],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
             result = self.run_audit(root)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("[HYG003]", result.stdout)

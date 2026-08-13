@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import stat
+
+# Git is resolved to an executable path and invoked with fixed argv without a shell.
+import subprocess  # nosec B404
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
@@ -85,6 +90,7 @@ ABSOLUTE_PATH_PATTERNS = (
     re.compile(r"(?<![\w/])/home/[^/\s]+/"),
 )
 AUDIT_MARKERS = re.compile(r"\b(?:TODO|FIXME|HACK|XXX)\b")
+EXECUTABLE_BITS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 
 
 class Category(str, Enum):
@@ -160,9 +166,56 @@ def read_text(path: Path) -> str | None:
         return None
 
 
+def python_mode_violation(
+    text: str, filesystem_mode: int, git_index_executable: bool = False
+) -> bool:
+    return (
+        text.startswith("#!")
+        or bool(filesystem_mode & EXECUTABLE_BITS)
+        or git_index_executable
+    )
+
+
+def git_executable_python_paths(root: Path) -> set[str]:
+    executable = shutil.which("git")
+    if not executable:
+        return set()
+    try:
+        result = subprocess.run(
+            [executable, "-C", str(root), "ls-files", "--stage", "-z", "--", "tools"],
+            check=False,
+            capture_output=True,
+            timeout=30,
+        )  # nosec B603
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if result.returncode:
+        return set()
+
+    executable_paths: set[str] = set()
+    for record in result.stdout.split(b"\0"):
+        if not record:
+            continue
+        try:
+            metadata, encoded_path = record.split(b"\t", 1)
+            mode, _object_id, stage = metadata.split(b" ", 2)
+        except ValueError:
+            continue
+        relative = os.fsdecode(encoded_path).replace("\\", "/")
+        if (
+            mode == b"100755"
+            and stage == b"0"
+            and relative.startswith("tools/")
+            and relative.endswith(".py")
+        ):
+            executable_paths.add(relative)
+    return executable_paths
+
+
 def audit(root: Path) -> tuple[list[Finding], Counter[str]]:
     findings: list[Finding] = []
     warnings: Counter[str] = Counter()
+    git_executable_paths = git_executable_python_paths(root)
 
     for path in root.rglob("*"):
         if path.is_symlink() or not path.is_dir() or is_skipped(path, root):
@@ -192,12 +245,14 @@ def audit(root: Path) -> tuple[list[Finding], Counter[str]]:
         if text is None:
             continue
 
-        if path.suffix.lower() == ".py" and relative.startswith("tools/"):
-            executable = bool(
-                path.stat().st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        if (
+            path.suffix.lower() == ".py"
+            and relative.startswith("tools/")
+            and python_mode_violation(
+                text, path.stat().st_mode, relative in git_executable_paths
             )
-            if text.startswith("#!") or executable:
-                findings.append(Finding(Category.PYTHON_MODE))
+        ):
+            findings.append(Finding(Category.PYTHON_MODE))
 
         if relative != "tools/repository_audit.py":
             if any(pattern.search(text) for pattern in SECRET_PATTERNS):
