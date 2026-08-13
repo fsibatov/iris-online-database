@@ -36,7 +36,7 @@ class VKNewsUpdaterTests(unittest.TestCase):
         self.assertIn('meta[name="twitter:description"]', module.POST_META_SELECTORS)
 
     def test_http_body_decoder_handles_windows_1251_without_charset_header(self):
-        raw = '<html><body>Актуальная запись ВКонтакте</body></html>'.encode(
+        raw = "<html><body>Актуальная запись ВКонтакте</body></html>".encode(
             "windows-1251"
         )
         decoded = module._decode_http_body(raw, {"content-type": "text/html"})

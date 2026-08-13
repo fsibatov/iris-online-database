@@ -62,9 +62,7 @@ POST_META_SELECTORS = (
     'meta[name="twitter:description"]',
     'meta[name="description"]',
 )
-CHARSET_PATTERN = re.compile(
-    r"charset\s*=\s*[\\'\"]?([A-Za-z0-9._-]+)", re.IGNORECASE
-)
+CHARSET_PATTERN = re.compile(r"charset\s*=\s*[\\'\"]?([A-Za-z0-9._-]+)", re.IGNORECASE)
 
 
 def normalize_text(value: str) -> str:

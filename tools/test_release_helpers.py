@@ -327,7 +327,7 @@ class ReleaseHelperTests(unittest.TestCase):
         ):
             self.assertIn(platform, workflow)
             self.assertIn(f'Suffix = "{suffix}"', workflow)
-        self.assertIn('IrisOnlineDB-$version-Windows-$($target.Suffix).exe', workflow)
+        self.assertIn("IrisOnlineDB-$version-Windows-$($target.Suffix).exe", workflow)
         self.assertIn("verify_executables.py --directory $artifactDir", workflow)
         self.assertIn("verify_windows_resources.py --directory $artifactDir", workflow)
 
