@@ -17,10 +17,7 @@ import (
 
 const applicationID = "iris-online-database"
 
-var (
-	appVersion    = "2.0.0"
-	releaseMarker = "IrisOnlineDiagnostic/2.0.0/development"
-)
+var appVersion = "2.0.0"
 
 //go:embed web/* data/latest-vk.json assets/game_data.json.gz assets/set_effects.json.gz assets/item_abilities.json.gz assets/item_recipes.json.gz assets/monster_details.json.gz assets/chest_contents.json.gz assets/monster_presence.json.gz
 var embedded embed.FS

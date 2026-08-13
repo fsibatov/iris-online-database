@@ -43,7 +43,7 @@ class ReleaseHelperTests(unittest.TestCase):
         resources = json.loads(
             (ROOT / "build" / "windows" / "info.json").read_text(encoding="utf-8")
         )
-        self.assertIn('appVersion    = "2.0.0"', server)
+        self.assertIn('var appVersion = "2.0.0"', server)
         self.assertIn("Версия 2.0.0", html)
         self.assertIn("const APP_VERSION = '2.0.0'", script)
         self.assertEqual(wails["info"]["productVersion"], "2.0.0")

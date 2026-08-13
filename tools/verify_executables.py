@@ -49,8 +49,8 @@ def main() -> None:
     marker = f"IrisOnlineRelease/{args.version}/".encode()
     if marker not in binary:
         raise SystemExit("release application marker is missing")
-    if b"IrisOnlineDiagnostic/" in binary:
-        raise SystemExit("diagnostic marker found in release executable")
+    if b"IrisOnlineDiagnostic/" in binary or b"IrisOnlineDevelopment/" in binary:
+        raise SystemExit("development marker found in release executable")
     lowered = binary.lower()
     if any(
         marker in lowered
