@@ -236,7 +236,10 @@ class ReleaseHelperTests(unittest.TestCase):
             "Analyze (python)",
         ):
             self.assertIn(check, script)
+        self.assertIn('status -ne "completed"', script)
         self.assertIn('conclusion -ne "success"', script)
+        self.assertIn("Required GitHub check is still running", script)
+        self.assertIn("Required GitHub check failed", script)
         self.assertNotIn('"neutral", "skipped"', script)
         self.assertIn("Release artifact changed after verification", script)
 
@@ -321,9 +324,14 @@ class ReleaseHelperTests(unittest.TestCase):
             script,
         )
         self.assertIn(
-            '-Arguments @("-c", "import sys;sys.stdout.buffer.write(bytes.fromhex(\'d18f0a\'))")',
+            '$WindowsPowerShell = Join-Path $env:SystemRoot "System32\\WindowsPowerShell\\v1.0\\powershell.exe"',
             script,
         )
+        self.assertIn(
+            '"[Console]::OpenStandardOutput().Write([byte[]](0xD1,0x8F,0x0A),0,3)"',
+            script,
+        )
+        self.assertNotIn("sys.stdout.buffer.write(bytes.fromhex", script)
         self.assertIn("[string][char]0x044F", script)
         self.assertIn('$FailedProbes.Add("UTF8_CAPTURE")', script)
         self.assertIn("categories=$($FailedProbes -join ',')", script)

@@ -396,19 +396,24 @@ function Test-WindowsTooling {
         if (-not $CheckedFailureDetected) {
             $FailedProbes.Add("CHECKED_FAILURE")
         }
-        $PythonExecutable = if (Test-Path -LiteralPath $AuditPython -PathType Leaf) {
-            $AuditPython
+        $WindowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+        if (-not (Test-Path -LiteralPath $WindowsPowerShell -PathType Leaf)) {
+            $FailedProbes.Add("POWERSHELL_PATH")
         } else {
-            (Get-Command "python" -CommandType Application -ErrorAction Stop).Source
-        }
-        $EncodingProbe = Invoke-CapturedNativeProcess `
-            -File $PythonExecutable `
-            -Arguments @("-c", "import sys;sys.stdout.buffer.write(bytes.fromhex('d18f0a'))") `
-            -WorkingDirectory $Root `
-            -TimeoutSeconds 30
-        if ($EncodingProbe.TimedOut -or $EncodingProbe.ExitCode -ne 0 -or
-            $EncodingProbe.Stdout.Trim() -ne [string][char]0x044F) {
-            $FailedProbes.Add("UTF8_CAPTURE")
+            $EncodingProbe = Invoke-CapturedNativeProcess `
+                -File $WindowsPowerShell `
+                -Arguments @(
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-Command",
+                    "[Console]::OpenStandardOutput().Write([byte[]](0xD1,0x8F,0x0A),0,3)"
+                ) `
+                -WorkingDirectory $Root `
+                -TimeoutSeconds 30
+            if ($EncodingProbe.TimedOut -or $EncodingProbe.ExitCode -ne 0 -or
+                $EncodingProbe.Stdout.Trim() -ne [string][char]0x044F) {
+                $FailedProbes.Add("UTF8_CAPTURE")
+            }
         }
     } catch {
         $FailedProbes.Add("NATIVE_RUNNER_EXCEPTION")
@@ -720,9 +725,15 @@ function Create-Release {
         $Checks = (& gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/fsibatov/iris-online-database/commits/$Head/check-runs?per_page=100" | ConvertFrom-Json).check_runs
         $RequiredChecks = @("Linux quality and security", "Go race detector", "Native Windows amd64 Wails build", "Analyze (go)", "Analyze (python)")
         foreach ($Name in $RequiredChecks) {
-            $Match = $Checks | Where-Object { $_.name -eq $Name }
-            if (-not $Match -or ($Match | Where-Object { $_.status -ne "completed" -or $_.conclusion -ne "success" })) {
-                throw "Required GitHub check is not successful: $Name"
+            $Match = @($Checks | Where-Object { $_.name -eq $Name })
+            if (-not $Match) {
+                throw "Required GitHub check is missing: $Name"
+            }
+            if ($Match | Where-Object { $_.status -ne "completed" }) {
+                throw "Required GitHub check is still running: $Name. Run Release again after GitHub Actions finishes."
+            }
+            if ($Match | Where-Object { $_.conclusion -ne "success" }) {
+                throw "Required GitHub check failed: $Name"
             }
         }
         if (-not $OutputDirectory) { $script:OutputDirectory = Join-Path (Split-Path $Root -Parent) "iris-online-database-release-$Version" }
