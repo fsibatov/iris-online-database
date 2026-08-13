@@ -23,6 +23,8 @@ powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Test
 powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Build -OutputDirectory C:\IrisRelease\2.0.0
 ```
 
+Для отдельного запуска строгого теста в прежнем формате используйте `01_TEST.bat` двойным щелчком или из терминала. Это только совместимый launcher: он вызывает текущий `IrisTools.ps1 -Action Test`, возвращает тот же exit code и делает `pause`, но не содержит второй копии release-проверок.
+
 Корневой launcher автоматически запрашивает повышение через Windows UAC для `Check` и `Install`, в том числе при выборе этих пунктов из интерактивного меню. Таблица `Check` отдельно подтверждает версию PowerShell и роль `Administrator`. При отмене UAC операция завершается ошибкой и ничего не устанавливает.
 
 `Test`, `Build`, `Publish` и `Release` запускаются с обычными правами: повышенные права для проверки и сборки исходного кода не требуются. `Install` повторно использует Python audit venv и Playwright cache под `%LOCALAPPDATA%\IrisOnlineDatabase\BuildTools`; source не загрязняется. System tools устанавливаются только при явном `Install`.

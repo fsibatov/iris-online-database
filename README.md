@@ -50,7 +50,7 @@ WebView использует внутренний виртуальный origin 
 - [Участие в разработке](CONTRIBUTING.md)
 - [Изменения v2.0.0](CHANGELOG.md)
 
-На Windows запустите `powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1`. Меню проверяет/устанавливает инструменты, запускает строгий gate, собирает EXE во внешнюю папку и не создаёт вторую копию source.
+На Windows запустите `powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1`. Меню проверяет/устанавливает инструменты, запускает строгий gate, собирает EXE во внешнюю папку и не создаёт вторую копию source. Для привычного отдельного запуска полного теста можно дважды щёлкнуть `01_TEST.bat`: окно останется открытым после завершения, а код проверки и RELEASE fingerprint по-прежнему выполняются каноническим `IrisTools.ps1 -Action Test`.
 
 ## Правовой статус
 

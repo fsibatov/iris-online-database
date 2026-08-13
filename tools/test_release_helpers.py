@@ -91,6 +91,19 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("git status --porcelain", gate)
         self.assertIn("scripts\\windows\\IrisTools.ps1", launcher)
 
+    def test_legacy_test_launcher_delegates_to_the_canonical_release_gate(self):
+        launcher = (ROOT / "01_TEST.bat").read_text(encoding="utf-8")
+        self.assertIn(
+            'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0IrisTools.ps1" -Action Test',
+            launcher,
+        )
+        self.assertIn('set "code=%errorlevel%"', launcher)
+        self.assertIn("pause", launcher)
+        self.assertIn("exit /b %code%", launcher)
+        self.assertNotIn("-Action Release", launcher)
+        for duplicated_command in ("go test", "staticcheck", "govulncheck", "ruff"):
+            self.assertNotIn(duplicated_command, launcher.lower())
+
     def test_fingerprint_hashes_git_mode_and_rejects_dirty_source(self):
         with tempfile.TemporaryDirectory(
             prefix="iris-fingerprint-fixture-"
