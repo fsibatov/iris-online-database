@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Menu", "Check", "Install", "Test", "Build", "Publish", "Release")]
+    [ValidateSet("Menu", "Check", "Install", "Test", "Build", "Publish", "Release", "SelfTest")]
     [string]$Action = "Menu",
     [string]$OutputDirectory = ""
 )
@@ -17,7 +17,59 @@ $AuditEnv = Join-Path $ToolRoot "python-audit"
 $AuditPython = Join-Path $AuditEnv "Scripts\python.exe"
 $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $ToolRoot "playwright"
 $PinnedGitleaksDirectory = Join-Path $ToolRoot "gitleaks-$GitleaksPin"
-if (Test-Path -LiteralPath (Join-Path $PinnedGitleaksDirectory "gitleaks.exe")) {
+
+function Test-IsAdministrator {
+    $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $Principal = New-Object Security.Principal.WindowsPrincipal($Identity)
+    return $Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Update-ProcessPath {
+    $Values = @(
+        [Environment]::GetEnvironmentVariable("Path", "Process"),
+        [Environment]::GetEnvironmentVariable("Path", "Machine"),
+        [Environment]::GetEnvironmentVariable("Path", "User")
+    )
+    $KnownDirectories = @()
+    if ($env:ProgramFiles) {
+        $KnownDirectories += Join-Path $env:ProgramFiles "Git\cmd"
+        $KnownDirectories += Join-Path $env:ProgramFiles "nodejs"
+    }
+    if (${env:ProgramFiles(x86)}) {
+        $KnownDirectories += Join-Path ${env:ProgramFiles(x86)} "Git\cmd"
+    }
+    $KnownDirectories += Join-Path $env:LOCALAPPDATA "Programs\Git\cmd"
+    $KnownDirectories += Join-Path $env:LOCALAPPDATA "Programs\nodejs"
+    $KnownDirectories += Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links"
+
+    $Seen = @{}
+    $Directories = New-Object System.Collections.Generic.List[string]
+    foreach ($Directory in $KnownDirectories) {
+        if (-not (Test-Path -LiteralPath $Directory -PathType Container)) { continue }
+        $Key = $Directory.ToLowerInvariant()
+        if (-not $Seen.ContainsKey($Key)) {
+            $Seen[$Key] = $true
+            $Directories.Add($Directory)
+        }
+    }
+    foreach ($Value in $Values) {
+        if (-not $Value) { continue }
+        foreach ($Directory in ($Value -split ";")) {
+            $Directory = $Directory.Trim()
+            if (-not $Directory) { continue }
+            $Key = $Directory.ToLowerInvariant()
+            if (-not $Seen.ContainsKey($Key)) {
+                $Seen[$Key] = $true
+                $Directories.Add($Directory)
+            }
+        }
+    }
+    $env:PATH = $Directories -join ";"
+}
+
+Update-ProcessPath
+if ((Test-Path -LiteralPath (Join-Path $PinnedGitleaksDirectory "gitleaks.exe")) -and
+    (($env:PATH -split ";") -notcontains $PinnedGitleaksDirectory)) {
     $env:PATH = $PinnedGitleaksDirectory + ";" + $env:PATH
 }
 
@@ -43,17 +95,23 @@ function Invoke-Checked {
 
 function Get-VersionLine {
     param([string]$Command, [string[]]$Arguments)
-    if (-not (Get-Command $Command -ErrorAction SilentlyContinue)) { return "MISSING" }
-    $Value = (& $Command @Arguments 2>&1 | Select-Object -First 1)
-    if ($LASTEXITCODE -ne 0) { return "FAIL" }
+    $Executable = Get-Command $Command -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $Executable) { return "MISSING" }
+    $Output = & $Executable.Source @Arguments 2>&1
+    $ExitCode = $LASTEXITCODE
+    if ($ExitCode -ne 0) { return "FAIL" }
+    $Value = $Output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ } | Select-Object -First 1
+    if (-not $Value) { return "FAIL" }
     return [string]$Value
 }
 
 function Get-AuditPackageVersion {
     param([string]$Package)
     if (-not (Test-Path -LiteralPath $AuditPython)) { return "MISSING" }
-    $Value = (& $AuditPython -c "import importlib.metadata,sys; print(importlib.metadata.version(sys.argv[1]))" $Package 2>$null | Select-Object -First 1)
-    if ($LASTEXITCODE -ne 0 -or -not $Value) { return "MISSING" }
+    $Output = & $AuditPython -c "import importlib.metadata,sys; print(importlib.metadata.version(sys.argv[1]))" $Package 2>$null
+    $ExitCode = $LASTEXITCODE
+    $Value = $Output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ } | Select-Object -First 1
+    if ($ExitCode -ne 0 -or -not $Value) { return "MISSING" }
     return ([string]$Value).Trim()
 }
 
@@ -73,10 +131,28 @@ function Get-GovulncheckVersion {
     return $Matches[1]
 }
 
-function Get-StaticcheckVersion {
-    $Line = Get-VersionLine "staticcheck" @("-version")
-    if ($Line -match "^staticcheck\s+([^\s]+)") { return $Matches[1] }
+function ConvertFrom-StaticcheckVersionLine {
+    param([string]$Line)
+    if ($Line -match "^staticcheck(?:\.exe)?\s+([^\s]+)") { return $Matches[1] }
     return $Line
+}
+
+function Get-StaticcheckVersion {
+    return ConvertFrom-StaticcheckVersionLine (Get-VersionLine "staticcheck" @("-version"))
+}
+
+function Test-WindowsTooling {
+    $Failures = 0
+    if ((Get-VersionLine "cmd.exe" @("/d", "/c", "echo", "iris-native-probe")) -ne "iris-native-probe") {
+        $Failures++
+    }
+    if ((ConvertFrom-StaticcheckVersionLine "staticcheck.exe 2026.1 (v0.7.0)") -ne "2026.1") {
+        $Failures++
+    }
+    if ($Failures -ne 0) {
+        throw "Windows tooling self-test: FAIL [TOOL_PROBE] count=$Failures"
+    }
+    Write-Host "Windows tooling self-test: PASS" -ForegroundColor Green
 }
 
 function Get-WebView2Version {
@@ -159,6 +235,13 @@ function Install-Gitleaks {
 }
 
 function Show-ToolTable {
+    Update-ProcessPath
+    if ((Test-Path -LiteralPath (Join-Path $PinnedGitleaksDirectory "gitleaks.exe")) -and
+        (($env:PATH -split ";") -notcontains $PinnedGitleaksDirectory)) {
+        $env:PATH = $PinnedGitleaksDirectory + ";" + $env:PATH
+    }
+    $AdministratorActual = if (Test-IsAdministrator) { "Administrator" } else { "Standard user" }
+    $PowerShellActual = $PSVersionTable.PSVersion.ToString() + " / " + $AdministratorActual
     $GitActual = Get-VersionLine "git" @("--version")
     $GitHubCLIActual = Get-VersionLine "gh" @("--version")
     $GoActual = if (Get-Command go -ErrorAction SilentlyContinue) { (& go env GOVERSION).Trim() } else { "MISSING" }
@@ -187,6 +270,7 @@ function Show-ToolTable {
         if ($LASTEXITCODE -eq 0 -and $BrowserList -match "chromium") { $PlaywrightBrowser = "installed" }
     }
     $Rows = @(
+        [pscustomobject]@{ Tool = "PowerShell"; Required = ">=5.1 / Administrator"; Actual = $PowerShellActual; Status = (Get-ToolStatus ($PSVersionTable.PSVersion -ge [Version]"5.1" -and (Test-IsAdministrator))) },
         [pscustomobject]@{ Tool = "Git"; Required = "available"; Actual = $GitActual; Status = (Get-ToolStatus ($GitActual -notin @("MISSING", "FAIL"))) },
         [pscustomobject]@{ Tool = "GitHub CLI"; Required = "available"; Actual = $GitHubCLIActual; Status = (Get-ToolStatus ($GitHubCLIActual -notin @("MISSING", "FAIL"))) },
         [pscustomobject]@{ Tool = "Go"; Required = "go$GoPin"; Actual = $GoActual; Status = (Get-ToolStatus ($GoActual -eq "go$GoPin")) },
@@ -210,15 +294,20 @@ function Show-ToolTable {
 }
 
 function Install-Tools {
+    if (-not (Test-IsAdministrator)) {
+        throw "Administrator rights are required for tool installation. Run the root IrisTools.ps1 launcher to request UAC elevation."
+    }
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         throw "winget is required to install missing system tools."
     }
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { & winget install --exact --id Git.Git --accept-package-agreements --accept-source-agreements }
+    Update-ProcessPath
+    if ((Get-VersionLine "git" @("--version")) -in @("MISSING", "FAIL")) { & winget install --exact --id Git.Git --accept-package-agreements --accept-source-agreements }
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { & winget install --exact --id GitHub.cli --accept-package-agreements --accept-source-agreements }
     if ((Get-VersionLine "python" @("--version")) -notmatch "^Python 3\.13(?:\.|$)") { & winget install --exact --id Python.Python.3.13 --accept-package-agreements --accept-source-agreements }
     if ((Get-VersionLine "node" @("--version")) -notmatch "^v24\.") { & winget install --exact --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements }
     if (-not (Get-Command go -ErrorAction SilentlyContinue) -or (& go env GOVERSION).Trim() -ne "go$GoPin") { & winget install --exact --id GoLang.Go --version $GoPin --accept-package-agreements --accept-source-agreements }
     if ((Get-WebView2Version) -eq "MISSING") { & winget install --exact --id Microsoft.EdgeWebView2Runtime --accept-package-agreements --accept-source-agreements }
+    Update-ProcessPath
     if (-not (Get-Command go -ErrorAction SilentlyContinue)) { throw "Restart the terminal after installing Go, then run Install again." }
     $GoBin = (& go env GOBIN).Trim()
     if (-not $GoBin) { $GoBin = Join-Path ((& go env GOPATH).Trim()) "bin" }
@@ -235,7 +324,7 @@ function Install-Tools {
 function Assert-CleanTree {
     Push-Location $Root
     try {
-        $Status = (& git status --porcelain=v1 --untracked-files=all)
+        $Status = (& git status "--porcelain=v1" "--untracked-files=all")
         if ($Status) { throw "The Git working tree must be clean." }
         $Branch = (& git branch --show-current).Trim()
         if ($Branch -ne "main") { throw "Release operations require branch main." }
@@ -250,8 +339,10 @@ function Test-Release {
         if ((& go env GOVERSION).Trim() -ne "go$GoPin") { throw "Go version mismatch." }
         if ((Get-VersionLine "wails" @("version")) -ne $WailsPin) { throw "Wails version mismatch." }
         $BeforeHead = (& git rev-parse HEAD).Trim()
-        Invoke-Checked "python" @("-B", "tools/repository_audit.py") 120
-        $Unformatted = (& gofmt -l -- *.go)
+        Invoke-Checked $AuditPython @("-B", "tools/repository_audit.py") 120
+        $GoFiles = Get-ChildItem -LiteralPath $Root -Filter "*.go" -File | ForEach-Object { $_.FullName }
+        $Unformatted = (& gofmt -l -- $GoFiles)
+        if ($LASTEXITCODE -ne 0) { throw "gofmt failed." }
         if ($Unformatted) { throw "Go source is not formatted." }
         Invoke-Checked "go" @("mod", "verify") 180
         Invoke-Checked "go" @("mod", "tidy", "-diff") 180
@@ -268,14 +359,14 @@ function Test-Release {
         Invoke-Checked $AuditPython @("-B", "tools/validate_workflows.py") 120
         Invoke-Checked "node" @("--check", "web/app.js") 120
         foreach ($Audit in @("data_presentation_audit.py", "frontend_smoke_test.py")) {
-            Invoke-Checked "python" @("-B", ("tools/" + $Audit)) 900
+            Invoke-Checked $AuditPython @("-B", ("tools/" + $Audit)) 900
         }
         Invoke-Checked "gitleaks" @("dir", "--no-banner", "--redact", ".") 600
         Invoke-Checked "gitleaks" @("git", "--no-banner", "--redact", ".") 600
-        Invoke-Checked "python" @("-B", "tools/repository_audit.py") 120
+        Invoke-Checked $AuditPython @("-B", "tools/repository_audit.py") 120
         Assert-CleanTree
         if ((& git rev-parse HEAD).Trim() -ne $BeforeHead) { throw "HEAD changed during the RELEASE gate." }
-        Invoke-Checked "python" @("-B", "tools/release_fingerprint.py", "--write") 120
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--write") 120
         Write-Host "RELEASE gate: PASS" -ForegroundColor Green
     } finally { Pop-Location }
 }
@@ -291,9 +382,10 @@ function Clear-BuildGenerated {
 
 function Build-Release {
     Assert-CleanTree
+    Ensure-AuditEnvironment
     Push-Location $Root
     try {
-        Invoke-Checked "python" @("-B", "tools/release_fingerprint.py", "--verify") 120
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
         if (-not $OutputDirectory) { $script:OutputDirectory = Join-Path (Split-Path $Root -Parent) "iris-online-database-release-$Version" }
         $OutputFull = [IO.Path]::GetFullPath($OutputDirectory)
         if ($OutputFull.StartsWith($Root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Release output must be outside the source tree." }
@@ -308,8 +400,8 @@ function Build-Release {
             Set-Content -LiteralPath (Join-Path $OutputFull "SHA256SUMS.txt") -Value "$Hash  $(Split-Path $Artifact -Leaf)" -Encoding ASCII
         } finally { Clear-BuildGenerated }
         Assert-CleanTree
-        Invoke-Checked "python" @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version) 120
-        Invoke-Checked "python" @("-B", "tools/verify_windows_resources.py", "--directory", $OutputFull, "--version", $Version) 120
+        Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version) 120
+        Invoke-Checked $AuditPython @("-B", "tools/verify_windows_resources.py", "--directory", $OutputFull, "--version", $Version) 120
         Write-Host "Release build: PASS" -ForegroundColor Green
         Write-Host $OutputFull
     } finally { Pop-Location }
@@ -317,9 +409,10 @@ function Build-Release {
 
 function Publish-Commit {
     Assert-CleanTree
+    Ensure-AuditEnvironment
     Push-Location $Root
     try {
-        Invoke-Checked "python" @("-B", "tools/release_fingerprint.py", "--verify") 120
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
         Invoke-Checked "git" @("push", "origin", "main") 300
         $Head = (& git rev-parse HEAD).Trim()
         $RemoteHead = (& git rev-parse "origin/main").Trim()
@@ -330,10 +423,11 @@ function Publish-Commit {
 
 function Create-Release {
     Assert-CleanTree
+    Ensure-AuditEnvironment
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw "GitHub CLI (gh) is required." }
     Push-Location $Root
     try {
-        Invoke-Checked "python" @("-B", "tools/release_fingerprint.py", "--verify") 120
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
         $Head = (& git rev-parse HEAD).Trim()
         if ($Head -ne (& git rev-parse "origin/main").Trim()) { throw "HEAD is not the published origin/main commit." }
         $Checks = (& gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/fsibatov/iris-online-database/commits/$Head/check-runs?per_page=100" | ConvertFrom-Json).check_runs
@@ -353,8 +447,8 @@ function Create-Release {
         $ExpectedHash = ($ChecksumLine -split "\s+")[0].ToLowerInvariant()
         $ActualHash = (Get-FileHash -LiteralPath $Artifact -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($ExpectedHash -ne $ActualHash) { throw "Release artifact changed after verification." }
-        Invoke-Checked "python" @("-B", "tools/verify_executables.py", "--directory", ([IO.Path]::GetFullPath($OutputDirectory)), "--version", $Version) 120
-        Invoke-Checked "python" @("-B", "tools/verify_windows_resources.py", "--directory", ([IO.Path]::GetFullPath($OutputDirectory)), "--version", $Version) 120
+        Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", ([IO.Path]::GetFullPath($OutputDirectory)), "--version", $Version) 120
+        Invoke-Checked $AuditPython @("-B", "tools/verify_windows_resources.py", "--directory", ([IO.Path]::GetFullPath($OutputDirectory)), "--version", $Version) 120
         Invoke-Checked "git" @("tag", "-s", "v$Version", "-m", "Iris Online Database $Version") 120
         Invoke-Checked "git" @("push", "origin", "v$Version") 300
         Invoke-Checked "gh" @("release", "create", "v$Version", $Artifact, $Checksums, "--verify-tag", "--title", "Iris Online Database $Version", "--notes-file", "CHANGELOG.md") 600
@@ -371,14 +465,23 @@ if ($Action -eq "Menu") {
     Write-Host "4 - Push tested commit"
     Write-Host "5 - Create signed tag and GitHub release"
     $Choice = Read-Host "Select"
-    $Action = switch ($Choice) { "0" { "Check" } "1" { "Install" } "2" { "Test" } "3" { "Build" } "4" { "Publish" } "5" { "Release" } default { throw "Unknown selection." } }
+    $Action = switch ($Choice) {
+        "0" { "Check" }
+        "1" { "Install" }
+        "2" { "Test" }
+        "3" { "Build" }
+        "4" { "Publish" }
+        "5" { "Release" }
+        default { throw "Unknown selection." }
+    }
 }
 
 switch ($Action) {
-    "Check" { if (-not (Show-ToolTable)) { exit 1 } }
+    "Check" { if (-not (Show-ToolTable)) { throw "Tool check: FAIL" } }
     "Install" { Install-Tools }
     "Test" { Test-Release }
     "Build" { Build-Release }
     "Publish" { Publish-Commit }
     "Release" { Create-Release }
+    "SelfTest" { Test-WindowsTooling }
 }

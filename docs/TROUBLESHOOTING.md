@@ -19,3 +19,7 @@
 ## Диагностика сборки
 
 Запустите `IrisTools.ps1 -Action Check`, затем `-Action Test`. Gate не считает network timeout успешной security-проверкой. Generated files и audit environments находятся вне source; если Git status изменился, сначала осознанно разберите изменения, не используйте `git reset --hard` или `git clean -fdx`.
+
+`Check` и `Install` автоматически показывают стандартный Windows UAC prompt. Строка `PowerShell` должна содержать `Administrator / OK`. Если UAC отменён, повторите команду и подтвердите запрос; вручную запускать весь release gate от администратора не нужно.
+
+Если winget только что установил Git или Node.js, launcher обновляет `PATH` текущего процесса и проверяет executable повторно. Строки Ruff, Bandit, pip, pip-audit, Playwright и PyYAML относятся к изолированному окружению `%LOCALAPPDATA%\IrisOnlineDatabase\BuildTools\python-audit`, а не к глобальному Python.

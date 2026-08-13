@@ -23,7 +23,11 @@ powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Test
 powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Build -OutputDirectory C:\IrisRelease\2.0.0
 ```
 
-`Install` повторно использует Python audit venv и Playwright cache под `%LOCALAPPDATA%\IrisOnlineDatabase\BuildTools`; source не загрязняется. System tools устанавливаются только при явном `Install`.
+Корневой launcher автоматически запрашивает повышение через Windows UAC для `Check` и `Install`, в том числе при выборе этих пунктов из интерактивного меню. Таблица `Check` отдельно подтверждает версию PowerShell и роль `Administrator`. При отмене UAC операция завершается ошибкой и ничего не устанавливает.
+
+`Test`, `Build`, `Publish` и `Release` запускаются с обычными правами: повышенные права для проверки и сборки исходного кода не требуются. `Install` повторно использует Python audit venv и Playwright cache под `%LOCALAPPDATA%\IrisOnlineDatabase\BuildTools`; source не загрязняется. System tools устанавливаются только при явном `Install`.
+
+После установки через winget launcher повторно загружает системный и пользовательский `PATH`, поэтому новый терминал обычно не требуется. Версии Python tools проверяются тем же внешним audit venv, в который они были установлены.
 
 ## Linux CI / audit workstation
 

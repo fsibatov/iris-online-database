@@ -203,6 +203,35 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertNotIn('"neutral", "skipped"', script)
         self.assertIn("Release artifact changed after verification", script)
 
+    def test_windows_tool_check_elevates_and_reads_native_output_safely(self):
+        launcher = (ROOT / "IrisTools.ps1").read_text(encoding="utf-8")
+        script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('@("Check", "Install")', launcher)
+        self.assertIn("Restart-AsAdministrator", launcher)
+        self.assertIn("-Verb RunAs", launcher)
+        self.assertIn("-EncodedCommand", launcher)
+        self.assertIn('Tool = "PowerShell"', script)
+        self.assertIn(">=5.1 / Administrator", script)
+        self.assertIn("$ExitCode = $LASTEXITCODE", script)
+        self.assertNotIn("& $Command @Arguments 2>&1 | Select-Object -First 1", script)
+        self.assertNotIn(
+            'sys.argv[1]))" $Package 2>$null | Select-Object -First 1', script
+        )
+        self.assertIn(r"^staticcheck(?:\.exe)?\s+", script)
+        self.assertIn(
+            'Invoke-Checked $AuditPython @("-B", "tools/repository_audit.py")',
+            script,
+        )
+        self.assertNotIn('Invoke-Checked "python" @("-B"', script)
+        self.assertIn("Windows tooling self-test: PASS", script)
+        self.assertIn("-Action SelfTest", workflow)
+        self.assertIn("System.Management.Automation.Language.Parser", workflow)
+
     def test_repository_audit_reports_exact_categories_without_payloads(self):
         sensitive_path = "/" + "home/" + "private-user/work/project"
         fake_token = "ghp_" + "A" * 36

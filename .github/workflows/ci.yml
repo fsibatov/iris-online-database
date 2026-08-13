@@ -194,6 +194,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Parse and self-test Windows PowerShell 5.1 tooling
+        shell: powershell
+        run: |
+          $files = @("IrisTools.ps1", "scripts\windows\IrisTools.ps1")
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path -LiteralPath $file).Path,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -ne 0) {
+              Write-Host "PowerShell syntax: FAIL [PS_PARSE] file=$file count=$($errors.Count)"
+              exit 1
+            }
+          }
+          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action SelfTest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Setup pinned Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
