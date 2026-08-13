@@ -413,11 +413,22 @@ class ReleaseHelperTests(unittest.TestCase):
             )
             target = root / "target.txt"
             target.write_text("fixture\n", encoding="utf-8")
-            (root / "linked.txt").symlink_to(target)
+            symlink_created = False
+            try:
+                (root / "linked.txt").symlink_to(target)
+                symlink_created = True
+            except OSError as exc:
+                # Creating symlinks on Windows can require Developer Mode or the
+                # SeCreateSymbolicLinkPrivilege. The release gate must remain
+                # runnable by a normal non-elevated user; Linux CI still exercises
+                # the symlink-specific branch when Windows cannot create one.
+                if os.name != "nt" or getattr(exc, "winerror", None) != 1314:
+                    raise
             result = self.run_audit(root)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("[HYG002]", result.stdout)
-            self.assertIn("(count=2)", result.stdout)
+            expected_count = 2 if symlink_created else 1
+            self.assertIn(f"(count={expected_count})", result.stdout)
             self.assertNotIn("SHA256SUMS.txt", result.stdout)
             self.assertNotIn("linked.txt", result.stdout)
 
