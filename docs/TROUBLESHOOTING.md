@@ -22,4 +22,6 @@
 
 `Check` и `Install` автоматически показывают стандартный Windows UAC prompt. Строка `PowerShell` должна содержать `Administrator / OK`. Если UAC отменён, повторите команду и подтвердите запрос; вручную запускать весь release gate от администратора не нужно.
 
+Если `govulncheck` выдаёт `NETWORK/INFRASTRUCTURE SKIP`, разрешите исходящий HTTPS/443 к `vuln.go.dev` и `storage.googleapis.com` в firewall/proxy, затем повторите `-Action Test`. Это не означает, что в коде найдена уязвимость, но и не подтверждает её отсутствие: до успешного запроса RELEASE-gate остаётся закрытым.
+
 Если winget только что установил Git или Node.js, launcher обновляет `PATH` текущего процесса и проверяет executable повторно. Строки Ruff, Bandit, pip, pip-audit, Playwright и PyYAML относятся к изолированному окружению `%LOCALAPPDATA%\IrisOnlineDatabase\BuildTools\python-audit`, а не к глобальному Python.

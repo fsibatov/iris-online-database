@@ -44,5 +44,6 @@
 - Все прямые Python audit/smoke-зависимости, включая Ruff, Bandit, pip-audit, Playwright и PyYAML, закреплены только в `tools/requirements-audit.txt`.
 - pip-audit использует переиспользуемое окружение вне source и проверяет полное установленное dependency graph.
 - Потенциально зависающие security/build/browser checks имеют watchdog и не превращают infrastructure failure в PASS.
+- Windows `govulncheck` повторяет канонический запрос и переключается на Google-hosted storage endpoint той же Go Vulnerability Database; недоступность обоих адресов оставляет security status `UNKNOWN` и блокирует RELEASE fingerprint.
 
 Исторические изменения выпусков 1.x доступны в Git history и соответствующих тегах.

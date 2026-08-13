@@ -232,6 +232,35 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("-Action SelfTest", workflow)
         self.assertIn("System.Management.Automation.Language.Parser", workflow)
 
+    def test_windows_govulncheck_retries_and_fails_closed_on_network(self):
+        script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("function Invoke-Govulncheck", script)
+        self.assertIn("function Test-GovulncheckNetworkFailure", script)
+        self.assertIn("function ConvertTo-SafeGovulncheckOutput", script)
+        self.assertIn("[NETWORK/INFRASTRUCTURE RETRY]", script)
+        self.assertIn("[NETWORK/INFRASTRUCTURE FALLBACK]", script)
+        self.assertIn("[NETWORK/INFRASTRUCTURE SKIP]", script)
+        self.assertIn("Vulnerability status is UNKNOWN", script)
+        self.assertIn("RELEASE gate remains FAILED", script)
+        self.assertIn("Invoke-Govulncheck", script)
+        self.assertNotIn('Invoke-Checked "govulncheck" @("./...")', script)
+        self.assertIn("WaitForExit($TimeoutSeconds * 1000)", script)
+        self.assertEqual(script.count('URL = "https://vuln.go.dev"'), 2)
+        self.assertIn('URL = "https://storage.googleapis.com/go-vulndb"', script)
+        self.assertIn('@("-db", $Database.URL, "./...")', script)
+        self.assertIn("[redacted-path]", script)
+        self.assertIn("[redacted-token]", script)
+        self.assertNotIn("Write-Host $StdoutText.TrimEnd()", script)
+        self.assertNotIn("Write-Host $StderrText.TrimEnd()", script)
+        self.assertIn("fetching vulnerabilities: read tcp: wsarecv", script)
+        self.assertIn(
+            "Vulnerability #1: GO-TEST-0001; see "
+            "https://vuln.go.dev/ID/GO-TEST-0001.json",
+            script,
+        )
+
     def test_repository_audit_reports_exact_categories_without_payloads(self):
         sensitive_path = "/" + "home/" + "private-user/work/project"
         fake_token = "ghp_" + "A" * 36

@@ -93,6 +93,125 @@ function Invoke-Checked {
     if ($Failed) { throw "Required tool failed." }
 }
 
+function Test-GovulncheckNetworkFailure {
+    param([string]$Text)
+    $Patterns = @(
+        "fetching vulnerabilities",
+        "\b(?:dial|read|write) tcp\b",
+        "wsarecv",
+        "no such host",
+        "temporary failure in name resolution",
+        "i/o timeout",
+        "timed out",
+        "tls handshake timeout",
+        "context deadline exceeded",
+        "connection (?:refused|reset|timed out)",
+        "proxyconnect tcp",
+        "unexpected eof",
+        "http2: client connection lost",
+        "x509:",
+        "status(?: code)? (?:403|408|429|5\d\d)"
+    )
+    foreach ($Pattern in $Patterns) {
+        if ($Text -match ("(?i)" + $Pattern)) { return $true }
+    }
+    return $false
+}
+
+function ConvertTo-SafeGovulncheckOutput {
+    param([string]$Text)
+    if (-not $Text) { return "" }
+    $SafeText = $Text
+    foreach ($SensitiveRoot in @($Root, $env:USERPROFILE, $env:LOCALAPPDATA, $env:TEMP)) {
+        if (-not $SensitiveRoot) { continue }
+        $SafeText = [Regex]::Replace(
+            $SafeText,
+            [Regex]::Escape($SensitiveRoot),
+            "[redacted-path]",
+            [Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
+    }
+    $SafeText = [Regex]::Replace(
+        $SafeText,
+        "(?i)\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b",
+        "[redacted-token]"
+    )
+    return $SafeText
+}
+
+function Invoke-Govulncheck {
+    param([int]$TimeoutSeconds = 300)
+    $Executable = Get-Command "govulncheck" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $Executable) { throw "[SECURITY FAIL] govulncheck executable is missing." }
+
+    $DatabaseAttempts = @(
+        [pscustomobject]@{ Name = "canonical"; URL = "https://vuln.go.dev" },
+        [pscustomobject]@{ Name = "canonical retry"; URL = "https://vuln.go.dev" },
+        [pscustomobject]@{ Name = "Google storage fallback"; URL = "https://storage.googleapis.com/go-vulndb" }
+    )
+    for ($AttemptIndex = 0; $AttemptIndex -lt $DatabaseAttempts.Count; $AttemptIndex++) {
+        $Attempt = $AttemptIndex + 1
+        $Database = $DatabaseAttempts[$AttemptIndex]
+        $Attempts = $DatabaseAttempts.Count
+        $StdoutPath = [IO.Path]::GetTempFileName()
+        $StderrPath = [IO.Path]::GetTempFileName()
+        $Process = $null
+        $TimedOut = $false
+        $ExitCode = -1
+        $StdoutText = ""
+        $StderrText = ""
+        try {
+            Write-Host "+ govulncheck -db $($Database.URL) ./... (attempt $Attempt/$Attempts)"
+            $Process = Start-Process -FilePath $Executable.Source -ArgumentList @("-db", $Database.URL, "./...") `
+                -WorkingDirectory $Root -RedirectStandardOutput $StdoutPath `
+                -RedirectStandardError $StderrPath -NoNewWindow -PassThru
+            if (-not $Process.WaitForExit($TimeoutSeconds * 1000)) {
+                $TimedOut = $true
+                try { $Process.Kill() } catch { }
+                [void]$Process.WaitForExit()
+            } else {
+                [void]$Process.WaitForExit()
+                $ExitCode = $Process.ExitCode
+            }
+            $StdoutText = Get-Content -LiteralPath $StdoutPath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+            $StderrText = Get-Content -LiteralPath $StderrPath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+        } catch {
+            throw "[SECURITY FAIL] govulncheck process could not be started or monitored."
+        } finally {
+            if ($Process) { $Process.Dispose() }
+            Remove-Item -LiteralPath $StdoutPath, $StderrPath -Force -ErrorAction SilentlyContinue
+        }
+
+        if (-not $TimedOut -and $ExitCode -eq 0) {
+            if ($StdoutText) { Write-Host (ConvertTo-SafeGovulncheckOutput $StdoutText).TrimEnd() }
+            if ($StderrText) { Write-Host (ConvertTo-SafeGovulncheckOutput $StderrText).TrimEnd() }
+            if ($Database.Name -eq "Google storage fallback") {
+                Write-Host "[NETWORK/INFRASTRUCTURE FALLBACK] Canonical host was unavailable; the scan used the Google-hosted Go vulnerability database storage endpoint." -ForegroundColor Yellow
+            }
+            Write-Host "govulncheck: PASS" -ForegroundColor Green
+            return
+        }
+
+        $FailureText = $StdoutText + "`n" + $StderrText
+        $InfrastructureFailure = $TimedOut -or (Test-GovulncheckNetworkFailure $FailureText)
+        if (-not $InfrastructureFailure) {
+            if ($StdoutText) { Write-Host (ConvertTo-SafeGovulncheckOutput $StdoutText).TrimEnd() }
+            if ($StderrText) { Write-Host (ConvertTo-SafeGovulncheckOutput $StderrText).TrimEnd() }
+            throw "[SECURITY FAIL] govulncheck completed without a successful result."
+        }
+
+        if ($Attempt -lt $Attempts) {
+            $DelaySeconds = 5 * $Attempt
+            $NextDatabase = $DatabaseAttempts[$AttemptIndex + 1]
+            Write-Host "[NETWORK/INFRASTRUCTURE RETRY] Go vulnerability database is unavailable through $($Database.Name) (attempt $Attempt/$Attempts); retrying through $($NextDatabase.Name) in $DelaySeconds seconds." -ForegroundColor Yellow
+            Start-Sleep -Seconds $DelaySeconds
+            continue
+        }
+
+        throw "[NETWORK/INFRASTRUCTURE SKIP] govulncheck could not reach the Go vulnerability database through its canonical and Google storage endpoints after $Attempts attempts. Vulnerability status is UNKNOWN; RELEASE gate remains FAILED. Allow HTTPS/443 access to vuln.go.dev and storage.googleapis.com and retry."
+    }
+}
+
 function Get-VersionLine {
     param([string]$Command, [string[]]$Arguments)
     $Executable = Get-Command $Command -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -147,6 +266,18 @@ function Test-WindowsTooling {
         $Failures++
     }
     if ((ConvertFrom-StaticcheckVersionLine "staticcheck.exe 2026.1 (v0.7.0)") -ne "2026.1") {
+        $Failures++
+    }
+    if (-not (Test-GovulncheckNetworkFailure "fetching vulnerabilities: read tcp: wsarecv")) {
+        $Failures++
+    }
+    if (Test-GovulncheckNetworkFailure "Vulnerability #1: GO-TEST-0001; see https://vuln.go.dev/ID/GO-TEST-0001.json") {
+        $Failures++
+    }
+    $SensitiveProbe = Join-Path $Root "private-project"
+    $UnsafeProbe = $SensitiveProbe + " ghp_" + ("A" * 36)
+    $SafeProbe = ConvertTo-SafeGovulncheckOutput $UnsafeProbe
+    if ($SafeProbe -match [Regex]::Escape($SensitiveProbe) -or $SafeProbe -match "ghp_A") {
         $Failures++
     }
     if ($Failures -ne 0) {
@@ -350,7 +481,7 @@ function Test-Release {
         Invoke-Checked "go" @("test", "-count=1", "./...") 900
         Invoke-Checked "go" @("vet", "./...") 600
         Invoke-Checked "staticcheck" @("./...") 900
-        Invoke-Checked "govulncheck" @("./...") 900
+        Invoke-Govulncheck
         Invoke-Checked $AuditPython @("-B", "-m", "unittest", "discover", "-s", "tools", "-p", "test_*.py") 600
         Invoke-Checked (Join-Path $AuditEnv "Scripts\ruff.exe") @("check", "--no-cache", ".") 300
         Invoke-Checked (Join-Path $AuditEnv "Scripts\ruff.exe") @("format", "--check", "--no-cache", ".") 300
