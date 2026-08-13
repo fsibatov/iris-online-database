@@ -345,24 +345,24 @@ function Get-StaticcheckVersion {
 }
 
 function Test-WindowsTooling {
-    $Failures = 0
+    $FailedProbes = New-Object System.Collections.Generic.List[string]
     if ((Get-VersionLine "cmd.exe" @("/d", "/c", "echo", "iris-native-probe")) -ne "iris-native-probe") {
-        $Failures++
+        $FailedProbes.Add("CMD_VERSION")
     }
     if ((ConvertFrom-StaticcheckVersionLine "staticcheck.exe 2026.1 (v0.7.0)") -ne "2026.1") {
-        $Failures++
+        $FailedProbes.Add("STATICCHECK_VERSION_PARSE")
     }
     if (-not (Test-GovulncheckNetworkFailure "fetching vulnerabilities: read tcp: wsarecv")) {
-        $Failures++
+        $FailedProbes.Add("NETWORK_CLASSIFICATION")
     }
     if (Test-GovulncheckNetworkFailure "Vulnerability #1: GO-TEST-0001; see https://vuln.go.dev/ID/GO-TEST-0001.json") {
-        $Failures++
+        $FailedProbes.Add("VULNERABILITY_CLASSIFICATION")
     }
     $SensitiveProbe = Join-Path $Root "private-project"
     $UnsafeProbe = $SensitiveProbe + " ghp_" + ("A" * 36)
     $SafeProbe = ConvertTo-SafeToolOutput $UnsafeProbe
     if ($SafeProbe -match [Regex]::Escape($SensitiveProbe) -or $SafeProbe -match "ghp_A") {
-        $Failures++
+        $FailedProbes.Add("OUTPUT_REDACTION")
     }
     try {
         $CmdExecutable = (Get-Command "cmd.exe" -CommandType Application -ErrorAction Stop).Source
@@ -372,7 +372,7 @@ function Test-WindowsTooling {
             -WorkingDirectory $Root `
             -TimeoutSeconds 30
         if ($SuccessProbe.TimedOut -or $SuccessProbe.ExitCode -ne 0 -or $SuccessProbe.Stdout -notmatch "No vulnerabilities found\.") {
-            $Failures++
+            $FailedProbes.Add("CAPTURE_SUCCESS")
         }
         $FailureProbe = Invoke-CapturedNativeProcess `
             -File $CmdExecutable `
@@ -380,12 +380,12 @@ function Test-WindowsTooling {
             -WorkingDirectory $Root `
             -TimeoutSeconds 30
         if ($FailureProbe.TimedOut -or $FailureProbe.ExitCode -ne 7) {
-            $Failures++
+            $FailedProbes.Add("CAPTURE_EXIT_CODE")
         }
         try {
             Invoke-Checked $CmdExecutable @("/d", "/c", "exit", "/b", "0") 30
         } catch {
-            $Failures++
+            $FailedProbes.Add("CHECKED_SUCCESS")
         }
         $CheckedFailureDetected = $false
         try {
@@ -394,23 +394,27 @@ function Test-WindowsTooling {
             $CheckedFailureDetected = $_.Exception.Message -eq "Required tool failed with exit code 7."
         }
         if (-not $CheckedFailureDetected) {
-            $Failures++
+            $FailedProbes.Add("CHECKED_FAILURE")
         }
-        $PythonExecutable = (Get-Command "python" -CommandType Application -ErrorAction Stop).Source
+        $PythonExecutable = if (Test-Path -LiteralPath $AuditPython -PathType Leaf) {
+            $AuditPython
+        } else {
+            (Get-Command "python" -CommandType Application -ErrorAction Stop).Source
+        }
         $EncodingProbe = Invoke-CapturedNativeProcess `
             -File $PythonExecutable `
-            -Arguments @("-c", "print('\u044f')") `
+            -Arguments @("-c", "import sys;sys.stdout.buffer.write(bytes.fromhex('d18f0a'))") `
             -WorkingDirectory $Root `
             -TimeoutSeconds 30
         if ($EncodingProbe.TimedOut -or $EncodingProbe.ExitCode -ne 0 -or
             $EncodingProbe.Stdout.Trim() -ne [string][char]0x044F) {
-            $Failures++
+            $FailedProbes.Add("UTF8_CAPTURE")
         }
     } catch {
-        $Failures++
+        $FailedProbes.Add("NATIVE_RUNNER_EXCEPTION")
     }
-    if ($Failures -ne 0) {
-        throw "Windows tooling self-test: FAIL [TOOL_PROBE] count=$Failures"
+    if ($FailedProbes.Count -ne 0) {
+        throw "Windows tooling self-test: FAIL [TOOL_PROBE] count=$($FailedProbes.Count) categories=$($FailedProbes -join ',')"
     }
     Write-Host "Windows tooling self-test: PASS" -ForegroundColor Green
 }

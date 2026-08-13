@@ -284,8 +284,13 @@ class ReleaseHelperTests(unittest.TestCase):
             'Invoke-Checked $CmdExecutable @("/d", "/c", "exit", "/b", "7") 30',
             script,
         )
-        self.assertIn('-Arguments @("-c", "print(\'\\u044f\')")', script)
+        self.assertIn(
+            '-Arguments @("-c", "import sys;sys.stdout.buffer.write(bytes.fromhex(\'d18f0a\'))")',
+            script,
+        )
         self.assertIn("[string][char]0x044F", script)
+        self.assertIn('$FailedProbes.Add("UTF8_CAPTURE")', script)
+        self.assertIn("categories=$($FailedProbes -join ',')", script)
         self.assertNotIn("Write-Host $StdoutText.TrimEnd()", script)
         self.assertNotIn("Write-Host $StderrText.TrimEnd()", script)
         self.assertIn("fetching vulnerabilities: read tcp: wsarecv", script)
