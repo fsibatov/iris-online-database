@@ -252,19 +252,50 @@ jobs:
             Remove-Item -LiteralPath $testTemp -Recurse -Force -ErrorAction SilentlyContinue
           }
           if ($goTestExitCode -ne 0) { exit $goTestExitCode }
-      - name: Build production desktop executable
+      - name: Build production desktop executables (x64, x86, arm64)
         shell: pwsh
         run: |
           $version = (Get-Content VERSION -Raw).Trim()
           $head = (git rev-parse HEAD).Trim()
-          & "$env:RUNNER_TEMP\go-tools\wails.exe" build -platform windows/amd64 -webview2 embed -trimpath -clean -skipbindings -s -nosyncgomod -m -o IrisOnlineDatabase.exe -ldflags "-buildid= -X main.appVersion=$version -X main.releaseMarker=IrisOnlineRelease/$version/$head"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $artifact = Join-Path $env:RUNNER_TEMP "iris-online-database-$version-windows-amd64.exe"
-          Copy-Item build\bin\IrisOnlineDatabase.exe $artifact
-          Remove-Item build\bin, build\generated, web\wailsjs -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item build\appicon.png -Force -ErrorAction SilentlyContinue
-          python -B tools/verify_executables.py --directory $env:RUNNER_TEMP --version $version
-          python -B tools/verify_windows_resources.py --directory $env:RUNNER_TEMP --version $version
+          $artifactDir = Join-Path $env:RUNNER_TEMP "iris-release-multiarch"
+          Remove-Item -LiteralPath $artifactDir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+          $targets = @(
+            [pscustomobject]@{ Platform = "windows/amd64"; Suffix = "x64"; LevelName = "GOAMD64"; LevelValue = "v1" },
+            [pscustomobject]@{ Platform = "windows/386"; Suffix = "x86"; LevelName = "GO386"; LevelValue = "sse2" },
+            [pscustomobject]@{ Platform = "windows/arm64"; Suffix = "arm64"; LevelName = "GOARM64"; LevelValue = "v8.0" }
+          )
+          $environmentNames = @("CGO_ENABLED", "GOAMD64", "GO386", "GOARM64")
+          $savedEnvironment = @{}
+          foreach ($name in $environmentNames) {
+            $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+          }
+          try {
+            foreach ($target in $targets) {
+              Remove-Item Env:\GOAMD64 -ErrorAction SilentlyContinue
+              Remove-Item Env:\GO386 -ErrorAction SilentlyContinue
+              Remove-Item Env:\GOARM64 -ErrorAction SilentlyContinue
+              $env:CGO_ENABLED = "0"
+              Set-Item -Path "Env:$($target.LevelName)" -Value $target.LevelValue
+              & "$env:RUNNER_TEMP\go-tools\wails.exe" build -platform $target.Platform -webview2 embed -trimpath -clean -skipbindings -s -nosyncgomod -m -o IrisOnlineDatabase.exe -ldflags "-buildid= -X main.appVersion=$version -X main.releaseMarker=IrisOnlineRelease/$version/$head"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $artifact = Join-Path $artifactDir "IrisOnlineDB-$version-Windows-$($target.Suffix).exe"
+              Copy-Item build\bin\IrisOnlineDatabase.exe $artifact -Force
+            }
+          } finally {
+            foreach ($name in $environmentNames) {
+              $value = $savedEnvironment[$name]
+              if ($null -eq $value) {
+                Remove-Item -Path "Env:$name" -ErrorAction SilentlyContinue
+              } else {
+                Set-Item -Path "Env:$name" -Value $value
+              }
+            }
+            Remove-Item build\bin, build\generated, web\wailsjs -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item build\appicon.png -Force -ErrorAction SilentlyContinue
+          }
+          python -B tools/verify_executables.py --directory $artifactDir --version $version
+          python -B tools/verify_windows_resources.py --directory $artifactDir --version $version
       - name: Source tree remains clean
         shell: pwsh
         run: |

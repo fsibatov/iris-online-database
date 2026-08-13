@@ -62,6 +62,9 @@ POST_META_SELECTORS = (
     'meta[name="twitter:description"]',
     'meta[name="description"]',
 )
+CHARSET_PATTERN = re.compile(
+    r"charset\s*=\s*[\\'\"]?([A-Za-z0-9._-]+)", re.IGNORECASE
+)
 
 
 def normalize_text(value: str) -> str:
@@ -232,6 +235,44 @@ def _post_id_from_page(page) -> int:
     return latest_post_id(values)
 
 
+def _decode_http_body(payload: bytes, headers: dict[str, str] | None = None) -> str:
+    """Decode an HTML response without assuming that VK always returns UTF-8."""
+
+    if not payload:
+        return ""
+
+    declared: list[str] = []
+    for key, value in (headers or {}).items():
+        if str(key).lower() != "content-type":
+            continue
+        match = CHARSET_PATTERN.search(str(value))
+        if match:
+            declared.append(match.group(1))
+
+    # HTML charset declarations are ASCII-compatible even when the document body
+    # itself is Windows-1251, so inspecting a small prefix is safe.
+    prefix = payload[:8192].decode("ascii", errors="ignore")
+    for match in CHARSET_PATTERN.finditer(prefix):
+        declared.append(match.group(1))
+
+    candidates = [*declared, "utf-8", "windows-1251"]
+    seen: set[str] = set()
+    for encoding in candidates:
+        normalized = encoding.strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        try:
+            return payload.decode(normalized)
+        except (LookupError, UnicodeDecodeError):
+            continue
+
+    # Never let an unexpected upstream encoding turn the scheduled updater into
+    # a traceback. Replacement characters are preferable to discarding the LKG
+    # update path entirely; downstream parsing still validates the extracted post.
+    return payload.decode("utf-8", errors="replace")
+
+
 def _request_html(context, url: str) -> tuple[str, str]:
     response = None
     try:
@@ -248,7 +289,7 @@ def _request_html(context, url: str) -> tuple[str, str]:
         )
         if response.status >= 400:
             return "", f"HTTP {response.status}"
-        return response.text(), ""
+        return _decode_http_body(response.body(), response.headers), ""
     except PlaywrightError as exc:
         return "", _error_summary(exc)
     finally:

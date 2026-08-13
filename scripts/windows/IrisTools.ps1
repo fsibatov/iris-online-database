@@ -673,28 +673,67 @@ function Build-Release {
         if ($OutputFull.StartsWith($Root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Release output must be outside the source tree." }
         New-Item -ItemType Directory -Force -Path $OutputFull | Out-Null
         $Head = (& git rev-parse HEAD).Trim()
+        $Targets = @(
+            [pscustomobject]@{ Platform = "windows/amd64"; Suffix = "x64"; LevelName = "GOAMD64"; LevelValue = "v1" },
+            [pscustomobject]@{ Platform = "windows/386"; Suffix = "x86"; LevelName = "GO386"; LevelValue = "sse2" },
+            [pscustomobject]@{ Platform = "windows/arm64"; Suffix = "arm64"; LevelName = "GOARM64"; LevelValue = "v8.0" }
+        )
+        $EnvironmentNames = @("CGO_ENABLED", "GOAMD64", "GO386", "GOARM64")
+        $SavedEnvironment = @{}
+        foreach ($Name in $EnvironmentNames) {
+            $SavedEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, "Process")
+        }
+        $Artifacts = @()
+        foreach ($Target in $Targets) {
+            $Artifact = Join-Path $OutputFull "IrisOnlineDB-$Version-Windows-$($Target.Suffix).exe"
+            $Artifacts += $Artifact
+            Remove-Item -LiteralPath $Artifact -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath (Join-Path $OutputFull "SHA256SUMS.txt") -Force -ErrorAction SilentlyContinue
         Clear-BuildGenerated
         try {
-            $PreviousCgoEnabled = $env:CGO_ENABLED
-            try {
+            foreach ($Target in $Targets) {
+                Remove-Item Env:\GOAMD64 -ErrorAction SilentlyContinue
+                Remove-Item Env:\GO386 -ErrorAction SilentlyContinue
+                Remove-Item Env:\GOARM64 -ErrorAction SilentlyContinue
                 $env:CGO_ENABLED = "0"
-                Invoke-Checked "wails" @("build", "-platform", "windows/amd64", "-webview2", "embed", "-trimpath", "-clean", "-skipbindings", "-s", "-nosyncgomod", "-m", "-o", "IrisOnlineDatabase.exe", "-ldflags", "-buildid= -X main.appVersion=$Version -X main.releaseMarker=IrisOnlineRelease/$Version/$Head") 1200
-            } finally {
-                if ($null -eq $PreviousCgoEnabled) {
-                    Remove-Item Env:\CGO_ENABLED -ErrorAction SilentlyContinue
+                Set-Item -Path "Env:$($Target.LevelName)" -Value $Target.LevelValue
+                Invoke-Checked "wails" @(
+                    "build",
+                    "-platform", $Target.Platform,
+                    "-webview2", "embed",
+                    "-trimpath",
+                    "-clean",
+                    "-skipbindings",
+                    "-s",
+                    "-nosyncgomod",
+                    "-m",
+                    "-o", "IrisOnlineDatabase.exe",
+                    "-ldflags", "-buildid= -X main.appVersion=$Version -X main.releaseMarker=IrisOnlineRelease/$Version/$Head"
+                ) 1200
+                $Artifact = Join-Path $OutputFull "IrisOnlineDB-$Version-Windows-$($Target.Suffix).exe"
+                Copy-Item -LiteralPath (Join-Path $Root "build\bin\IrisOnlineDatabase.exe") -Destination $Artifact -Force
+            }
+        } finally {
+            foreach ($Name in $EnvironmentNames) {
+                $Value = $SavedEnvironment[$Name]
+                if ($null -eq $Value) {
+                    Remove-Item -Path "Env:$Name" -ErrorAction SilentlyContinue
                 } else {
-                    $env:CGO_ENABLED = $PreviousCgoEnabled
+                    Set-Item -Path "Env:$Name" -Value $Value
                 }
             }
-            $Artifact = Join-Path $OutputFull "iris-online-database-$Version-windows-amd64.exe"
-            Copy-Item -LiteralPath (Join-Path $Root "build\bin\IrisOnlineDatabase.exe") -Destination $Artifact -Force
+            Clear-BuildGenerated
+        }
+        $ChecksumLines = foreach ($Artifact in $Artifacts) {
             $Hash = (Get-FileHash -LiteralPath $Artifact -Algorithm SHA256).Hash.ToLowerInvariant()
-            Set-Content -LiteralPath (Join-Path $OutputFull "SHA256SUMS.txt") -Value "$Hash  $(Split-Path $Artifact -Leaf)" -Encoding ASCII
-        } finally { Clear-BuildGenerated }
+            "$Hash  $(Split-Path $Artifact -Leaf)"
+        }
+        Set-Content -LiteralPath (Join-Path $OutputFull "SHA256SUMS.txt") -Value $ChecksumLines -Encoding ASCII
         Assert-CleanTree
         Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version) 120
         Invoke-Checked $AuditPython @("-B", "tools/verify_windows_resources.py", "--directory", $OutputFull, "--version", $Version) 120
-        Write-Host "Release build: PASS" -ForegroundColor Green
+        Write-Host "Release build: PASS (Windows x64, x86, arm64)" -ForegroundColor Green
         Write-Host $OutputFull
     } finally { Pop-Location }
 }
@@ -737,19 +776,41 @@ function Create-Release {
             }
         }
         if (-not $OutputDirectory) { $script:OutputDirectory = Join-Path (Split-Path $Root -Parent) "iris-online-database-release-$Version" }
-        $Artifact = Join-Path $OutputDirectory "iris-online-database-$Version-windows-amd64.exe"
-        $Checksums = Join-Path $OutputDirectory "SHA256SUMS.txt"
-        if (-not (Test-Path -LiteralPath $Artifact) -or -not (Test-Path -LiteralPath $Checksums)) { throw "Build the release artifacts first." }
-        $ChecksumLine = (Get-Content -LiteralPath $Checksums | Where-Object { $_ -match [Regex]::Escape((Split-Path $Artifact -Leaf)) } | Select-Object -First 1)
-        if (-not $ChecksumLine) { throw "Release checksum entry is missing." }
-        $ExpectedHash = ($ChecksumLine -split "\s+")[0].ToLowerInvariant()
-        $ActualHash = (Get-FileHash -LiteralPath $Artifact -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($ExpectedHash -ne $ActualHash) { throw "Release artifact changed after verification." }
-        Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", ([IO.Path]::GetFullPath($OutputDirectory)), "--version", $Version) 120
-        Invoke-Checked $AuditPython @("-B", "tools/verify_windows_resources.py", "--directory", ([IO.Path]::GetFullPath($OutputDirectory)), "--version", $Version) 120
+        $OutputFull = [IO.Path]::GetFullPath($OutputDirectory)
+        $ArtifactNames = @(
+            "IrisOnlineDB-$Version-Windows-x64.exe",
+            "IrisOnlineDB-$Version-Windows-x86.exe",
+            "IrisOnlineDB-$Version-Windows-arm64.exe"
+        )
+        $Artifacts = @($ArtifactNames | ForEach-Object { Join-Path $OutputFull $_ })
+        $Checksums = Join-Path $OutputFull "SHA256SUMS.txt"
+        foreach ($Artifact in $Artifacts) {
+            if (-not (Test-Path -LiteralPath $Artifact -PathType Leaf)) { throw "Build all release executables first." }
+        }
+        if (-not (Test-Path -LiteralPath $Checksums -PathType Leaf)) { throw "Build SHA256SUMS.txt first." }
+        $ChecksumLines = @(Get-Content -LiteralPath $Checksums | Where-Object { $_.Trim() })
+        if ($ChecksumLines.Count -ne $Artifacts.Count) { throw "SHA256SUMS.txt must contain exactly three release executable entries." }
+        foreach ($Artifact in $Artifacts) {
+            $ArtifactName = Split-Path $Artifact -Leaf
+            $Pattern = "^([0-9a-fA-F]{64})  " + [Regex]::Escape($ArtifactName) + "$"
+            $MatchingLines = @($ChecksumLines | Where-Object { $_ -match $Pattern })
+            if ($MatchingLines.Count -ne 1) { throw "Release checksum entry is missing or duplicated: $ArtifactName" }
+            [void]($MatchingLines[0] -match $Pattern)
+            $ExpectedHash = $Matches[1].ToLowerInvariant()
+            $ActualHash = (Get-FileHash -LiteralPath $Artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($ExpectedHash -ne $ActualHash) { throw "Release artifact changed after verification: $ArtifactName" }
+        }
+        Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version) 120
+        Invoke-Checked $AuditPython @("-B", "tools/verify_windows_resources.py", "--directory", $OutputFull, "--version", $Version) 120
         Invoke-Checked "git" @("tag", "-s", "v$Version", "-m", "Iris Online Database $Version") 120
         Invoke-Checked "git" @("push", "origin", "v$Version") 300
-        Invoke-Checked "gh" @("release", "create", "v$Version", $Artifact, $Checksums, "--verify-tag", "--title", "Iris Online Database $Version", "--notes-file", "CHANGELOG.md") 600
+        $ReleaseArguments = @("release", "create", "v$Version") + $Artifacts + @(
+            $Checksums,
+            "--verify-tag",
+            "--title", "Iris Online Database $Version",
+            "--notes-file", "CHANGELOG.md"
+        )
+        Invoke-Checked "gh" $ReleaseArguments 600
         Write-Host "GitHub release v$Version created." -ForegroundColor Green
     } finally { Pop-Location }
 }
@@ -759,7 +820,7 @@ if ($Action -eq "Menu") {
     Write-Host "0 - Check tools"
     Write-Host "1 - Install/update tools"
     Write-Host "2 - Strict RELEASE gate"
-    Write-Host "3 - Build EXE and SHA256"
+    Write-Host "3 - Build 3 EXE and SHA256"
     Write-Host "4 - Push tested commit"
     Write-Host "5 - Create signed tag and GitHub release"
     $Choice = Read-Host "Select"

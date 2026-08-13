@@ -17,7 +17,13 @@ Iris Online Database — неофициальная локальная база 
 
 ## Запуск
 
-Поддерживаемая release-архитектура v2.0.0 — Windows 10/11 `amd64`. Запустите `iris-online-database-2.0.0-windows-amd64.exe` двойным щелчком.
+Релиз v2.0.0 содержит три Windows-сборки:
+
+- `IrisOnlineDB-2.0.0-Windows-x64.exe` — основной вариант для большинства ПК с 64-разрядной Windows на Intel/AMD;
+- `IrisOnlineDB-2.0.0-Windows-x86.exe` — для 32-разрядной Windows;
+- `IrisOnlineDB-2.0.0-Windows-arm64.exe` — для Windows on ARM.
+
+Установка не требуется: скачайте подходящий EXE и запустите его двойным щелчком. `SHA256SUMS.txt` содержит контрольные суммы всех трёх файлов.
 
 Нужен Microsoft Edge WebView2 Runtime. На актуальных Windows он обычно уже установлен. Release содержит небольшой официальный Evergreen Bootstrapper: если Runtime отсутствует или устарел, Wails покажет понятное системное сообщение и предложит установку. Полный Fixed Version Runtime в дистрибутив не включён.
 

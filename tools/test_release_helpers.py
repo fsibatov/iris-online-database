@@ -15,8 +15,13 @@ from pathlib import Path
 from frontend_smoke_test import playwright_failure_category
 from playwright.sync_api import Error as PlaywrightError
 from release_fingerprint import FingerprintError, assert_release_tree, source_hash
+from release_targets import RELEASE_TARGETS
 from repository_audit import python_mode_violation
-from verify_executables import EXPECTED_METADATA_MARKERS, missing_metadata_categories
+from verify_executables import (
+    EXPECTED_METADATA_MARKERS,
+    expected_metadata_markers,
+    missing_metadata_categories,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -86,17 +91,37 @@ class ReleaseHelperTests(unittest.TestCase):
         for marker in (
             "release_fingerprint.py --verify",
             "windows/amd64",
+            "windows/386",
+            "windows/arm64",
+            "IrisOnlineDB-$VERSION-Windows-x64.exe",
+            "IrisOnlineDB-$VERSION-Windows-x86.exe",
+            "IrisOnlineDB-$VERSION-Windows-arm64.exe",
             "-webview2 embed",
             "IrisOnlineDatabase.exe",
             "SHA256SUMS.txt",
         ):
             self.assertIn(marker, build)
+        self.assertEqual(
+            [(target.goarch, target.asset_suffix) for target in RELEASE_TARGETS],
+            [("amd64", "x64"), ("386", "x86"), ("arm64", "arm64")],
+        )
         self.assertIn("release_fingerprint.py --write", gate)
         self.assertIn("git status --porcelain", gate)
         self.assertIn("scripts\\windows\\IrisTools.ps1", launcher)
-        self.assertIn("CGO_ENABLED=0 wails build", build)
+        self.assertIn("CGO_ENABLED=0", build)
         self.assertIn('$env:CGO_ENABLED = "0"', windows)
-        self.assertIn("Remove-Item Env:\\CGO_ENABLED", windows)
+        self.assertIn(
+            '$EnvironmentNames = @("CGO_ENABLED", "GOAMD64", "GO386", "GOARM64")',
+            windows,
+        )
+        self.assertIn('Remove-Item -Path "Env:$Name"', windows)
+        for platform, suffix in (
+            ("windows/amd64", "x64"),
+            ("windows/386", "x86"),
+            ("windows/arm64", "arm64"),
+        ):
+            self.assertIn(platform, windows)
+            self.assertIn(f'Windows-{suffix}.exe"', windows)
 
     def test_optional_test_launcher_is_kept_outside_source(self):
         self.assertFalse((ROOT / "01_TEST.bat").exists())
@@ -126,6 +151,24 @@ class ReleaseHelperTests(unittest.TestCase):
         categories = missing_metadata_categories(cgo_enabled)
         self.assertEqual(categories, ["CGO_DISABLED"])
         self.assertNotIn("CGO_ENABLED=1", " ".join(categories))
+
+    def test_release_metadata_matrix_has_exact_architecture_markers(self):
+        expected_levels = {
+            "amd64": "GOAMD64=v1",
+            "386": "GO386=sse2",
+            "arm64": "GOARM64=v8.0",
+        }
+        for target in RELEASE_TARGETS:
+            with self.subTest(goarch=target.goarch):
+                markers = dict(expected_metadata_markers(target.goarch))
+                self.assertEqual(markers["TARGET_ARCH"], f"GOARCH={target.goarch}")
+                self.assertEqual(
+                    markers["TARGET_LEVEL"], expected_levels[target.goarch]
+                )
+                metadata = "\n".join(markers.values())
+                self.assertEqual(
+                    missing_metadata_categories(metadata, target.goarch), []
+                )
 
     def test_fingerprint_hashes_git_mode_and_rejects_dirty_source(self):
         with tempfile.TemporaryDirectory(
@@ -277,6 +320,16 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("$env:TEMP = $testTemp", workflow)
         self.assertIn("$env:TMP = $testTemp", workflow)
         self.assertIn("Remove-Item -LiteralPath $testTemp", workflow)
+        for platform, suffix in (
+            ("windows/amd64", "x64"),
+            ("windows/386", "x86"),
+            ("windows/arm64", "arm64"),
+        ):
+            self.assertIn(platform, workflow)
+            self.assertIn(f'Suffix = "{suffix}"', workflow)
+        self.assertIn('IrisOnlineDB-$version-Windows-$($target.Suffix).exe', workflow)
+        self.assertIn("verify_executables.py --directory $artifactDir", workflow)
+        self.assertIn("verify_windows_resources.py --directory $artifactDir", workflow)
 
     def test_windows_govulncheck_retries_and_fails_closed_on_network(self):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
@@ -349,6 +402,13 @@ class ReleaseHelperTests(unittest.TestCase):
             "https://vuln.go.dev/ID/GO-TEST-0001.json",
             script,
         )
+
+    def test_repository_audit_diagnostics_are_structured_not_opaque(self):
+        source = AUDIT.read_text(encoding="utf-8")
+        self.assertNotIn('print("FAIL: [redacted]")', source)
+        self.assertIn("CATEGORY_MESSAGES", source)
+        self.assertIn("finding.category", source)
+        self.assertIn("count=", source)
 
     def test_repository_audit_reports_exact_categories_without_payloads(self):
         sensitive_path = "/" + "home/" + "private-user/work/project"

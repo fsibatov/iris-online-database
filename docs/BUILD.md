@@ -2,7 +2,7 @@
 
 ## Закреплённые зависимости
 
-- Windows 10/11 amd64;
+- Windows 10/11 для запуска release tooling; публикуемые цели: x64 (`amd64`), x86 (`386`) и ARM64 (`arm64`);
 - Go 1.26.5 — единственный pin находится в `.go-version`;
 - Wails CLI 2.14.0;
 - Git, Python 3.13 и Node.js 24;
@@ -38,7 +38,7 @@ scripts/release-gate.sh
 scripts/build-release.sh /absolute/path/outside/source
 ```
 
-Release build Wails Windows amd64 явно устанавливает `CGO_ENABLED=0` и восстанавливает исходное process environment после сборки. Поэтому native Windows и Linux cross-build имеют одинаковый pure-Go WebView2 loader и проверяемые build metadata. `go test -race` исполняется на Linux, где race detector поддержан и не требует менять Windows release binary.
+Release build Wails последовательно собирает Windows x64 (`windows/amd64`, `GOAMD64=v1`), x86 (`windows/386`, `GO386=sse2`) и ARM64 (`windows/arm64`, `GOARM64=v8.0`). Для каждой цели явно устанавливается `CGO_ENABLED=0`, а исходное process environment восстанавливается после сборки. Каждый EXE проходит отдельную проверку Go/Wails metadata, PE architecture, ресурсов и hardening flags. `go test -race` исполняется на Linux и не меняет release binaries.
 
 ## Обязательные проверки
 

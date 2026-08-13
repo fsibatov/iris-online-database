@@ -35,6 +35,25 @@ class VKNewsUpdaterTests(unittest.TestCase):
         self.assertIn('meta[property="og:description"]', module.POST_META_SELECTORS)
         self.assertIn('meta[name="twitter:description"]', module.POST_META_SELECTORS)
 
+    def test_http_body_decoder_handles_windows_1251_without_charset_header(self):
+        raw = '<html><body>Актуальная запись ВКонтакте</body></html>'.encode(
+            "windows-1251"
+        )
+        decoded = module._decode_http_body(raw, {"content-type": "text/html"})
+        self.assertIn("Актуальная запись ВКонтакте", decoded)
+
+    def test_http_body_decoder_honours_declared_windows_1251_charset(self):
+        raw = '<meta charset="windows-1251"><p>А</p>'.encode("windows-1251")
+        decoded = module._decode_http_body(
+            raw, {"Content-Type": "text/html; charset=windows-1251"}
+        )
+        self.assertEqual(decoded, '<meta charset="windows-1251"><p>А</p>')
+
+    def test_vk_request_uses_raw_body_instead_of_playwright_utf8_text(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("response.body()", source)
+        self.assertNotIn("return response.text(),", source)
+
     def test_metadata_from_html_extracts_preview_and_timestamp(self):
         raw = (
             "<html><head>"

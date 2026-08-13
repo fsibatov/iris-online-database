@@ -6,12 +6,11 @@ import argparse
 import pathlib
 import struct
 
-AMD64 = 0x8664
-PE32_PLUS = 0x20B
+from release_targets import RELEASE_TARGETS
+
 WINDOWS_GUI = 2
 EXPECTED_RESOURCE_TYPES = {3, 14, 16, 24}
 REQUIRED_DLL_CHARACTERISTICS = {
-    0x0020: "High Entropy VA",
     0x0040: "ASLR",
     0x0100: "NX/DEP",
     0x8000: "Terminal Server aware",
@@ -137,53 +136,82 @@ def decode_manifest(payload: bytes) -> str:
     raise ValueError("manifest is not valid Unicode")
 
 
+def verify_target(path: pathlib.Path, version: str, target) -> None:
+    machine, sections, data, timestamp, magic, packed_flags = parse_pe(path)
+    subsystem = packed_flags & 0xFFFF
+    dll_characteristics = packed_flags >> 16
+    if (
+        machine != target.pe_machine
+        or magic != target.pe_magic
+        or subsystem != WINDOWS_GUI
+    ):
+        raise SystemExit(
+            f"release executable has an unexpected PE target ({target.goarch})"
+        )
+    if timestamp != 0:
+        raise SystemExit(
+            f"COFF timestamp prevents deterministic release output ({target.goarch})"
+        )
+    if ".rsrc" not in sections or sections[".rsrc"][2] == 0:
+        raise SystemExit(f"Windows resource section is missing ({target.goarch})")
+
+    required_flags = dict(REQUIRED_DLL_CHARACTERISTICS)
+    if target.require_high_entropy_va:
+        required_flags[0x0020] = "High Entropy VA"
+    missing_flags = [
+        label
+        for flag, label in required_flags.items()
+        if dll_characteristics & flag == 0
+    ]
+    if missing_flags:
+        raise SystemExit(
+            f"required PE hardening flags are missing ({target.goarch}): "
+            + ",".join(missing_flags)
+        )
+    missing_types = EXPECTED_RESOURCE_TYPES - resource_type_ids(path)
+    if missing_types:
+        raise SystemExit(
+            f"required Windows resource types are missing ({target.goarch})"
+        )
+    if len(resource_payloads(path, 14)) != 1:
+        raise SystemExit(f"application icon group is missing ({target.goarch})")
+    manifests = resource_payloads(path, 24)
+    if len(manifests) != 1:
+        raise SystemExit(f"application manifest is missing ({target.goarch})")
+    manifest = decode_manifest(manifests[0])
+    lowered_manifest = manifest.lower()
+    for marker in ("permonitorv2", "asinvoker", "longpathaware"):
+        if marker not in lowered_manifest:
+            raise SystemExit(f"application manifest is incomplete ({target.goarch})")
+    for marker in (
+        "Iris Online Database".encode("utf-16le"),
+        version.encode("utf-16le"),
+    ):
+        if marker not in data:
+            raise SystemExit(
+                f"Windows version metadata is incomplete ({target.goarch})"
+            )
+
+    hardening = ["ASLR", "NX", "Terminal Server aware"]
+    if target.require_high_entropy_va:
+        hardening.insert(2, "High Entropy VA")
+    print(
+        f"{path.name}: PE/resources PASS "
+        f"({target.goarch}, GUI, {', '.join(hardening)}, icon, version, PerMonitorV2)"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", required=True, type=pathlib.Path)
     parser.add_argument("--version", required=True)
     args = parser.parse_args()
-    path = args.directory / f"iris-online-database-{args.version}-windows-amd64.exe"
-    if not path.is_file():
-        raise SystemExit("release executable is missing")
-    machine, sections, data, timestamp, magic, packed_flags = parse_pe(path)
-    subsystem = packed_flags & 0xFFFF
-    dll_characteristics = packed_flags >> 16
-    if machine != AMD64 or magic != PE32_PLUS or subsystem != WINDOWS_GUI:
-        raise SystemExit("release executable has an unexpected PE target")
-    if timestamp != 0:
-        raise SystemExit("COFF timestamp prevents deterministic release output")
-    if ".rsrc" not in sections or sections[".rsrc"][2] == 0:
-        raise SystemExit("Windows resource section is missing")
-    missing_flags = [
-        label
-        for flag, label in REQUIRED_DLL_CHARACTERISTICS.items()
-        if dll_characteristics & flag == 0
-    ]
-    if missing_flags:
-        raise SystemExit("required PE hardening flags are missing")
-    missing_types = EXPECTED_RESOURCE_TYPES - resource_type_ids(path)
-    if missing_types:
-        raise SystemExit("required Windows resource types are missing")
-    if len(resource_payloads(path, 14)) != 1:
-        raise SystemExit("application icon group is missing")
-    manifests = resource_payloads(path, 24)
-    if len(manifests) != 1:
-        raise SystemExit("application manifest is missing")
-    manifest = decode_manifest(manifests[0])
-    lowered_manifest = manifest.lower()
-    for marker in ("permonitorv2", "asinvoker", "longpathaware"):
-        if marker not in lowered_manifest:
-            raise SystemExit("application manifest is incomplete")
-    for marker in (
-        "Iris Online Database".encode("utf-16le"),
-        args.version.encode("utf-16le"),
-    ):
-        if marker not in data:
-            raise SystemExit("Windows version metadata is incomplete")
-    print(
-        f"{path.name}: PE/resources PASS "
-        "(amd64, GUI, ASLR, NX, High Entropy VA, icon, version, PerMonitorV2)"
-    )
+
+    for target in RELEASE_TARGETS:
+        path = args.directory / target.filename(args.version)
+        if not path.is_file():
+            raise SystemExit(f"release executable is missing: {path.name}")
+        verify_target(path, args.version, target)
 
 
 if __name__ == "__main__":
