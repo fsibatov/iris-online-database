@@ -1,0 +1,21 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "iris-online-database",
+  "outputfilename": "IrisOnlineDatabase",
+  "frontend:dir": "web",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "wailsjsdir": "build/generated",
+  "build:dir": "build",
+  "author": {
+    "name": "Хоуп (The Original)"
+  },
+  "info": {
+    "companyName": "Iris Online Database",
+    "productName": "Iris Online Database",
+    "productVersion": "2.0.0",
+    "copyright": "Copyright © 2026 Iris Online Database",
+    "comments": "Неофициальная локальная база данных Iris Online"
+  }
+}

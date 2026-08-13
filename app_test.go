@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,8 +19,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -664,51 +661,6 @@ func TestResponseCacheBoundedAndExpires(t *testing.T) {
 	}
 }
 
-func TestSessionShutdownGrace(t *testing.T) {
-	sessions := newSessionManager()
-	id := sessions.Open("")
-	sessions.Close(id)
-	if sessions.ShouldShutdown(time.Now()) {
-		t.Fatal("shutdown triggered before grace period")
-	}
-	if !sessions.ShouldShutdown(time.Now().Add(sessionShutdownGrace + time.Second)) {
-		t.Fatal("shutdown did not trigger after grace period")
-	}
-}
-
-func TestExpiredHeartbeatOnlyStopsExplicitIdleMode(t *testing.T) {
-	sessions := newSessionManager(time.Millisecond)
-	id := sessions.Open("")
-	now := time.Now()
-	sessions.mu.Lock()
-	sessions.sessions[id] = now.Add(-sessionHeartbeatTimeout - time.Second)
-	sessions.mu.Unlock()
-	if sessions.ShouldShutdown(now.Add(time.Second)) {
-		t.Fatal("normal browser mode would treat a suspended tab as closed")
-	}
-	if !sessions.ShouldShutdown(now.Add(time.Second+2*time.Millisecond), true) {
-		t.Fatal("explicit idle mode did not stop after heartbeat expiry and grace")
-	}
-	sessions.mu.Lock()
-	count := len(sessions.sessions)
-	sessions.mu.Unlock()
-	if count != 0 {
-		t.Fatalf("expired session was not removed: %d", count)
-	}
-}
-
-func TestExplicitCloseAfterHeartbeatLeaseStillAllowsShutdown(t *testing.T) {
-	sessions := newSessionManager(time.Millisecond, 10*time.Millisecond)
-	id := sessions.Open("")
-	sessions.mu.Lock()
-	sessions.sessions[id] = time.Now().Add(-time.Second)
-	sessions.mu.Unlock()
-	sessions.Close(id)
-	if !sessions.ShouldShutdown(time.Now().Add(10 * time.Millisecond)) {
-		t.Fatal("explicit close of a suspended tab did not allow shutdown")
-	}
-}
-
 func TestCorruptProfileFallsBackToBackup(t *testing.T) {
 	dir := t.TempDir()
 	paths := appPaths{Profile: filepath.Join(dir, "UserData", "profile.json"), Backups: filepath.Join(dir, "UserData", "Backups")}
@@ -980,8 +932,8 @@ func TestSecurityHeadersRejectForeignHost(t *testing.T) {
 
 func TestSecurityHeadersSetStrictBrowserProtections(t *testing.T) {
 	handler := withSecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
-	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8765/", nil)
-	request.Host = "127.0.0.1:8765"
+	request := httptest.NewRequest(http.MethodGet, "http://wails.localhost/", nil)
+	request.Host = "wails.localhost"
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNoContent {
@@ -1004,8 +956,8 @@ func TestSecurityHeadersSetStrictBrowserProtections(t *testing.T) {
 func TestSecurityHeadersRejectCrossSiteWrite(t *testing.T) {
 	called := false
 	handler := withSecurityHeaders(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8765/api/session/open", strings.NewReader(`{"id":""}`))
-	request.Host = "127.0.0.1:8765"
+	request := httptest.NewRequest(http.MethodPost, "http://wails.localhost/api/user-data", strings.NewReader(`{"schemaVersion":1}`))
+	request.Host = "wails.localhost"
 	request.Header.Set("Origin", "https://example.test")
 	request.Header.Set("Sec-Fetch-Site", "cross-site")
 	recorder := httptest.NewRecorder()
@@ -1036,19 +988,6 @@ func TestJSONDecoderRequiresApplicationJSONAndSingleValue(t *testing.T) {
 				t.Fatalf("status=%d want=%d", recorder.Code, testCase.status)
 			}
 		})
-	}
-}
-
-func TestSessionManagerIsBounded(t *testing.T) {
-	sessions := newSessionManager()
-	for i := 0; i < maxSessionCount+50; i++ {
-		sessions.Open(fmt.Sprintf("session-%016d", i))
-	}
-	sessions.mu.Lock()
-	count := len(sessions.sessions)
-	sessions.mu.Unlock()
-	if count != maxSessionCount {
-		t.Fatalf("session count=%d want=%d", count, maxSessionCount)
 	}
 }
 
@@ -1226,22 +1165,6 @@ func TestDropInterfaceIsConciseAndOpensSlotsToGroupLevel(t *testing.T) {
 	}
 	if !strings.Contains(script, "Список загрузится после открытия раздела.") {
 		t.Fatal("monster drop accordion is not lazy")
-	}
-}
-
-func TestFrontendRecoversHeartbeat(t *testing.T) {
-	data, err := os.ReadFile("web/app.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := string(data)
-	for _, expected := range []string{"setTimeout(openApplicationSession, 2000)", "visibilitychange", "openApplicationSession()"} {
-		if !strings.Contains(script, expected) {
-			t.Fatalf("heartbeat recovery marker is missing: %s", expected)
-		}
-	}
-	if strings.Contains(script, "catch (_) { clearInterval(heartbeatTimer); }") {
-		t.Fatal("heartbeat still stops permanently after a transient error")
 	}
 }
 
@@ -1724,171 +1647,6 @@ func TestCatalogSearchUsesPartialRefreshAndListDefault(t *testing.T) {
 	}
 }
 
-func startLifecycleMonitor(t *testing.T, startupTimeout, grace time.Duration, autoExit bool) (*application, context.CancelFunc, *bytes.Buffer) {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	var logs bytes.Buffer
-	app := &application{
-		ctx:            ctx,
-		cancel:         cancel,
-		logger:         log.New(&logs, "", 0),
-		sessions:       newSessionManager(grace),
-		autoExit:       autoExit,
-		startupTimeout: startupTimeout,
-	}
-	app.wg.Add(1)
-	go app.monitorSessions()
-	return app, cancel, &logs
-}
-
-func waitGroupWithTimeout(t *testing.T, wg *sync.WaitGroup, timeout time.Duration) {
-	t.Helper()
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Fatal("background task did not stop")
-	}
-}
-
-func TestStartupTimeoutStopsApplicationWithoutFirstSession(t *testing.T) {
-	app, cancel, _ := startLifecycleMonitor(t, 35*time.Millisecond, 10*time.Millisecond, true)
-	defer cancel()
-	select {
-	case <-app.ctx.Done():
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("application did not stop after first-session timeout")
-	}
-	waitGroupWithTimeout(t, &app.wg, time.Second)
-	if !app.closing.Load() {
-		t.Fatal("application did not enter closing state")
-	}
-}
-
-func TestStartupTimeoutIsCancelledByFirstSession(t *testing.T) {
-	app, cancel, _ := startLifecycleMonitor(t, 70*time.Millisecond, 20*time.Millisecond, true)
-	defer cancel()
-	time.Sleep(10 * time.Millisecond)
-	app.sessions.Open("")
-	time.Sleep(100 * time.Millisecond)
-	select {
-	case <-app.ctx.Done():
-		t.Fatal("application stopped despite a timely frontend session")
-	default:
-	}
-	cancel()
-	waitGroupWithTimeout(t, &app.wg, time.Second)
-}
-
-func TestNoBrowserModeDoesNotUseStartupTimeout(t *testing.T) {
-	app, cancel, _ := startLifecycleMonitor(t, 0, 20*time.Millisecond, false)
-	defer cancel()
-	time.Sleep(80 * time.Millisecond)
-	select {
-	case <-app.ctx.Done():
-		t.Fatal("no-browser mode stopped without an explicit shutdown")
-	default:
-	}
-	cancel()
-	waitGroupWithTimeout(t, &app.wg, time.Second)
-}
-
-func TestConcurrentSessionOpenAndShutdownAreSafe(t *testing.T) {
-	app, cancel, logs := startLifecycleMonitor(t, 20*time.Millisecond, 10*time.Millisecond, true)
-	defer cancel()
-	start := make(chan struct{})
-	var workers sync.WaitGroup
-	workers.Add(2)
-	go func() {
-		defer workers.Done()
-		<-start
-		app.sessions.Open("")
-	}()
-	go func() {
-		defer workers.Done()
-		<-start
-		app.requestShutdown("test")
-	}()
-	close(start)
-	workers.Wait()
-	select {
-	case <-app.ctx.Done():
-	case <-time.After(time.Second):
-		t.Fatal("concurrent shutdown did not cancel the application context")
-	}
-	waitGroupWithTimeout(t, &app.wg, time.Second)
-	if count := strings.Count(logs.String(), "запрошено завершение"); count != 1 {
-		t.Fatalf("shutdown executed %d times, want 1", count)
-	}
-}
-
-func TestExpiredSessionCannotBeRevivedByLateHeartbeat(t *testing.T) {
-	sessions := newSessionManager(5*time.Millisecond, 10*time.Millisecond)
-	id := sessions.Open("")
-	time.Sleep(20 * time.Millisecond)
-	if sessions.Heartbeat(id) {
-		t.Fatal("expired session was revived by a late heartbeat")
-	}
-	if sessions.ActiveCount(time.Now()) != 0 {
-		t.Fatal("expired session remained active")
-	}
-}
-
-func TestSecondActiveSessionPreventsShutdownAndLastCloseAllowsIt(t *testing.T) {
-	sessions := newSessionManager(5 * time.Millisecond)
-	first := sessions.Open("")
-	second := sessions.Open("")
-	sessions.Close(first)
-	if sessions.ShouldShutdown(time.Now().Add(time.Second)) {
-		t.Fatal("application would stop while a second session is active")
-	}
-	sessions.Close(second)
-	if !sessions.ShouldShutdown(time.Now().Add(20 * time.Millisecond)) {
-		t.Fatal("application would not stop after the last session closed")
-	}
-	sessions.Close(second)
-	if sessions.ActiveCount(time.Now()) != 0 {
-		t.Fatal("repeated session close was not idempotent")
-	}
-}
-
-func TestSessionCloseDoesNotReplaceProfile(t *testing.T) {
-	dir := t.TempDir()
-	paths := appPaths{Profile: filepath.Join(dir, "profile.json"), Backups: filepath.Join(dir, "Backups")}
-	if err := os.MkdirAll(paths.Backups, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	profiles, err := newProfileStore(paths)
-	if err != nil {
-		t.Fatal(err)
-	}
-	profile := defaultProfile()
-	profile.Favorites = []string{"item:77"}
-	if err := profiles.Replace(profile); err != nil {
-		t.Fatal(err)
-	}
-	app := &application{profile: profiles, sessions: newSessionManager()}
-	id := app.sessions.Open("")
-	for iteration := 0; iteration < 2; iteration++ {
-		body, _ := json.Marshal(map[string]string{"id": id})
-		request := httptest.NewRequest(http.MethodPost, "/api/session/close", bytes.NewReader(body))
-		request.Header.Set("Content-Type", "application/json")
-		recorder := httptest.NewRecorder()
-		app.handleSessionClose(recorder, request)
-		if recorder.Code != http.StatusNoContent {
-			t.Fatalf("close %d status=%d", iteration+1, recorder.Code)
-		}
-	}
-	loaded := profiles.Get()
-	if len(loaded.Favorites) != 1 || loaded.Favorites[0] != "item:77" {
-		t.Fatalf("session close changed profile: %#v", loaded.Favorites)
-	}
-}
-
 func TestFavoritesPaginationKeepsMoreThanFiveHundredEntries(t *testing.T) {
 	if err := ensureLoaded(); err != nil {
 		t.Fatal(err)
@@ -2035,82 +1793,26 @@ func TestEmbeddedGameDatabaseMatchesConfirmedVersion(t *testing.T) {
 	}
 }
 
-func TestFrontendLifecycleAndLazyRenderingMarkers(t *testing.T) {
-	data, err := os.ReadFile("web/app.js")
+func TestDesktopModeHasNoLoopbackListenerOrBrowserLaunch(t *testing.T) {
+	serverData, err := os.ReadFile("server.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := string(data)
-	for _, marker := range []string{
-		"navigator.sendBeacon?.('/api/session/close'",
-		"fetch('/api/session/close'",
-		"window.addEventListener('beforeunload', closeApplicationSession)",
-		"if (sessionCloseSent) state.sessionId = newSessionID()",
-		"const openingSession = openApplicationSession()",
-		"await Promise.all([loadUserProfile(), openingSession])",
-		"fetch('/api/user-data'",
-		"keepalive: true",
-		"sessionCloseSent",
-		"profileController?.abort()",
-		"state.suggestionController?.abort()",
-		"clearTimeout(profileTimer)",
-		"data-monster-drops-host",
-		"renderMonsterDropShell()",
-		"renderMonsterDropGroup(groupIndex, showAll = false)",
-		"DROP_BATCH",
-		"data-drop-more",
-		"data-drop-all",
-	} {
-		if !strings.Contains(script, marker) {
-			t.Fatalf("frontend lifecycle/lazy marker is missing: %s", marker)
+	desktopData, err := os.ReadFile("main_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverSource := string(serverData)
+	desktopSource := string(desktopData)
+	for _, forbidden := range []string{"net.Listen(", "openBrowser(", "127.0.0.1:8765", "probeExistingInstance("} {
+		if strings.Contains(serverSource, forbidden) || strings.Contains(desktopSource, forbidden) {
+			t.Fatalf("desktop production path still contains legacy browser/listener marker %q", forbidden)
 		}
 	}
-	if strings.Contains(script, "keys.slice(0, 500)") {
-		t.Fatal("favorites are still silently truncated to 500 entries")
-	}
-	closeStart := strings.Index(script, "function closeApplicationSession()")
-	closeEnd := strings.Index(script[closeStart:], "main.addEventListener")
-	if closeStart < 0 || closeEnd < 0 {
-		t.Fatal("session close function was not found")
-	}
-	closeBlock := script[closeStart : closeStart+closeEnd]
-	if strings.Contains(closeBlock, "profilePayload()") || strings.Contains(closeBlock, "profile:") {
-		t.Fatal("full profile is coupled to session close payload")
-	}
-}
-
-func TestBrowserModeDoesNotUseHeartbeatExpiryAsCloseSignal(t *testing.T) {
-	data, err := os.ReadFile("server.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "shutdownOnHeartbeatExpiry: *shutdownWhenIdle") {
-		t.Fatal("normal browser mode still treats heartbeat expiry as a close signal")
-	}
-	if strings.Contains(string(data), "shutdownOnHeartbeatExpiry: browserEnabled || *shutdownWhenIdle") {
-		t.Fatal("browser mode would still terminate when Edge suspends background timers")
-	}
-}
-
-func TestFrontendSessionCloseCoversOpenRace(t *testing.T) {
-	data, err := os.ReadFile("web/app.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := string(data)
-	for _, marker := range []string{
-		"if (!state.sessionId) state.sessionId = newSessionID()",
-		"sessionOpenController = new AbortController()",
-		"sessionOpenController?.abort()",
-		"pendingOpen: Boolean(pendingOpen)",
-		"queueSessionClose(state.sessionId, pendingOpen)",
-	} {
-		if !strings.Contains(script, marker) {
-			t.Fatalf("session open/close race marker is missing: %s", marker)
+	for _, required := range []string{"wails.Run(", "SingleInstanceLock:", "WebviewUserDataPath:", "Assets:     webAssets"} {
+		if !strings.Contains(desktopSource, required) {
+			t.Fatalf("desktop production marker is missing: %s", required)
 		}
-	}
-	if strings.Contains(script, "state.sessionId = '';\n      scheduleHeartbeat(2000)") {
-		t.Fatal("heartbeat failure still discards the close-authoritative session ID")
 	}
 }
 
@@ -2465,8 +2167,8 @@ func TestRestoredAbilityDescriptionAndLimitReachItemAPI(t *testing.T) {
 func TestSecurityHeadersRejectCrossSiteRead(t *testing.T) {
 	called := false
 	handler := withSecurityHeaders(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
-	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8765/api/meta", nil)
-	request.Host = "127.0.0.1:8765"
+	request := httptest.NewRequest(http.MethodGet, "http://wails.localhost/api/meta", nil)
+	request.Host = "wails.localhost"
 	request.Header.Set("Origin", "https://example.test")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
@@ -2541,10 +2243,10 @@ func TestAPIConcurrencyLimitRejectsOverflow(t *testing.T) {
 }
 
 func TestStaticRouteCannotTraverseEmbeddedFS(t *testing.T) {
-	app := &application{cache: newResponseCache(4, 1<<20, time.Minute), ctx: context.Background(), sessions: newSessionManager()}
+	app := &application{cache: newResponseCache(4, 1<<20, time.Minute), ctx: context.Background()}
 	handler := app.routes()
-	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8765/../../../../etc/passwd", nil)
-	request.Host = "127.0.0.1:8765"
+	request := httptest.NewRequest(http.MethodGet, "http://wails.localhost/../../../../etc/passwd", nil)
+	request.Host = "wails.localhost"
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if strings.Contains(recorder.Body.String(), "root:x:") {
@@ -2617,93 +2319,97 @@ func TestProfileUnknownFieldAfterOversizedKeyIsPreserved(t *testing.T) {
 	}
 }
 
-func TestExistingInstanceRequiresExactVersionAndMarker(t *testing.T) {
-	oldVersion, oldMarker := appVersion, releaseMarker
-	appVersion, releaseMarker = "1.0", "IrisOnlineDiagnostic/1.1.0/go1.23.2"
-	defer func() { appVersion, releaseMarker = oldVersion, oldMarker }()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"status": "ok", "application": applicationID, "version": "0.9", "release": "IrisOnlineRelease/0.9"})
-	}))
-	defer server.Close()
-	info := probeExistingInstance(strings.TrimPrefix(server.URL, "http://"))
-	if !info.Found || sameApplicationBuild(info) {
-		t.Fatalf("different running version was accepted as same build: %#v", info)
-	}
-
-	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"status": "ok", "application": applicationID, "version": appVersion, "release": releaseMarker})
-	})
-	info = probeExistingInstance(strings.TrimPrefix(server.URL, "http://"))
-	if !sameApplicationBuild(info) {
-		t.Fatalf("same build was not recognized: %#v", info)
-	}
-}
-
-func TestInstanceLockPreventsSecondProcessAcrossPorts(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "IrisOnlineDatabase")
-	if err := os.MkdirAll(root, 0o700); err != nil {
+func TestDesktopFrontendPersistenceHasNoBrowserHeartbeat(t *testing.T) {
+	data, err := os.ReadFile("web/app.js")
+	if err != nil {
 		t.Fatal(err)
 	}
-	paths := appPaths{LocalRoot: root}
-	first, err := acquireInstanceLock(paths)
-	if err != nil {
-		t.Fatalf("first instance lock: %v", err)
-	}
-	defer first.Close()
-
-	second, err := acquireInstanceLock(paths)
-	if second != nil {
-		_ = second.Close()
-	}
-	if !errors.Is(err, errInstanceAlreadyRunning) {
-		t.Fatalf("second lock error = %v, want errInstanceAlreadyRunning", err)
-	}
-
-	if err := first.Close(); err != nil {
-		t.Fatalf("release first lock: %v", err)
-	}
-	third, err := acquireInstanceLock(paths)
-	if err != nil {
-		t.Fatalf("lock was not immediately reusable: %v", err)
-	}
-	if err := third.Close(); err != nil {
-		t.Fatalf("release third lock: %v", err)
-	}
-}
-
-func TestExistingInstanceProbeNeverFollowsRedirects(t *testing.T) {
-	var redirectedHits atomic.Int32
-	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		redirectedHits.Add(1)
-		writeJSON(w, map[string]any{"status": "ok", "application": applicationID, "version": appVersion, "release": releaseMarker})
-	}))
-	defer redirectTarget.Close()
-
-	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, redirectTarget.URL+"/api/health", http.StatusFound)
-	}))
-	defer redirector.Close()
-
-	info := probeExistingInstance(strings.TrimPrefix(redirector.URL, "http://"))
-	if info.Found {
-		t.Fatalf("redirect response was accepted as Iris Online instance: %#v", info)
-	}
-	if got := redirectedHits.Load(); got != 0 {
-		t.Fatalf("health probe followed redirect %d time(s)", got)
-	}
-}
-
-func TestBrowserLaunchTargetMustBePlainLoopbackHTTP(t *testing.T) {
-	for _, target := range []string{
-		"https://example.com/",
-		"http://example.com/",
-		"http://127.0.0.1:8765/?next=https://example.com",
-		"http://127.0.0.1:8765/#external",
-		"http://user:pass@127.0.0.1:8765/",
+	script := string(data)
+	for _, marker := range []string{
+		"function prepareForWindowClose()",
+		"persistPendingProfile()",
+		"saveProfileBestEffort()",
+		"window.addEventListener('beforeunload', prepareForWindowClose)",
+		"window.addEventListener('pagehide', prepareForWindowClose)",
+		"await loadUserProfile()",
+		"fetch('/api/user-data'",
+		"keepalive: true",
+		"profileController?.abort()",
+		"state.suggestionController?.abort()",
+		"clearTimeout(profileTimer)",
+		"data-monster-drops-host",
+		"renderMonsterDropShell()",
+		"renderMonsterDropGroup(groupIndex, showAll = false)",
+		"DROP_BATCH",
+		"data-drop-more",
+		"data-drop-all",
 	} {
-		if err := openBrowser(target); err == nil {
-			t.Fatalf("unsafe browser target was accepted: %s", target)
+		if !strings.Contains(script, marker) {
+			t.Fatalf("desktop persistence/lazy marker is missing: %s", marker)
 		}
+	}
+	for _, forbidden := range []string{
+		"/api/session/",
+		"openApplicationSession",
+		"heartbeatTimer",
+		"sessionCloseSent",
+		"navigator.sendBeacon",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("legacy browser lifecycle marker remains: %s", forbidden)
+		}
+	}
+	if strings.Contains(script, "keys.slice(0, 500)") {
+		t.Fatal("favorites are still silently truncated to 500 entries")
+	}
+}
+
+func TestDesktopShutdownIsIdempotentAndFlushesProfile(t *testing.T) {
+	dir := t.TempDir()
+	paths := appPaths{
+		Profile: filepath.Join(dir, "UserData", "profile.json"),
+		Backups: filepath.Join(dir, "UserData", "Backups"),
+	}
+	if err := os.MkdirAll(paths.Backups, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := newProfileStore(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := defaultProfile()
+	profile.Favorites = []string{"item:77"}
+	if err := profiles.Replace(profile); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var logs bytes.Buffer
+	app := &application{
+		profile: profiles,
+		cache:   newResponseCache(4, 1<<20, time.Minute),
+		logger:  log.New(&logs, "", 0),
+		ctx:     ctx,
+		cancel:  cancel,
+	}
+	if err := app.shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("shutdown did not cancel application context")
+	}
+	if count := strings.Count(logs.String(), "запрошено завершение"); count != 1 {
+		t.Fatalf("shutdown request count=%d want=1", count)
+	}
+	loaded, err := loadProfileFile(paths.Profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Favorites) != 1 || loaded.Favorites[0] != "item:77" {
+		t.Fatalf("profile was not flushed: %#v", loaded.Favorites)
 	}
 }

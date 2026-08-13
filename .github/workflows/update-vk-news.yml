@@ -6,7 +6,7 @@ on:
     - cron: '7,17,27,37,47,57 * * * *'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: update-vk-news
@@ -16,21 +16,39 @@ jobs:
   update:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       - name: Получить репозиторий
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Настроить Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
+          cache: pip
+          cache-dependency-path: tools/requirements-audit.txt
 
       - name: Установить Playwright
         run: |
-          python -m pip install --disable-pip-version-check -r tools/requirements-audit.txt
-          python -m playwright install --with-deps chromium
+          set -euo pipefail
+          timeout 8m python -m pip install --disable-pip-version-check -r tools/requirements-audit.txt
+          python - <<'PY'
+          import importlib.metadata
+          from pathlib import Path
+
+          expected = next(
+              line.split("==", 1)[1]
+              for line in Path("tools/requirements-audit.txt").read_text().splitlines()
+              if line.startswith("playwright==")
+          )
+          actual = importlib.metadata.version("playwright")
+          if actual != expected:
+              raise SystemExit("Playwright version does not match requirements-audit.txt")
+          PY
+          timeout 10m python -m playwright install --with-deps chromium
 
       - name: Получить последнюю запись VK
         shell: bash
@@ -38,7 +56,7 @@ jobs:
           set -euo pipefail
           for attempt in 1 2 3; do
             echo "VK update attempt ${attempt}/3"
-            if python tools/update_vk_news.py --output data/latest-vk.json; then
+            if timeout 3m python -B tools/update_vk_news.py --output data/latest-vk.json; then
               exit 0
             fi
             if [ "$attempt" -lt 3 ]; then

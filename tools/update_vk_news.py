@@ -8,6 +8,7 @@ left untouched and the process exits with an error.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import html
 import json
 import os
@@ -34,6 +35,7 @@ WALL_URLS = (
 )
 POST_PATTERN = re.compile(rf"wall-{re.escape(COMMUNITY_ID)}_(\d+)", re.IGNORECASE)
 MAX_TEXT_LENGTH = 4000
+MIN_PREVIEW_LENGTH = 2
 NAVIGATION_TIMEOUT_MS = 30000
 DOM_CONTENT_TIMEOUT_MS = 8000
 DOM_SETTLE_MS = 1500
@@ -124,6 +126,22 @@ def useful_text(value: str) -> str:
     return value
 
 
+def validate_payload(payload: dict[str, object]) -> None:
+    post_id = payload.get("post_id")
+    text = useful_text(str(payload.get("text") or ""))
+    if not isinstance(post_id, int) or isinstance(post_id, bool) or post_id <= 0:
+        raise RuntimeError("VK returned an invalid post identifier")
+    if len(text) < MIN_PREVIEW_LENGTH:
+        raise RuntimeError(
+            f"VK post #{post_id} has no usable public text preview; "
+            "last-known-good data was preserved"
+        )
+    expected_url = f"https://vk.ru/wall-{COMMUNITY_ID}_{post_id}"
+    if str(payload.get("post_url") or "") != expected_url:
+        raise RuntimeError("VK returned an invalid post URL")
+    payload["text"] = text
+
+
 class _MetaParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -168,6 +186,25 @@ def _error_summary(exc: Exception) -> str:
     return exc.__class__.__name__
 
 
+def _safe_failure_category(exc: Exception) -> str:
+    message = str(exc).lower()
+    categories = (
+        ("no usable public text", "EMPTY_PREVIEW"),
+        ("older post", "STALE_POST"),
+        ("invalid post", "INVALID_PAYLOAD"),
+        ("playwright не установлен", "MISSING_DEPENDENCY"),
+        ("не удалось определить последнюю запись", "VK_UNAVAILABLE"),
+    )
+    for marker, category in categories:
+        if marker in message:
+            return category
+    if isinstance(exc, OSError):
+        return "LOCAL_IO_FAILURE"
+    if sync_playwright is not None and isinstance(exc, PlaywrightError):
+        return f"BROWSER_{_error_summary(exc).upper()}"
+    return "UPDATE_FAILED"
+
+
 def _navigate_page(page, url: str) -> str:
     """Navigate without treating an interrupted post-commit load as immediate failure."""
     error = ""
@@ -175,31 +212,23 @@ def _navigate_page(page, url: str) -> str:
         page.goto(url, wait_until="commit", timeout=NAVIGATION_TIMEOUT_MS)
     except PlaywrightError as exc:
         error = _error_summary(exc)
-    try:
+    with contextlib.suppress(PlaywrightError):
         page.wait_for_load_state("domcontentloaded", timeout=DOM_CONTENT_TIMEOUT_MS)
-    except PlaywrightError:
-        pass
-    try:
+    with contextlib.suppress(PlaywrightError):
         page.wait_for_timeout(DOM_SETTLE_MS)
-    except PlaywrightError:
-        pass
     return error
 
 
 def _post_id_from_page(page) -> int:
     values: list[str] = []
-    try:
+    with contextlib.suppress(PlaywrightError):
         values.extend(
             page.locator("a[href]").evaluate_all(
                 "els => els.map(el => el.getAttribute('href') || '')"
             )
         )
-    except PlaywrightError:
-        pass
-    try:
+    with contextlib.suppress(PlaywrightError):
         values.append(page.content())
-    except PlaywrightError:
-        pass
     return latest_post_id(values)
 
 
@@ -446,12 +475,20 @@ def comparable(payload: dict[str, object]) -> dict[str, object]:
 
 
 def update_file(output: Path, payload: dict[str, object]) -> bool:
+    validate_payload(payload)
     old: dict[str, object] = {}
     if output.exists():
         try:
             old = json.loads(output.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             old = {}
+    old_id = old.get("post_id")
+    new_id = payload.get("post_id")
+    if isinstance(old_id, int) and isinstance(new_id, int) and new_id < old_id:
+        raise RuntimeError(
+            f"VK returned older post #{new_id} while last-known-good is #{old_id}; "
+            "existing data was preserved"
+        )
     if comparable(old) == comparable(payload):
         print(f"VK: без изменений, последняя запись #{payload['post_id']}")
         return False
@@ -461,7 +498,7 @@ def update_file(output: Path, payload: dict[str, object]) -> bool:
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     temp.replace(output)
-    print(f"VK: обновлена запись #{payload['post_id']} -> {output}")
+    print(f"VK: обновлена запись #{payload['post_id']}")
     return True
 
 
@@ -473,7 +510,10 @@ def main() -> int:
         payload = scrape_latest_post()
         update_file(args.output, payload)
     except (OSError, RuntimeError, PlaywrightError) as exc:
-        print(f"Ошибка обновления VK: {exc}", file=sys.stderr)
+        print(
+            f"Ошибка обновления VK [{_safe_failure_category(exc)}]",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

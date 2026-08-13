@@ -1,9 +1,12 @@
-"""Verify Go build metadata and application marker for Iris Online Windows executables."""
+"""Verify Go/Wails build metadata in the Windows amd64 release executable."""
 
 from __future__ import annotations
 
 import argparse
-import subprocess
+import shutil
+
+# The command uses fixed argv, no shell, and a resolved Go executable path.
+import subprocess  # nosec B404
 from pathlib import Path
 
 
@@ -11,39 +14,50 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--version", required=True)
-    parser.add_argument("--go-version", required=True, help="for example go1.26.5")
-    parser.add_argument("--diagnostic", action="store_true")
     args = parser.parse_args()
-
-    expected = {
-        "x64": ("amd64", "GOAMD64=v1"),
-        "x86": ("386", "GO386=softfloat"),
-        "arm64": ("arm64", "GOARM64=v8.0"),
-    }
-    if args.diagnostic:
-        marker = f"IrisOnlineDiagnostic/{args.version}/{args.go_version}"
-        suffix = f"-diagnostic-{args.go_version}"
-    else:
-        marker = f"IrisOnlineRelease/{args.version}"
-        suffix = ""
-
-    for label, (arch, tuning) in expected.items():
-        path = (
-            args.directory / f"IrisOnlineDB-{args.version}{suffix}-Windows-{label}.exe"
-        )
-        if not path.is_file():
-            raise SystemExit(f"missing executable: {path}")
-        output = subprocess.check_output(["go", "version", "-m", str(path)], text=True)
-        first = output.splitlines()[0]
-        if args.go_version not in first:
-            raise SystemExit(f"{path.name}: expected {args.go_version}, got {first}")
-        if f"GOARCH={arch}" not in output:
-            raise SystemExit(f"{path.name}: expected GOARCH={arch}")
-        if tuning not in output:
-            raise SystemExit(f"{path.name}: expected {tuning}")
-        if marker.encode("ascii") not in path.read_bytes():
-            raise SystemExit(f"{path.name}: missing application marker {marker}")
-        print(f"{path.name}: OK ({args.go_version}, {arch}, {tuning}, {marker})")
+    path = args.directory / f"iris-online-database-{args.version}-windows-amd64.exe"
+    if not path.is_file():
+        raise SystemExit("release executable is missing")
+    go = shutil.which("go")
+    if not go:
+        raise SystemExit("Go executable is unavailable")
+    result = subprocess.run(
+        [go, "version", "-m", str(path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )  # nosec B603
+    if result.returncode:
+        raise SystemExit("could not read Go build metadata")
+    metadata = result.stdout
+    expected = (
+        "GOOS=windows",
+        "GOARCH=amd64",
+        "GOAMD64=v1",
+        "CGO_ENABLED=0",
+        "-trimpath=true",
+        "-tags=desktop,wv2runtime.embed,production",
+        "github.com/wailsapp/wails/v2\tv2.14.0",
+    )
+    missing = [marker for marker in expected if marker not in metadata]
+    if missing:
+        raise SystemExit("release executable has incomplete build metadata")
+    binary = path.read_bytes()
+    marker = f"IrisOnlineRelease/{args.version}/".encode()
+    if marker not in binary:
+        raise SystemExit("release application marker is missing")
+    if b"IrisOnlineDiagnostic/" in binary:
+        raise SystemExit("diagnostic marker found in release executable")
+    lowered = binary.lower()
+    if any(
+        marker in lowered
+        for marker in (b"/workspace/", b"/home/", b"\\users\\", b"/tmp/iris")
+    ):
+        raise SystemExit("absolute developer path found in release executable")
+    print(f"{path.name}: Go/Wails metadata PASS")
 
 
 if __name__ == "__main__":

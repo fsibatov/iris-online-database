@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -13,92 +14,220 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GOTOOLCHAIN: local
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_LINUX_X64_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
 jobs:
   quality:
+    name: Linux quality and security
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Checkout canonical source and history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - name: Setup pinned Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: .go-version
-          cache: false
+          cache: true
 
-      - name: Setup Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      - name: Setup Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
+          cache: pip
+          cache-dependency-path: tools/requirements-audit.txt
 
-      - name: Install quality tools
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@2026.1
-          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
-          python -m pip install --disable-pip-version-check ruff==0.16.2 pip-audit==2.10.1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
 
-      - name: Repository audit
-        run: python -B tools/repository_audit.py
-
-      - name: Go format
+      - name: Install pinned Go quality tools
         shell: bash
         run: |
-          files="$(gofmt -l .)"
-          if [ -n "$files" ]; then
-            printf '%s\n' "$files"
-            exit 1
-          fi
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/go-tools"
+          echo "$RUNNER_TEMP/go-tools" >> "$GITHUB_PATH"
+          GOBIN="$RUNNER_TEMP/go-tools" timeout 8m go install honnef.co/go/tools/cmd/staticcheck@2026.1
+          GOBIN="$RUNNER_TEMP/go-tools" timeout 8m go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
 
-      - name: Go module integrity
+      - name: Create cached Python audit environment
+        shell: bash
         run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/python-audit"
+          for attempt in 1 2 3; do
+            if timeout 8m "$RUNNER_TEMP/python-audit/bin/python" -m pip install --disable-pip-version-check -r tools/requirements-audit.txt; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep $((attempt * 5))
+          done
+
+      - name: Validate exact Python audit environment
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/python-audit/bin/python" -B tools/verify_python_environment.py
+          "$RUNNER_TEMP/python-audit/bin/python" -m pip check
+
+      - name: Validate GitHub workflow syntax and action pins
+        run: |
+          "$RUNNER_TEMP/python-audit/bin/python" -B tools/validate_workflows.py
+
+      - name: Install Playwright Chromium outside source
+        shell: bash
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright
+        run: timeout 12m "$RUNNER_TEMP/python-audit/bin/python" -m playwright install --with-deps chromium
+
+      - name: Install official Gitleaks binary with SHA-256 verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
+          curl --fail --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 180 "$url" --output "$RUNNER_TEMP/$asset"
+          printf '%s  %s\n' "$GITLEAKS_LINUX_X64_SHA256" "$RUNNER_TEMP/$asset" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
+
+      - name: Repository audit before checks
+        run: python -B tools/repository_audit.py
+
+      - name: Go format and module integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l -- *.go)"
+          test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
           go mod verify
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
+          go mod tidy -diff
+          go list -deps ./... > "$RUNNER_TEMP/go-dependencies.txt"
 
-      - name: Go build
-        run: go build -o "$RUNNER_TEMP/iris-online-build-check" .
-
-      - name: Go test
-        run: go test -count=1 ./...
-
-      - name: Go vet
-        run: go vet ./...
+      - name: Go build, unit tests and vet
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 10m go build -trimpath -o "$RUNNER_TEMP/iris-build-probe" .
+          timeout 15m go test -count=1 ./...
+          timeout 10m go vet ./...
 
       - name: Staticcheck
-        run: staticcheck ./...
+        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 timeout 15m staticcheck ./...
 
       - name: Govulncheck
-        run: govulncheck ./...
+        run: timeout 15m govulncheck ./...
 
-      - name: Python compile
-        run: PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python -m compileall -q tools
+      - name: Python compile and regression tests
+        shell: bash
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
+        run: |
+          python -m compileall -q tools
+          timeout 10m "$RUNNER_TEMP/python-audit/bin/python" -B -m unittest discover -s tools -p 'test_*.py'
 
-      - name: Python tests
-        run: python -B -m unittest discover -s tools -p 'test_*.py'
+      - name: Ruff lint and formatting
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/python-audit/bin/ruff" check --no-cache .
+          "$RUNNER_TEMP/python-audit/bin/ruff" format --check --no-cache .
 
-      - name: Ruff lint
-        run: python -m ruff check tools
+      - name: Bandit
+        run: |
+          "$RUNNER_TEMP/python-audit/bin/bandit" -q -r tools -x 'tools/test_*.py'
 
-      - name: Ruff format
-        run: python -m ruff format --check tools
+      - name: Full installed-environment dependency audit
+        run: timeout 10m "$RUNNER_TEMP/python-audit/bin/pip-audit" --local --cache-dir "$RUNNER_TEMP/pip-audit-cache"
 
-      - name: Python dependency audit
-        run: python -m pip_audit -r tools/requirements-audit.txt
+      - name: Embedded data integrity audit
+        shell: bash
+        run: |
+          python -B tools/data_presentation_audit.py
 
-      - name: JavaScript syntax
-        run: node --check web/app.js
+      - name: Frontend syntax and deterministic Chromium smoke
+        shell: bash
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright
+        run: |
+          node --check web/app.js
+          timeout 10m "$RUNNER_TEMP/python-audit/bin/python" -B tools/frontend_smoke_test.py
+
+      - name: Gitleaks current source
+        run: timeout 10m gitleaks dir --no-banner --redact .
+
+      - name: Gitleaks complete Git history
+        run: timeout 10m gitleaks git --no-banner --redact .
+
+      - name: Source tree remains clean
+        shell: bash
+        run: |
+          python -B tools/repository_audit.py
+          git diff --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
   race:
+    name: Go race detector
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pinned Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: .go-version
-          cache: false
+          cache: true
       - name: Race detector
-        run: go test -race -count=1 ./...
+        run: timeout 20m go test -race -count=1 ./...
+
+  windows-build:
+    name: Native Windows amd64 Wails build
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup pinned Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: .go-version
+          cache: true
+      - name: Setup Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Install pinned Wails CLI
+        shell: pwsh
+        run: |
+          $env:GOBIN = Join-Path $env:RUNNER_TEMP "go-tools"
+          New-Item -ItemType Directory -Force -Path $env:GOBIN | Out-Null
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.14.0
+          $env:GOBIN | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Windows Go tests
+        run: go test -count=1 ./...
+      - name: Build production desktop executable
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $head = (git rev-parse HEAD).Trim()
+          & "$env:RUNNER_TEMP\go-tools\wails.exe" build -platform windows/amd64 -webview2 embed -trimpath -clean -skipbindings -s -nosyncgomod -m -o IrisOnlineDatabase.exe -ldflags "-buildid= -X main.appVersion=$version -X main.releaseMarker=IrisOnlineRelease/$version/$head"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $artifact = Join-Path $env:RUNNER_TEMP "iris-online-database-$version-windows-amd64.exe"
+          Copy-Item build\bin\IrisOnlineDatabase.exe $artifact
+          Remove-Item build\bin, build\generated, web\wailsjs -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item build\appicon.png -Force -ErrorAction SilentlyContinue
+          python -B tools/verify_executables.py --directory $env:RUNNER_TEMP --version $version
+          python -B tools/verify_windows_resources.py --directory $env:RUNNER_TEMP --version $version
+      - name: Source tree remains clean
+        shell: pwsh
+        run: |
+          python -B tools/repository_audit.py
+          git diff --exit-code
+          if (git status --porcelain=v1 --untracked-files=all) { exit 1 }

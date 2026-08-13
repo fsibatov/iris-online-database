@@ -168,9 +168,9 @@ func TestUpdateCheckHonorsContextCancellation(t *testing.T) {
 }
 
 func TestUpdateCheckRejectsNonGET(t *testing.T) {
-	app := &application{updates: newUpdateChecker(), sessions: newSessionManager()}
-	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8765/api/update-check", nil)
-	req.Host = "127.0.0.1:8765"
+	app := &application{updates: newUpdateChecker()}
+	req := httptest.NewRequest(http.MethodPost, "http://wails.localhost/api/update-check", nil)
+	req.Host = "wails.localhost"
 	rec := httptest.NewRecorder()
 	app.routes().ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -183,23 +183,23 @@ func TestUpdateCheckEndpointUsesBoundedChecker(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("unexpected method %s", r.Method)
 		}
-		fmt.Fprintln(w, `{"tag_name":"v1.1.1"}`)
+		fmt.Fprintln(w, `{"tag_name":"v2.0.1"}`)
 	}))
 	defer github.Close()
 	checker := newUpdateChecker()
 	checker.apiURL = github.URL
 	checker.client = github.Client()
-	app := &application{updates: checker, sessions: newSessionManager()}
+	app := &application{updates: checker}
 	handler := app.routes()
 
-	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8765/api/update-check", nil)
-	req.Host = "127.0.0.1:8765"
+	req := httptest.NewRequest(http.MethodGet, "http://wails.localhost/api/update-check", nil)
+	req.Host = "wails.localhost"
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"latestVersion":"1.1.1"`) || !strings.Contains(rec.Body.String(), `"updateAvailable":true`) {
+	if !strings.Contains(rec.Body.String(), `"latestVersion":"2.0.1"`) || !strings.Contains(rec.Body.String(), `"updateAvailable":true`) {
 		t.Fatalf("unexpected response: %s", rec.Body.String())
 	}
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
@@ -217,14 +217,14 @@ func TestUpdateCheckEndpointRefreshesOnRequest(t *testing.T) {
 	checker := newUpdateChecker()
 	checker.apiURL = github.URL
 	checker.client = github.Client()
-	app := &application{updates: checker, sessions: newSessionManager()}
+	app := &application{updates: checker}
 	handler := app.routes()
 	for _, target := range []string{
-		"http://127.0.0.1:8765/api/update-check",
-		"http://127.0.0.1:8765/api/update-check?refresh=1",
+		"http://wails.localhost/api/update-check",
+		"http://wails.localhost/api/update-check?refresh=1",
 	} {
 		req := httptest.NewRequest(http.MethodGet, target, nil)
-		req.Host = "127.0.0.1:8765"
+		req.Host = "wails.localhost"
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"latestVersion":"1.1.0"`) {
@@ -249,11 +249,11 @@ func TestUpdateCheckEndpointCancelsWhenApplicationShutsDown(t *testing.T) {
 	checker.client = github.Client()
 	appCtx, appCancel := context.WithCancel(context.Background())
 	defer appCancel()
-	app := &application{updates: checker, sessions: newSessionManager(), ctx: appCtx}
+	app := &application{updates: checker, ctx: appCtx}
 	handler := app.routes()
 
-	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8765/api/update-check", nil)
-	req.Host = "127.0.0.1:8765"
+	req := httptest.NewRequest(http.MethodGet, "http://wails.localhost/api/update-check", nil)
+	req.Host = "wails.localhost"
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {

@@ -214,7 +214,7 @@ class InterfaceDetailTests(unittest.TestCase):
     def test_version_status_and_vk_news_controls_are_visible(self):
         self.assertIn('id="versionStatus"', self.html)
         self.assertIn('id="checkUpdatesButton"', self.html)
-        self.assertIn("Версия 1.1.0", self.html)
+        self.assertIn("Версия 2.0.0", self.html)
         self.assertIn("renderVersionStatus()", self.script)
         self.assertIn("?refresh=1", self.script)
         self.assertIn("/api/community-status", self.script)
@@ -368,8 +368,8 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         for stale in ("IrisOnline" + "Preview", "audited", *legacy_versions):
             self.assertNotIn(stale, combined)
         self.assertNotIn(" preview", self.html.lower())
-        self.assertIn("const APP_VERSION = '1.1.0'", self.script)
-        self.assertIn("Версия 1.1.0", self.html)
+        self.assertIn("const APP_VERSION = '2.0.0'", self.script)
+        self.assertIn("Версия 2.0.0", self.html)
 
     def test_selects_share_control_class(self):
         self.assertIn('class="control-select control-select--server"', self.html)
@@ -390,9 +390,14 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
 
     def test_no_new_periodic_or_duplicate_event_mechanisms(self):
         self.assertEqual(self.script.count("setInterval("), 0)
-        self.assertEqual(self.script.count("setTimeout("), 10)
-        self.assertEqual(self.script.count("addEventListener("), 29)
-        self.assertEqual(self.script.count("api("), 18)
+        self.assertLessEqual(self.script.count("setTimeout("), 8)
+        for registration in (
+            "window.addEventListener('hashchange'",
+            "window.addEventListener('beforeunload'",
+            "window.addEventListener('pagehide'",
+            "document.addEventListener('visibilitychange'",
+        ):
+            self.assertEqual(self.script.count(registration), 1, registration)
 
     def test_sell_restriction_wording_is_global_for_selltype_zero(self):
         self.assertIn(

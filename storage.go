@@ -35,6 +35,7 @@ type appPaths struct {
 	Logs          string
 	Updates       string
 	Versions      string
+	WebViewData   string
 	PendingDelete string
 	Profile       string
 }
@@ -59,9 +60,10 @@ func resolveAppPaths() (appPaths, error) {
 	p.Logs = filepath.Join(p.LocalRoot, "Logs")
 	p.Updates = filepath.Join(p.LocalRoot, "Updates")
 	p.Versions = filepath.Join(p.LocalRoot, "Versions")
+	p.WebViewData = filepath.Join(p.LocalRoot, "WebView2")
 	p.PendingDelete = filepath.Join(p.LocalRoot, "pending-delete.json")
 	p.Profile = filepath.Join(p.UserData, "profile.json")
-	for _, dir := range []string{p.UserData, p.Backups, p.Cache, p.Temp, p.Logs, p.Updates, p.Versions} {
+	for _, dir := range []string{p.UserData, p.Backups, p.Cache, p.Temp, p.Logs, p.Updates, p.Versions, p.WebViewData} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return appPaths{}, fmt.Errorf("создание %s: %w", dir, err)
 		}
@@ -172,6 +174,7 @@ func defaultProfile() userProfile {
 	return userProfile{
 		SchemaVersion:  profileSchemaVersion,
 		UpdatedAt:      time.Now().UTC(),
+		Migrated:       true,
 		Settings:       userSettings{Server: "kiss", Theme: "dark", View: "list"},
 		ItemFilters:    map[string]string{},
 		MonsterFilters: map[string]string{},

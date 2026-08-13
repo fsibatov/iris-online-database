@@ -13,6 +13,9 @@ spec.loader.exec_module(module)
 
 
 class VKNewsUpdaterTests(unittest.TestCase):
+    def fixture(self, name):
+        return (ROOT / "tools" / "fixtures" / "vk" / name).read_text(encoding="utf-8")
+
     def test_latest_post_id_uses_highest_wall_post(self):
         values = [
             'href="/wall-59626511_62335"',
@@ -43,6 +46,48 @@ class VKNewsUpdaterTests(unittest.TestCase):
         self.assertEqual(text, "Текст новости")
         self.assertEqual(published_at, "2026-08-12T12:00:00Z")
 
+    def test_deterministic_html_fixtures(self):
+        cases = {
+            "text-post.html": (
+                62337,
+                "Обычная текстовая запись",
+                "2026-08-12T12:00:00Z",
+            ),
+            "text-image-post.html": (62338, "Запись с текстом и изображением", ""),
+            "changed-selector.html": (62340, "Текст доступен через OpenGraph", ""),
+        }
+        for filename, (post_id, text_prefix, published_at) in cases.items():
+            with self.subTest(filename=filename):
+                raw = self.fixture(filename)
+                self.assertEqual(module.latest_post_id([raw]), post_id)
+                text, timestamp = module._metadata_from_html(raw)
+                self.assertTrue(text.startswith(text_prefix), text)
+                self.assertEqual(timestamp, published_at)
+
+    def test_attachment_only_and_empty_fixtures_fail_closed(self):
+        for filename, post_id in (
+            ("attachments-only.html", 62339),
+            ("empty-response.html", 0),
+        ):
+            with self.subTest(filename=filename):
+                raw = self.fixture(filename)
+                self.assertEqual(module.latest_post_id([raw]), post_id)
+                text, _ = module._metadata_from_html(raw)
+                self.assertEqual(text, "")
+
+    def test_timeout_and_aborted_errors_are_safely_classified(self):
+        for message, expected in (
+            (
+                "Page.goto: net::ERR_ABORTED at https://vk.invalid/private",
+                "net::ERR_ABORTED",
+            ),
+            ("Timeout 30000ms exceeded at https://vk.invalid/private", "Timeout"),
+        ):
+            with self.subTest(expected=expected):
+                summary = module._error_summary(RuntimeError(message))
+                self.assertEqual(summary, expected)
+                self.assertNotIn("vk.invalid", summary)
+
     def test_error_summary_does_not_echo_navigation_url(self):
         error = RuntimeError(
             "Page.goto: net::ERR_ABORTED at https://example.invalid/private/path"
@@ -50,6 +95,15 @@ class VKNewsUpdaterTests(unittest.TestCase):
         summary = module._error_summary(error)
         self.assertEqual(summary, "net::ERR_ABORTED")
         self.assertNotIn("example.invalid", summary)
+
+    def test_safe_failure_category_never_echoes_raw_payload(self):
+        payload = "/" + "home/" + "private-user/project?token=not-for-logs"
+        category = module._safe_failure_category(
+            RuntimeError(f"Page.goto failed at {payload}")
+        )
+        self.assertEqual(category, "UPDATE_FAILED")
+        self.assertNotIn(payload, category)
+        self.assertNotIn("private-user", category)
 
     def test_update_file_does_not_rewrite_unchanged_post(self):
         payload = {
@@ -96,6 +150,51 @@ class VKNewsUpdaterTests(unittest.TestCase):
             loaded = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(loaded["text"], "Текст превью")
 
+    def test_update_file_preserves_last_known_good_on_empty_or_stale_payload(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "latest-vk.json"
+            old = {
+                "schema": 1,
+                "community_url": module.COMMUNITY_URL,
+                "post_id": 62337,
+                "post_url": "https://vk.ru/wall-59626511_62337",
+                "text": "Последнее корректное превью",
+                "published_at": "",
+                "source_updated_at": "2026-08-12T16:10:24Z",
+            }
+            path.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+            original = path.read_bytes()
+            empty = dict(
+                old,
+                post_id=62338,
+                post_url="https://vk.ru/wall-59626511_62338",
+                text="",
+            )
+            with self.assertRaisesRegex(RuntimeError, "last-known-good"):
+                module.update_file(path, empty)
+            stale = dict(
+                old,
+                post_id=62336,
+                post_url="https://vk.ru/wall-59626511_62336",
+                text="Старое превью",
+            )
+            with self.assertRaisesRegex(RuntimeError, "older post"):
+                module.update_file(path, stale)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_redirect_is_rejected_as_invalid_post_url(self):
+        payload = {
+            "schema": 1,
+            "community_url": module.COMMUNITY_URL,
+            "post_id": 62337,
+            "post_url": "https://vk.ru/away.php?to=https://example.invalid",
+            "text": "Новость",
+            "published_at": "",
+            "source_updated_at": "2026-08-12T16:10:24Z",
+        }
+        with self.assertRaisesRegex(RuntimeError, "invalid post URL"):
+            module.validate_payload(payload)
+
     def test_workflow_has_schedule_manual_run_and_no_vk_secret(self):
         workflow = (ROOT / ".github" / "workflows" / "update-vk-news.yml").read_text(
             encoding="utf-8"
@@ -104,7 +203,8 @@ class VKNewsUpdaterTests(unittest.TestCase):
         self.assertIn("cron: '7,17,27,37,47,57 * * * *'", workflow)
         self.assertIn("contents: write", workflow)
         self.assertIn("-r tools/requirements-audit.txt", workflow)
-        self.assertNotIn("playwright==", workflow)
+        self.assertNotRegex(workflow, r"pip install[^\n]*playwright==")
+        self.assertIn('importlib.metadata.version("playwright")', workflow)
         self.assertIn("git diff --quiet -- data/latest-vk.json", workflow)
         self.assertIn("for attempt in 1 2 3", workflow)
         self.assertIn("VK update failed after 3 attempts", workflow)
@@ -115,8 +215,12 @@ class VKNewsUpdaterTests(unittest.TestCase):
             (ROOT / "data" / "latest-vk.json").read_text(encoding="utf-8")
         )
         self.assertEqual(payload["schema"], 1)
-        self.assertEqual(payload["post_id"], 62336)
-        self.assertEqual(payload["post_url"], "https://vk.ru/wall-59626511_62336")
+        self.assertGreaterEqual(payload["post_id"], 62336)
+        self.assertEqual(
+            payload["post_url"],
+            f"https://vk.ru/wall-59626511_{payload['post_id']}",
+        )
+        self.assertTrue(payload["text"].strip())
 
 
 if __name__ == "__main__":

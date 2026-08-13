@@ -45,12 +45,32 @@ func TestCheckCommunityNewsJSONRejectsWrongPostURL(t *testing.T) {
 	}
 }
 
+func TestCheckCommunityNewsJSONRejectsEmptyPreview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"schema":1,"post_id":62336,"post_url":"https://vk.ru/wall-59626511_62336","text":"  "}`)
+	}))
+	defer server.Close()
+	if result := checkCommunityNewsJSON(context.Background(), server.Client(), server.URL, false); result.Available {
+		t.Fatalf("empty preview was accepted: %+v", result)
+	}
+}
+
+func TestEmbeddedCommunityNewsProvidesOfflineLastKnownGood(t *testing.T) {
+	result := embeddedCommunityNews()
+	if !result.Available || !result.Stale || result.LatestPostID < 62337 {
+		t.Fatalf("embedded last-known-good news is unavailable: %+v", result)
+	}
+	if strings.TrimSpace(result.LatestPostText) == "" || result.SourceUpdatedAt == "" {
+		t.Fatalf("embedded news lacks preview metadata: %+v", result)
+	}
+}
+
 func TestCommunityCheckerForceBypassesCachedResult(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		id := 62336 + calls - 1
-		fmt.Fprintf(w, `{"schema":1,"post_id":%d,"post_url":"https://vk.ru/wall-59626511_%d"}`, id, id)
+		fmt.Fprintf(w, `{"schema":1,"post_id":%d,"post_url":"https://vk.ru/wall-59626511_%d","text":"Новость %d"}`, id, id, id)
 	}))
 	defer server.Close()
 	checker := &communityChecker{client: server.Client(), newsURL: server.URL, result: communityStatusResult{CommunityURL: vkCommunityPageURL}}
@@ -66,7 +86,7 @@ func TestCommunityCheckerRefreshesExpiredCachedResult(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		fmt.Fprint(w, `{"schema":1,"post_id":62337,"post_url":"https://vk.ru/wall-59626511_62337"}`)
+		fmt.Fprint(w, `{"schema":1,"post_id":62337,"post_url":"https://vk.ru/wall-59626511_62337","text":"Новая запись"}`)
 	}))
 	defer server.Close()
 
@@ -80,6 +100,30 @@ func TestCommunityCheckerRefreshesExpiredCachedResult(t *testing.T) {
 	result := checker.Check(context.Background(), false)
 	if result.LatestPostID != 62337 || calls != 1 {
 		t.Fatalf("expired cache was not refreshed: result=%+v calls=%d", result, calls)
+	}
+}
+
+func TestCommunityCheckerPreservesLastKnownGoodOnFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "temporary failure", http.StatusBadGateway)
+	}))
+	defer server.Close()
+	lastGood := communityStatusResult{
+		Available:      true,
+		CommunityURL:   vkCommunityPageURL,
+		LatestPostID:   62337,
+		LatestPostURL:  "https://vk.ru/wall-59626511_62337",
+		LatestPostText: "Сохранённое превью",
+	}
+	checker := &communityChecker{
+		client:   server.Client(),
+		newsURL:  server.URL,
+		result:   lastGood,
+		lastGood: lastGood,
+	}
+	result := checker.Check(context.Background(), true)
+	if !result.Available || !result.Stale || result.LatestPostText != lastGood.LatestPostText {
+		t.Fatalf("last-known-good news was lost: %+v", result)
 	}
 }
 

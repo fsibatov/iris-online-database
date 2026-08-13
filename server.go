@@ -6,337 +6,24 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"mime"
-	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"os/signal"
-	"path/filepath"
 	"strings"
-	"syscall"
-	"time"
 )
 
 const applicationID = "iris-online-database"
 
 var (
-	appVersion    = "1.1.0"
-	releaseMarker = "IrisOnlineDiagnostic/1.1.0/development"
+	appVersion    = "2.0.0"
+	releaseMarker = "IrisOnlineDiagnostic/2.0.0/development"
 )
 
-//go:embed web/* assets/game_data.json.gz assets/set_effects.json.gz assets/item_abilities.json.gz assets/item_recipes.json.gz assets/monster_details.json.gz assets/chest_contents.json.gz assets/monster_presence.json.gz
+//go:embed web/* data/latest-vk.json assets/game_data.json.gz assets/set_effects.json.gz assets/item_abilities.json.gz assets/item_recipes.json.gz assets/monster_details.json.gz assets/chest_contents.json.gz assets/monster_presence.json.gz
 var embedded embed.FS
-
-func main() {
-	os.Exit(run())
-}
-
-func run() int {
-	flags := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	address := flags.String("addr", "127.0.0.1:8765", "HTTP listen address")
-	noBrowser := flags.Bool("no-browser", false, "do not open the browser")
-	shutdownWhenIdle := flags.Bool("shutdown-when-idle", false, "stop after the last browser session closes")
-	idleGrace := flags.Duration("idle-grace", sessionShutdownGrace, "grace period before idle shutdown")
-	heartbeatTimeout := flags.Duration("heartbeat-timeout", sessionHeartbeatTimeout, "maximum interval between browser heartbeats")
-	startupTimeout := flags.Duration("startup-timeout", startupSessionTimeout, "stop if the browser interface does not open in time")
-
-	if err := flags.Parse(os.Args[1:]); err != nil {
-		return 2
-	}
-
-	if *idleGrace <= 0 {
-		fmt.Fprintln(os.Stderr, "Параметр idle-grace должен быть положительным.")
-		return 2
-	}
-	if *heartbeatTimeout <= 0 {
-		fmt.Fprintln(os.Stderr, "Параметр heartbeat-timeout должен быть положительным.")
-		return 2
-	}
-	if *startupTimeout < 0 {
-		fmt.Fprintln(os.Stderr, "Параметр startup-timeout не может быть отрицательным.")
-		return 2
-	}
-	if err := validateListenAddress(*address); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-
-	browserEnabled := !*noBrowser && os.Getenv("IRIS_NO_BROWSER") == ""
-
-	showStartupError := func(message string) {
-		if !browserEnabled {
-			fmt.Fprintln(os.Stderr, message)
-			return
-		}
-		showStartupMessage(message)
-	}
-
-	if existing := probeExistingInstance(*address); existing.Found {
-		if sameApplicationBuild(existing) {
-			if browserEnabled {
-				_ = openBrowser("http://" + *address)
-			}
-			return 0
-		}
-
-		version := strings.TrimSpace(existing.Version)
-		message := "Закройте уже запущенную копию Iris Online другой версии и повторите запуск."
-		if version != "" {
-			message = fmt.Sprintf("Закройте уже запущенную Iris Online версии %s и повторите запуск.", version)
-		}
-
-		showStartupError(message)
-		return 1
-	}
-
-	paths, err := resolveAppPaths()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-
-	instanceLock, err := acquireInstanceLock(paths)
-	if err != nil {
-		if errors.Is(err, errInstanceAlreadyRunning) {
-			showStartupError(
-				"Iris Online уже запущена. Закройте текущее окно приложения и повторите запуск.",
-			)
-		} else {
-			fmt.Fprintln(
-				os.Stderr,
-				"блокировка единственного экземпляра:",
-				err,
-			)
-			showStartupError(
-				"Не удалось безопасно запустить Iris Online. Проверьте доступ к локальным данным приложения и повторите запуск.",
-			)
-		}
-		return 1
-	}
-	defer instanceLock.Close()
-
-	executable, _ := os.Executable()
-	bootstrapLogger := log.New(
-		os.Stderr,
-		"",
-		log.Ldate|log.Ltime|log.Lmicroseconds,
-	)
-	runMaintenance(paths, executable, bootstrapLogger)
-
-	logWriter, err := newRotatingLogWriter(
-		filepath.Join(paths.Logs, "application.log"),
-		2<<20,
-		5,
-	)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-
-	logger := log.New(
-		io.MultiWriter(os.Stderr, logWriter),
-		"",
-		log.Ldate|log.Ltime|log.Lmicroseconds,
-	)
-
-	listener, err := net.Listen("tcp", *address)
-	if err != nil {
-		existing := probeExistingInstance(*address)
-
-		if sameApplicationBuild(existing) {
-			if browserEnabled {
-				_ = openBrowser("http://" + *address)
-			}
-
-			logger.Printf(
-				"вторая копия перенаправлена в уже запущенное приложение той же версии",
-			)
-			_ = logWriter.Close()
-			return 0
-		}
-
-		if existing.Found {
-			version := strings.TrimSpace(existing.Version)
-			message := "Закройте уже запущенную копию Iris Online другой версии и повторите запуск."
-			if version != "" {
-				message = fmt.Sprintf("Закройте уже запущенную Iris Online версии %s и повторите запуск.", version)
-			}
-
-			logger.Printf(
-				"несовместимая уже запущенная копия: version=%q release=%q",
-				existing.Version,
-				existing.Release,
-			)
-
-			showStartupError(message)
-			_ = logWriter.Close()
-			return 1
-		}
-
-		logger.Printf(
-			"запуск локального сервера: %v",
-			err,
-		)
-
-		showStartupError(
-			"Не удалось запустить локальный сервер Iris Online. Проверьте, не используется ли локальный порт приложения другим процессом.",
-		)
-
-		_ = logWriter.Close()
-		return 1
-	}
-
-	closeListener := true
-	defer func() {
-		if closeListener {
-			_ = listener.Close()
-		}
-	}()
-
-	profile, err := newProfileStore(paths)
-	if err != nil {
-		logger.Printf(
-			"профиль пользователя: %v",
-			err,
-		)
-		_ = logWriter.Close()
-		return 1
-	}
-
-	if err := ensureLoaded(); err != nil {
-		logger.Printf(
-			"загрузка базы данных: %v",
-			err,
-		)
-		_ = logWriter.Close()
-		return 1
-	}
-
-	closeListener = false
-
-	signalContext, stopSignals := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
-	defer stopSignals()
-
-	ctx, cancel := context.WithCancel(signalContext)
-
-	effectiveStartupTimeout := time.Duration(0)
-	if browserEnabled {
-		effectiveStartupTimeout = *startupTimeout
-	}
-
-	app := &application{
-		paths:     paths,
-		profile:   profile,
-		cache:     newResponseCache(128, 8<<20, 5*time.Minute),
-		logger:    logger,
-		logWriter: logWriter,
-		listener:  listener,
-		ctx:       ctx,
-		cancel:    cancel,
-		sessions:  newSessionManager(*idleGrace, *heartbeatTimeout),
-		autoExit:  browserEnabled || *shutdownWhenIdle,
-
-		shutdownOnHeartbeatExpiry: *shutdownWhenIdle,
-		startupTimeout:            effectiveStartupTimeout,
-		updates:                   newUpdateChecker(),
-		community:                 newCommunityChecker(),
-	}
-
-	app.server = &http.Server{
-		Addr:              *address,
-		Handler:           app.routes(),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    1 << 20,
-	}
-
-	app.wg.Add(1)
-	go app.monitorSessions()
-
-	serveError := make(chan error, 1)
-
-	app.wg.Add(1)
-	go func() {
-		defer app.wg.Done()
-
-		err := app.server.Serve(listener)
-		if err != nil && err != http.ErrServerClosed {
-			serveError <- err
-		}
-		close(serveError)
-	}()
-
-	urlText := "http://" + *address
-
-	fmt.Println(urlText)
-
-	logger.Printf(
-		"приложение запущено: %s, pid=%d",
-		urlText,
-		processID(),
-	)
-
-	if browserEnabled {
-		app.wg.Add(1)
-
-		go func() {
-			defer app.wg.Done()
-
-			timer := time.NewTimer(350 * time.Millisecond)
-			defer stopTimer(timer)
-
-			select {
-			case <-timer.C:
-				if err := openBrowser(urlText); err != nil {
-					logger.Printf(
-						"открытие браузера: %v",
-						err,
-					)
-				}
-
-			case <-ctx.Done():
-			}
-		}()
-	}
-
-	select {
-	case <-ctx.Done():
-		app.requestShutdown(
-			"сигнал завершения или закрытие интерфейса",
-		)
-
-	case err := <-serveError:
-		if err != nil {
-			logger.Printf(
-				"ошибка локального сервера: %v",
-				err,
-			)
-
-			app.requestShutdown(
-				"ошибка локального сервера",
-			)
-		}
-	}
-
-	if err := app.shutdown(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-
-	return 0
-}
 
 func (a *application) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -386,9 +73,6 @@ func (a *application) routes() http.Handler {
 	mux.HandleFunc("/api/health", a.handleHealth)
 	mux.HandleFunc("/api/update-check", a.handleUpdateCheck)
 	mux.HandleFunc("/api/community-status", a.handleCommunityStatus)
-	mux.HandleFunc("/api/session/open", a.handleSessionOpen)
-	mux.HandleFunc("/api/session/heartbeat", a.handleSessionHeartbeat)
-	mux.HandleFunc("/api/session/close", a.handleSessionClose)
 	mux.HandleFunc("/api/user-data", a.handleUserData)
 	mux.HandleFunc("/api/favorites", handleFavorites)
 	mux.HandleFunc("/api/meta", handleMeta)
@@ -484,9 +168,7 @@ func withAPIConcurrencyLimit(next http.Handler, maximum int) http.Handler {
 
 func (a *application) withLifecycleGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.closing.Load() &&
-			strings.HasPrefix(r.URL.Path, "/api/") &&
-			r.URL.Path != "/api/session/close" {
+		if a.closing.Load() && strings.HasPrefix(r.URL.Path, "/api/") {
 
 			http.Error(
 				w,
@@ -564,25 +246,7 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 }
 
 func validRequestHost(hostPort string) bool {
-	host := strings.TrimSpace(hostPort)
-
-	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
-		host = parsedHost
-	} else {
-		host = strings.Trim(host, "[]")
-
-		if strings.Contains(host, ":") &&
-			net.ParseIP(host) == nil {
-			return false
-		}
-	}
-
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return strings.EqualFold(strings.TrimSpace(hostPort), "wails.localhost")
 }
 
 func validRequestOrigin(r *http.Request) bool {

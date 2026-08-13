@@ -18,10 +18,12 @@ const (
 	maxCommunityNewsBytes      = 256 << 10
 	maxCommunityPostTextLength = 4000
 	communityCacheTTL          = 2 * time.Minute
+	communityFailureRetryTTL   = 15 * time.Second
 )
 
 type communityStatusResult struct {
 	Available       bool   `json:"available"`
+	Stale           bool   `json:"stale,omitempty"`
 	CommunityURL    string `json:"communityUrl"`
 	LatestPostID    int64  `json:"latestPostId,omitempty"`
 	LatestPostURL   string `json:"latestPostUrl,omitempty"`
@@ -45,6 +47,7 @@ type communityChecker struct {
 	attempted bool
 	checkedAt time.Time
 	result    communityStatusResult
+	lastGood  communityStatusResult
 	client    *http.Client
 	newsURL   string
 }
@@ -54,6 +57,7 @@ func newCommunityChecker() *communityChecker {
 	transport.MaxIdleConns = 2
 	transport.MaxIdleConnsPerHost = 2
 	transport.IdleConnTimeout = 5 * time.Second
+	seed := embeddedCommunityNews()
 	return &communityChecker{
 		client: &http.Client{
 			Transport: transport,
@@ -72,9 +76,22 @@ func newCommunityChecker() *communityChecker {
 				return nil
 			},
 		},
-		newsURL: vkNewsJSONURL,
-		result:  communityStatusResult{CommunityURL: vkCommunityPageURL},
+		newsURL:   vkNewsJSONURL,
+		attempted: seed.Available,
+		checkedAt: time.Now(),
+		result:    seed,
+		lastGood:  seed,
 	}
+}
+
+func embeddedCommunityNews() communityStatusResult {
+	body, err := embedded.ReadFile("data/latest-vk.json")
+	if err != nil {
+		return communityStatusResult{CommunityURL: vkCommunityPageURL}
+	}
+	result := decodeCommunityNews(body)
+	result.Stale = result.Available
+	return result
 }
 
 func (c *communityChecker) Check(ctx context.Context, force bool) communityStatusResult {
@@ -83,10 +100,24 @@ func (c *communityChecker) Check(ctx context.Context, force bool) communityStatu
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.attempted && c.result.Available && !force && time.Since(c.checkedAt) < communityCacheTTL {
+	cacheTTL := communityCacheTTL
+	if !c.result.Available {
+		cacheTTL = communityFailureRetryTTL
+	}
+	if c.attempted && !force && time.Since(c.checkedAt) < cacheTTL {
 		return c.result
 	}
-	c.result = checkCommunityNewsJSON(ctx, c.client, c.newsURL, force)
+	fresh := checkCommunityNewsJSON(ctx, c.client, c.newsURL, force)
+	if fresh.Available {
+		c.lastGood = fresh
+		c.result = fresh
+	} else if c.lastGood.Available {
+		fallback := c.lastGood
+		fallback.Stale = true
+		c.result = fallback
+	} else if c.result.Available {
+		c.lastGood = c.result
+	}
 	c.attempted = true
 	c.checkedAt = time.Now()
 	return c.result
@@ -118,7 +149,7 @@ func checkCommunityNewsJSON(ctx context.Context, client *http.Client, target str
 		return result
 	}
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "IrisOnlineDatabase/1.1.0")
+	request.Header.Set("User-Agent", "IrisOnlineDatabase/"+appVersion)
 	request.Header.Set("Cache-Control", "no-cache")
 	request.Header.Set("Pragma", "no-cache")
 
@@ -135,18 +166,24 @@ func checkCommunityNewsJSON(ctx context.Context, client *http.Client, target str
 		return result
 	}
 
+	return decodeCommunityNews(body)
+}
+
+func decodeCommunityNews(body []byte) communityStatusResult {
+	result := communityStatusResult{CommunityURL: vkCommunityPageURL}
 	var payload communityNewsFile
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return result
 	}
-	if payload.Schema != 1 || payload.PostID <= 0 || !validCommunityPostURL(payload.PostURL, payload.PostID) {
+	text := cleanCommunityPostText(payload.Text)
+	if payload.Schema != 1 || payload.PostID <= 0 || text == "" || !validCommunityPostURL(payload.PostURL, payload.PostID) {
 		return result
 	}
 
 	result.Available = true
 	result.LatestPostID = payload.PostID
 	result.LatestPostURL = strings.TrimSpace(payload.PostURL)
-	result.LatestPostText = cleanCommunityPostText(payload.Text)
+	result.LatestPostText = text
 	result.PublishedAt = cleanRFC3339(payload.PublishedAt)
 	result.SourceUpdatedAt = cleanRFC3339(payload.SourceUpdated)
 	if strings.TrimSpace(payload.CommunityURL) == vkCommunityPageURL {

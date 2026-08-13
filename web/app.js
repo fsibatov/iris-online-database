@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.1.0';
+  const APP_VERSION = '2.0.0';
   const PAGE_SIZE = 24;
   const FAVORITES_PAGE_SIZE = 24;
   const SOURCE_BATCH = 20;
@@ -63,9 +63,8 @@
     favoritePage: 1,
     monsterDrops: null,
     monsterWorldDrops: null,
-    sessionId: '',
     updateInfo: { checked: false, checking: false, latestVersion: '', updateAvailable: false, releaseUrl: '' },
-    vkNews: { checked: false, checking: false, available: false, latestPostId: 0, latestPostUrl: '', latestPostText: '', publishedAt: '' },
+    vkNews: { checked: false, checking: false, available: false, stale: false, onlineRefreshAttempted: false, latestPostId: 0, latestPostUrl: '', latestPostText: '', publishedAt: '', sourceUpdatedAt: '' },
   };
 
   if (!['list', 'cards'].includes(state.view)) state.view = 'list';
@@ -307,7 +306,7 @@
         response = await fetch(path, { ...options, headers, signal: controller.signal });
       } catch (error) {
         if (error?.name === 'AbortError' || error?.name === 'TimeoutError') throw error;
-        throw new Error('Не удалось связаться с локальным приложением. Попробуйте ещё раз.');
+        throw new Error('Не удалось связаться с приложением. Попробуйте ещё раз.');
       }
       if (!response.ok) {
         const error = new Error(response.status === 404 ? 'Запись не найдена.' : `Не удалось выполнить запрос (код ${response.status}).`);
@@ -1496,7 +1495,7 @@
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
       </header>
       ${gameProperties(presentation, 'Характеристики монстра')}
-      ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Предметы с наибольшим шансом</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small>${formatChance(drop.chance)} за одну основную попытку</small></a>`).join('')}</div></section>` : ''}
+      ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Предметы с наибольшим шансом</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}" aria-label="${escapeHTML(drop.item)} — ${formatChance(drop.chance)}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small aria-hidden="true">— ${formatChance(drop.chance)}</small></a>`).join('')}</div></section>` : ''}
       <section class="detail-accordions">
         ${slots.length ? accordion('Обычная добыча', formatCount(slots.length, 'вариант', 'варианта', 'вариантов'), `<div data-monster-drops-host><p class="empty-copy">Список загрузится после открытия раздела.</p></div>`, false, 'monster-drops lazy-monster-drops') : ''}
         ${worldRuleCount ? accordion('Мировая добыча', `${formatCount(worldRuleCount, 'правило', 'правила', 'правил')} по уровню и типу`, `<div data-monster-world-drops-host><p class="empty-copy">Список загрузится после открытия раздела.</p></div>`, false, 'monster-world-drops lazy-monster-world-drops') : ''}
@@ -1865,17 +1864,25 @@
     const postUrl = String(state.vkNews.latestPostUrl || '').trim();
     const text = vkNewsPreviewText(state.vkNews.latestPostText);
     if (!postId || !postUrl) return vkNewsFallbackHTML('Не удалось определить последнюю запись. Нажмите «Проверить новую запись», чтобы повторить попытку.');
-    const body = text
-      ? `<p class="vk-news-text">${multilineHTML(text)}</p>`
-      : '<p class="vk-news-text vk-news-text--muted">Последняя запись найдена. Откройте её во ВКонтакте, чтобы посмотреть полный текст и вложения.</p>';
+    if (!text) return vkNewsFallbackHTML('Подготовленное превью записи пусто. Нажмите «Проверить новую запись», чтобы повторить попытку.');
+    const publishedLabel = formatVkNewsDate(state.vkNews.publishedAt);
+    const checkedLabel = formatVkNewsDate(state.vkNews.sourceUpdatedAt);
+    const dateLabel = publishedLabel ? ` · ${publishedLabel}` : checkedLabel ? ` · проверено ${checkedLabel}` : '';
+    const staleLabel = state.vkNews.stale ? '<span class="vk-news-stale">Сохранённая копия</span>' : '';
     return `<article class="vk-news-card">
       <div class="vk-news-card-mark" aria-hidden="true">VK</div>
       <div class="vk-news-card-body">
-        <div class="vk-news-card-meta"><strong>Iris Online</strong><span>Последняя запись · № ${postId}</span></div>
-        ${body}
+        <div class="vk-news-card-meta"><strong>Iris Online</strong><span>Запись № ${postId}${escapeHTML(dateLabel)}</span>${staleLabel}</div>
+        <p class="vk-news-text">${multilineHTML(text)}</p>
         <a class="primary-button vk-news-open" href="${escapeHTML(postUrl)}" target="_blank" rel="noopener noreferrer external">Открыть запись ${icons.external}</a>
       </div>
     </article>`;
+  }
+
+  function formatVkNewsDate(value) {
+    const parsed = new Date(String(value || ''));
+    if (Number.isNaN(parsed.getTime())) return '';
+    return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(parsed);
   }
 
   function renderVkNews() {
@@ -1897,16 +1904,12 @@
     host.innerHTML = vkNewsCardHTML();
   }
 
-  async function checkVkNews({ force = false } = {}) {
+  async function checkVkNews({ force = false, notify = force } = {}) {
     if (routeBase() !== 'home' || state.vkNews.checking) {
       if (routeBase() === 'home') renderVkNews();
       return;
     }
-    if (navigator.onLine === false) {
-      state.vkNews = { ...state.vkNews, checked: true, checking: false, available: false };
-      renderVkNews();
-      return;
-    }
+    if (force) state.vkNews.onlineRefreshAttempted = true;
     state.vkNews.checking = true;
     renderVkNews();
     try {
@@ -1916,18 +1919,31 @@
         checked: true,
         checking: false,
         available: Boolean(result?.available),
+        stale: Boolean(result?.stale),
         latestPostId: Number(result?.latestPostId || 0),
         latestPostUrl: String(result?.latestPostUrl || ''),
         latestPostText: String(result?.latestPostText || ''),
         publishedAt: String(result?.publishedAt || ''),
+        sourceUpdatedAt: String(result?.sourceUpdatedAt || ''),
       };
-      if (force) showToast(state.vkNews.available ? 'Последняя запись ВКонтакте обновлена.' : 'Не удалось получить последнюю запись ВКонтакте.');
+      if (notify) {
+        const message = !state.vkNews.available
+          ? 'Не удалось получить последнюю запись ВКонтакте.'
+          : state.vkNews.stale
+            ? 'Сеть недоступна: показана сохранённая запись ВКонтакте.'
+            : 'Последняя запись ВКонтакте обновлена.';
+        showToast(message);
+      }
     } catch (_) {
-      state.vkNews = { ...state.vkNews, checked: true, checking: false, available: false };
+      state.vkNews = { ...state.vkNews, checked: true, checking: false };
       if (force) showToast('Не удалось проверить новости ВКонтакте.');
     } finally {
       state.vkNews.checking = false;
       renderVkNews();
+      if (!force && !state.vkNews.onlineRefreshAttempted && navigator.onLine !== false) {
+        state.vkNews.onlineRefreshAttempted = true;
+        setTimeout(() => void checkVkNews({ force: true, notify: false }), 0);
+      }
     }
   }
 
@@ -1981,7 +1997,7 @@
   }
 
   async function saveProfileNow() {
-    if (!state.profileLoaded || sessionClosing || profileSaving || !profileDirty) return;
+    if (!state.profileLoaded || applicationClosing || profileSaving || !profileDirty) return;
     profileSaving = true;
     const revision = profileRevision;
     const payload = profilePayload();
@@ -1998,7 +2014,7 @@
     } finally {
       profileSaving = false;
       profileController = null;
-      if (profileDirty && !sessionClosing) {
+      if (profileDirty && !applicationClosing) {
         clearTimeout(profileTimer);
         profileTimer = setTimeout(saveProfileNow, PROFILE_DEBOUNCE);
       }
@@ -2010,7 +2026,7 @@
     profileDirty = true;
     profileRevision += 1;
     persistPendingProfile();
-    if (!state.profileLoaded || sessionClosing) return;
+    if (!state.profileLoaded || applicationClosing) return;
     clearTimeout(profileTimer);
     profileTimer = setTimeout(saveProfileNow, delay);
   }
@@ -2069,97 +2085,26 @@
     if (pendingProfile || !profile.migrated || migratedLocalRecentlyViewed) scheduleProfileSave(0);
   }
 
-  let heartbeatTimer;
-  let sessionOpenController;
-  let sessionOpening = false;
-  let sessionClosing = false;
-  let sessionCloseSent = false;
-
-  function newSessionID() {
-    const bytes = new Uint8Array(16);
-    if (globalThis.crypto?.getRandomValues) {
-      globalThis.crypto.getRandomValues(bytes);
-      return [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
-    }
-    return `browser-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
-  }
-
-  function scheduleHeartbeat(delay = 5000) {
-    clearTimeout(heartbeatTimer);
-    if (!sessionClosing) heartbeatTimer = setTimeout(sendHeartbeat, delay);
-  }
-
-  async function sendHeartbeat() {
-    if (sessionClosing) return;
-    if (!state.sessionId) return openApplicationSession();
-    try {
-      await api('/api/session/heartbeat', { method: 'POST', body: JSON.stringify({ id: state.sessionId }), headers: { 'Content-Type': 'application/json' } });
-      scheduleHeartbeat(5000);
-    } catch (_) {
-      clearTimeout(heartbeatTimer);
-      if (!sessionClosing) heartbeatTimer = setTimeout(openApplicationSession, 2000);
-    }
-  }
-
-  async function openApplicationSession() {
-    if (sessionClosing || sessionOpening) return;
-    if (!state.sessionId) state.sessionId = newSessionID();
-    sessionOpening = true;
-    sessionOpenController = new AbortController();
-    try {
-      const response = await api('/api/session/open', { method: 'POST', signal: sessionOpenController.signal, body: JSON.stringify({ id: state.sessionId }), headers: { 'Content-Type': 'application/json' } });
-      state.sessionId = response.id;
-      if (sessionClosing) {
-        queueSessionClose(state.sessionId, false);
-        return;
-      }
-      scheduleHeartbeat(Math.max(1000, Number(response.heartbeatSeconds || 5) * 1000));
-    } catch (error) {
-      if (sessionClosing) return;
-      if (error?.status === 409) state.sessionId = '';
-      clearTimeout(heartbeatTimer);
-      heartbeatTimer = setTimeout(openApplicationSession, 2000);
-    } finally {
-      sessionOpenController = null;
-      sessionOpening = false;
-    }
-  }
+  let applicationClosing = false;
 
   function abortPendingWork() {
     clearTimeout(suggestionTimer);
     clearTimeout(catalogDebounce);
     clearTimeout(profileTimer);
     clearTimeout(showToast.timer);
-    clearTimeout(heartbeatTimer);
     state.routeController?.abort();
     state.catalogController?.abort();
     state.suggestionController?.abort();
     profileController?.abort();
-    sessionOpenController?.abort();
   }
 
-  function queueSessionClose(id, pendingOpen = false) {
-    if (!id) return;
-    const body = JSON.stringify({ id, pendingOpen: Boolean(pendingOpen) });
-
-    try { navigator.sendBeacon?.('/api/session/close', body); } catch (_) {}
-    fetch('/api/session/close', {
-      method: 'POST',
-      body,
-      headers: { 'Content-Type': 'application/json' },
-      keepalive: true,
-    }).catch(() => {});
-  }
-
-  function closeApplicationSession() {
-    if (sessionCloseSent) return;
-    const pendingOpen = sessionOpening;
-    sessionCloseSent = true;
-    sessionClosing = true;
+  function prepareForWindowClose() {
+    if (applicationClosing) return;
+    applicationClosing = true;
     resetTransientCatalogFilters();
+    persistPendingProfile();
     saveProfileBestEffort();
     abortPendingWork();
-    queueSessionClose(state.sessionId, pendingOpen);
   }
 
 
@@ -2376,10 +2321,26 @@
     else if (action) openInfoDialog(action);
   });
 
+  function handleExternalLink(event) {
+    const externalLink = event.target.closest('a[href^="https://"]');
+    if (!externalLink) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const openExternal = window.go?.main?.DesktopBridge?.OpenExternalURL;
+    if (typeof openExternal === 'function') {
+      void openExternal(externalLink.href).catch(() => showToast('Не удалось открыть внешнюю ссылку.'));
+    } else {
+      showToast('Внешняя ссылка заблокирована: desktop bridge недоступен.');
+    }
+    return true;
+  }
+
   document.addEventListener('click', event => {
+    if (handleExternalLink(event)) return;
     if (!event.target.closest('.search-combobox')) closeSuggestions();
     if (!moreMenu.hidden && !event.target.closest('#moreMenu') && !event.target.closest('#moreButton')) closeMoreMenu();
   });
+  document.addEventListener('auxclick', event => { handleExternalLink(event); });
 
   document.addEventListener('keydown', event => {
     if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) && !infoDialog.open) {
@@ -2403,13 +2364,10 @@
   infoDialog.addEventListener('close', () => { dialogReturnFocus?.focus?.({ preventScroll: true }); dialogReturnFocus = null; });
 
   window.addEventListener('hashchange', renderRoute);
-  window.addEventListener('beforeunload', closeApplicationSession);
-  window.addEventListener('pagehide', closeApplicationSession);
+  window.addEventListener('beforeunload', prepareForWindowClose);
+  window.addEventListener('pagehide', prepareForWindowClose);
   window.addEventListener('pageshow', () => {
-    if (sessionCloseSent) state.sessionId = newSessionID();
-    sessionClosing = false;
-    sessionCloseSent = false;
-    openApplicationSession();
+    applicationClosing = false;
   });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
@@ -2420,16 +2378,14 @@
       }
       return;
     }
-    if (!sessionClosing) openApplicationSession();
   });
 
   (async () => {
     globalSearch.value = '';
     closeSuggestions();
 
-    const openingSession = openApplicationSession();
     try {
-      await Promise.all([loadUserProfile(), openingSession]);
+      await loadUserProfile();
     } catch (_) { state.profileLoaded = true; }
     renderRoute();
     renderVersionStatus();

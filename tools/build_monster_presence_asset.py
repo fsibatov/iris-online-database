@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import gzip
 import json
 from pathlib import Path
@@ -38,10 +39,8 @@ def monster_ids(directory: Path) -> list[int]:
             while i < len(lines) and lines[i] != "}":
                 parts = lines[i].split()
                 if parts:
-                    try:
+                    with contextlib.suppress(ValueError):
                         result.add(int(parts[0]))
-                    except ValueError:
-                        pass
                 i += 1
             if i < len(lines):
                 i += 1

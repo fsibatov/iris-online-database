@@ -3,6 +3,8 @@
 *.pyc
 *.tmp
 *.zip
+*.rar
+*.7z
 .coverage
 /$coverage
 .env
@@ -10,6 +12,11 @@
 .pytest_cache/
 .ruff_cache/
 /dist/
+/build/appicon.png
+/build/bin/
+/build/generated/
+/web/wailsjs/
+/.venv/
 /iris-online-database
 /resource_windows_*.syso
 __pycache__/

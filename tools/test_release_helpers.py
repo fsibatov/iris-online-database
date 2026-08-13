@@ -1,202 +1,312 @@
-import shutil
+"""Regression tests for repository, build and release invariants."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from smoke_common import free_port, require_binary
+from frontend_smoke_test import playwright_failure_category
+from playwright.sync_api import Error as PlaywrightError
+from release_fingerprint import FingerprintError, assert_release_tree, source_hash
 
 ROOT = Path(__file__).resolve().parents[1]
+AUDIT = ROOT / "tools" / "repository_audit.py"
 
 
 class ReleaseHelperTests(unittest.TestCase):
-    def test_free_port_is_valid(self):
-        self.assertGreater(free_port(), 0)
-
-    def test_require_binary_rejects_missing_path(self):
-        with self.assertRaises(SystemExit):
-            require_binary(str(Path(tempfile.gettempdir()) / "missing-iris-binary"))
-
-    def test_build_ps1_is_powershell_51_safe_utf8_bom(self):
-        path = ROOT / "build.ps1"
-        raw = path.read_bytes()
-        self.assertTrue(
-            raw.startswith(b"\xef\xbb\xbf"),
-            "build.ps1 must be UTF-8 with BOM for Windows PowerShell 5.1",
+    def run_audit(self, root: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-B", str(AUDIT), "--root", str(root)],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            timeout=30,
         )
-        text = raw.decode("utf-8-sig")
-        self.assertNotIn("$Version:", text)
-        self.assertIn("${Version}:", text)
-        self.assertIn("Собрано Iris Online", text)
-        self.assertIn('$Version = "1.1.0"', text)
-        self.assertIn("IrisOnlineRelease/$Version", text)
-        self.assertIn("IrisOnlineDiagnostic/$Version/$ActualGo", text)
-        self.assertIn('$env:CGO_ENABLED = "1"', text)
-        self.assertIn('$env:CGO_ENABLED = "0"', text)
-        self.assertIn("Для go test -race требуется GCC/CGO", text)
-        self.assertIn(
-            "IRIS_SKIP_CHECKS=1 разрешён только для диагностической сборки", text
+
+    def test_version_is_coherent_across_runtime_and_release_metadata(self):
+        self.assertEqual(
+            (ROOT / "VERSION").read_text(encoding="utf-8").strip(), "2.0.0"
         )
-        self.assertIn("$SavedEnvironment", text)
-        self.assertIn("finally", text)
-        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
-        if powershell:
-            command = (
-                "$e=$null; $t=$null; "
-                f"[System.Management.Automation.Language.Parser]::ParseFile('{str(path).replace("'", "''")}',[ref]$t,[ref]$e)|Out-Null; "
-                "if($e.Count -gt 0){$e|ForEach-Object{$_.ToString()}; exit 1}"
-            )
-            subprocess.run(
-                [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
-                check=True,
-            )
+        server = (ROOT / "server.go").read_text(encoding="utf-8")
+        html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        script = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
+        wails = json.loads((ROOT / "wails.json").read_text(encoding="utf-8"))
+        resources = json.loads(
+            (ROOT / "build" / "windows" / "info.json").read_text(encoding="utf-8")
+        )
+        self.assertIn('appVersion    = "2.0.0"', server)
+        self.assertIn("Версия 2.0.0", html)
+        self.assertIn("const APP_VERSION = '2.0.0'", script)
+        self.assertEqual(wails["info"]["productVersion"], "2.0.0")
+        self.assertEqual(resources["fixed"]["product_version"], "2.0.0.0")
+        self.assertEqual(resources["info"]["0419"]["ProductVersion"], "2.0.0")
 
-    def test_build_scripts_separate_release_and_diagnostic_markers(self):
-        ps = (ROOT / "build.ps1").read_text(encoding="utf-8-sig")
-        sh = (ROOT / "build.sh").read_text(encoding="utf-8")
-        self.assertIn('$Version = "1.1.0"', ps)
-        self.assertIn('VERSION="1.1.0"', sh)
-        for text in (ps, sh):
-            self.assertIn("IrisOnlineRelease/", text)
-            self.assertIn(
-                "IRIS_SKIP_CHECKS=1 разрешён только для диагностической сборки", text
-            )
-            self.assertIn("IrisOnlineDiagnostic/", text)
-            self.assertIn("diagnostic-", text)
-            legacy_versions = tuple(f"1.0.{patch}" for patch in range(7))
-            for stale in (*legacy_versions, "IrisOnline" + "Preview/"):
-                self.assertNotIn(stale, text)
+    def test_desktop_build_contract_has_no_production_listener(self):
+        windows_main = (ROOT / "main_windows.go").read_text(encoding="utf-8")
+        server = (ROOT / "server.go").read_text(encoding="utf-8")
+        combined = windows_main + server
+        self.assertIn("wails.Run", windows_main)
+        self.assertIn("SingleInstanceLock", windows_main)
+        self.assertIn("WebviewUserDataPath", windows_main)
+        self.assertNotIn("net.Listen(", combined)
+        self.assertNotIn("127.0.0.1:8765", combined)
+        self.assertNotIn("-no-browser", combined)
+        self.assertNotIn("-addr", combined)
 
-    def test_windows_resources_are_generated_and_reproducible(self):
-        icon = ROOT / "resources" / "icon.ico"
-        manifest = ROOT / "resources" / "app.manifest"
-        self.assertTrue(icon.is_file())
-        self.assertTrue(manifest.is_file())
+    def test_windows_resources_and_manifest_are_v2(self):
+        icon = ROOT / "build" / "windows" / "icon.ico"
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_text(
+            encoding="utf-8"
+        )
         header = icon.read_bytes()[:6]
         self.assertEqual(header[:4], b"\x00\x00\x01\x00")
         self.assertGreater(int.from_bytes(header[4:6], "little"), 0)
-        generator = ROOT / "tools" / "generate_windows_resources.py"
-        with tempfile.TemporaryDirectory(prefix="iris-rsrc-") as temp_dir:
-            for arch in ("386", "amd64", "arm64"):
-                first = Path(temp_dir) / f"first-{arch}.syso"
-                second = Path(temp_dir) / f"second-{arch}.syso"
-                command = [
-                    "python3",
-                    str(generator),
-                    "--icon",
-                    str(icon),
-                    "--manifest",
-                    str(manifest),
-                    "--arch",
-                    arch,
-                ]
-                subprocess.run([*command, "--output", str(first)], check=True)
-                subprocess.run([*command, "--output", str(second)], check=True)
-                self.assertEqual(
-                    first.read_bytes(),
-                    second.read_bytes(),
-                    f"non-reproducible {arch} resource",
-                )
-        self.assertFalse(
-            any(ROOT.glob("resource_windows_*.syso")),
-            "generated .syso files must not be stored in the source tree",
-        )
-        self.assertIn(
-            "resource_windows_*.syso", (ROOT / ".gitignore").read_text(encoding="utf-8")
-        )
+        self.assertIn("permonitorv2", manifest.lower())
+        self.assertIn("longPathAware", manifest)
+        self.assertIn('level="asInvoker"', manifest)
 
-    def test_local_release_gate_uses_actual_go_and_declared_smoke_dependencies(self):
-        script = (ROOT / "tools" / "run_all_checks.sh").read_text(encoding="utf-8")
-        self.assertIn('ACTUAL_GO="$(go version', script)
-        self.assertIn("IrisOnlineDiagnostic/$VERSION/$ACTUAL_GO", script)
-        self.assertNotIn("IrisOnlineDiagnostic/1.1.0/go1.23.2", script)
-        self.assertIn("tools/repository_audit.py", script)
-        self.assertIn("go mod verify", script)
-        self.assertIn("go mod tidy -diff", script)
-        self.assertIn('go build -o "$temp_dir/build-probe" .', script)
-        self.assertIn("version(package)", script)
-        self.assertIn("actual != expected", script)
+    def test_release_build_is_external_and_fingerprint_gated(self):
+        build = (ROOT / "scripts" / "build-release.sh").read_text(encoding="utf-8")
+        gate = (ROOT / "scripts" / "release-gate.sh").read_text(encoding="utf-8")
+        launcher = (ROOT / "IrisTools.ps1").read_text(encoding="utf-8")
+        for marker in (
+            "release_fingerprint.py --verify",
+            "windows/amd64",
+            "-webview2 embed",
+            "IrisOnlineDatabase.exe",
+            "SHA256SUMS.txt",
+        ):
+            self.assertIn(marker, build)
+        self.assertIn("release_fingerprint.py --write", gate)
+        self.assertIn("git status --porcelain", gate)
+        self.assertIn("scripts\\windows\\IrisTools.ps1", launcher)
 
-        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        self.assertIn('go build -o "$RUNNER_TEMP/iris-online-build-check" .', ci)
-        self.assertIn('PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache"', ci)
-
-        requirements = {
-            line.strip().split("==", 1)[0]
-            for line in (ROOT / "tools" / "requirements-audit.txt")
-            .read_text(encoding="utf-8")
-            .splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        }
-        self.assertIn("playwright", requirements)
-        self.assertIn("psutil", requirements)
-
-    def test_repository_audit_rejects_release_artifact_classes(self):
-        source = (ROOT / "tools" / "repository_audit.py").read_text(encoding="utf-8")
-        for marker in ("$coverage", "__pycache__", ".ruff_cache", '"dist"'):
-            self.assertIn(marker, source)
-
-        cache_dir = ROOT / "__pycache__"
-        coverage_file = ROOT / "$coverage"
-        self.assertFalse(cache_dir.exists())
-        # repository_audit is intentionally read-only: the regression test owns cleanup.
-        coverage_file.unlink(missing_ok=True)
-        try:
-            cache_dir.mkdir()
-            (cache_dir / "audit-probe.pyc").write_bytes(b"probe")
-            coverage_file.write_text("mode: set\n", encoding="utf-8")
-            result = subprocess.run(
-                [sys.executable, "-B", str(ROOT / "tools" / "repository_audit.py")],
-                cwd=ROOT,
+    def test_fingerprint_hashes_git_mode_and_rejects_dirty_source(self):
+        with tempfile.TemporaryDirectory(
+            prefix="iris-fingerprint-fixture-"
+        ) as temporary:
+            root = Path(temporary)
+            subprocess.run(
+                ["git", "init", "--initial-branch=main", str(root)],
+                check=True,
                 capture_output=True,
-                text=True,
-                check=False,
+                timeout=30,
             )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("forbidden release directory detected", result.stdout)
-            self.assertNotIn("__pycache__/", result.stdout)
-            self.assertIn("forbidden release file detected", result.stdout)
-            self.assertNotIn("$coverage", result.stdout)
-        finally:
-            coverage_file.unlink(missing_ok=True)
-            shutil.rmtree(cache_dir, ignore_errors=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "config",
+                    "user.email",
+                    "test@example.invalid",
+                ],
+                check=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.name", "Iris test"],
+                check=True,
+                timeout=30,
+            )
+            tracked = root / "script.sh"
+            tracked.write_text("exit 0\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(root), "add", "script.sh"],
+                check=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-m", "fixture"],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            regular_hash, count = source_hash(root)
+            self.assertEqual(count, 1)
+            subprocess.run(
+                ["git", "-C", str(root), "update-index", "--chmod=+x", "script.sh"],
+                check=True,
+                timeout=30,
+            )
+            executable_hash, _ = source_hash(root)
+            self.assertNotEqual(regular_hash, executable_hash)
+            with self.assertRaises(FingerprintError):
+                assert_release_tree(root, "main")
 
-    def test_source_tree_has_no_development_package_artifacts(self):
-        forbidden_names = {
-            "AUDIT.md",
-            "CHANGELOG.md",
-            "PATCH_APPLY.md",
-            "ORIGINAL-PUBLIC-ZIP-CONTENTS.txt",
-            "ORIGINAL-SOURCE-ZIP-CONTENTS.txt",
-        }
-        names = {path.name for path in ROOT.iterdir()}
-        self.assertFalse(names & forbidden_names)
-        self.assertFalse(
-            (ROOT / "iris-online-database").exists(),
-            "Linux build artifact must not be packaged in source",
+    def test_python_requirements_are_single_pinned_source(self):
+        requirements = (ROOT / "tools" / "requirements-audit.txt").read_text(
+            encoding="utf-8"
         )
-        self.assertFalse(
-            any(path.suffix.lower() == ".exe" for path in ROOT.rglob("*.exe")),
-            "Windows EXE must not be packaged in source",
+        packages = {}
+        for line in requirements.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            self.assertEqual(line.count("=="), 1, line)
+            package, version = line.split("==", 1)
+            packages[package] = version
+        self.assertEqual(
+            set(packages),
+            {"bandit", "pip", "pip-audit", "playwright", "pyyaml", "ruff"},
         )
+        for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
+            text = workflow.read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"playwright==[0-9]")
+            self.assertNotRegex(text, r"ruff==[0-9]")
+            self.assertNotRegex(text, r"bandit==[0-9]")
+            self.assertNotRegex(text, r"pip-audit==[0-9]")
+
+    def test_workflow_actions_are_pinned_to_full_commits(self):
+        uses_pattern = re.compile(r"^\s*uses:\s*[^@\s]+@([^\s#]+)", re.MULTILINE)
+        for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
+            text = workflow.read_text(encoding="utf-8")
+            refs = uses_pattern.findall(text)
+            self.assertTrue(refs, workflow.name)
+            for ref in refs:
+                self.assertRegex(ref, r"^[0-9a-f]{40}$", f"{workflow.name}: {ref}")
+
+    def test_release_gate_uses_current_gitleaks_cli_and_embedded_data_audit(self):
+        paths = (
+            ROOT / ".github" / "workflows" / "ci.yml",
+            ROOT / "scripts" / "release-gate.sh",
+            ROOT / "scripts" / "windows" / "IrisTools.ps1",
+        )
+        combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+        self.assertNotIn("--source", combined)
+        self.assertIn("data_presentation_audit.py", combined)
+        self.assertNotIn("python3 -B tools/raw_projection_audit.py\n", combined)
+        self.assertNotIn("python3 -B tools/drop_table_audit.py\n", combined)
+
+    def test_release_requires_successful_ci_codeql_and_unchanged_artifact(self):
+        script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
+        for check in (
+            "Linux quality and security",
+            "Go race detector",
+            "Native Windows amd64 Wails build",
+            "Analyze (go)",
+            "Analyze (python)",
+        ):
+            self.assertIn(check, script)
+        self.assertIn('conclusion -ne "success"', script)
+        self.assertNotIn('"neutral", "skipped"', script)
+        self.assertIn("Release artifact changed after verification", script)
+
+    def test_repository_audit_reports_exact_categories_without_payloads(self):
+        sensitive_path = "/" + "home/" + "private-user/work/project"
+        fake_token = "ghp_" + "A" * 36
+        with tempfile.TemporaryDirectory(prefix="iris-audit-fixture-") as temporary:
+            root = Path(temporary)
+            (root / "__pycache__").mkdir()
+            (root / "__pycache__" / "probe.pyc").write_bytes(b"cache")
+            (root / "$coverage").write_text("mode: set\n", encoding="utf-8")
+            (root / "artifact.exe").write_bytes(b"MZ")
+            (root / "developer-path.txt").write_text(sensitive_path, encoding="utf-8")
+            (root / "credential.txt").write_text(fake_token, encoding="utf-8")
+
+            result = self.run_audit(root)
+            output = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("[HYG001]", output)
+            self.assertIn("[HYG002]", output)
+            self.assertIn("(count=2)", output)
+            self.assertIn("[SEC001]", output)
+            self.assertIn("[SEC002]", output)
+            self.assertNotIn(sensitive_path, output)
+            self.assertNotIn(fake_token, output)
+            self.assertNotIn("private-user", output)
+            self.assertNotIn("artifact.exe", output)
+
+    def test_repository_audit_enforces_python_shebang_mode_coherence(self):
+        with tempfile.TemporaryDirectory(prefix="iris-mode-fixture-") as temporary:
+            root = Path(temporary)
+            tools = root / "tools"
+            tools.mkdir()
+            shebang = tools / "shebang.py"
+            shebang.write_text("#!/usr/bin/env python3\nprint('x')\n", encoding="utf-8")
+            executable = tools / "executable.py"
+            executable.write_text("print('x')\n", encoding="utf-8")
+            executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+            result = self.run_audit(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("[HYG003]", result.stdout)
+            self.assertIn("(count=2)", result.stdout)
+            self.assertNotIn("shebang.py", result.stdout)
+            self.assertNotIn("executable.py", result.stdout)
+
+    def test_repository_audit_rejects_release_manifest_and_symlink(self):
+        with tempfile.TemporaryDirectory(prefix="iris-artifact-fixture-") as temporary:
+            root = Path(temporary)
+            (root / "SHA256SUMS.txt").write_text(
+                "not a release tree\n", encoding="utf-8"
+            )
+            target = root / "target.txt"
+            target.write_text("fixture\n", encoding="utf-8")
+            (root / "linked.txt").symlink_to(target)
+            result = self.run_audit(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("[HYG002]", result.stdout)
+            self.assertIn("(count=2)", result.stdout)
+            self.assertNotIn("SHA256SUMS.txt", result.stdout)
+            self.assertNotIn("linked.txt", result.stdout)
+
+    def test_python_tools_have_no_shebang_or_executable_mode(self):
+        for path in (ROOT / "tools").glob("*.py"):
+            self.assertFalse(path.read_bytes().startswith(b"#!"), path.name)
+            executable = path.stat().st_mode & (
+                stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+            )
+            self.assertFalse(executable, path.name)
+
+    def test_source_tree_has_no_generated_or_release_artifacts(self):
         forbidden_dirs = {
             "dist",
             "__pycache__",
             ".pytest_cache",
             ".mypy_cache",
             ".ruff_cache",
+            "wailsjs",
         }
-        forbidden_files = {"$coverage", "coverage.out", ".coverage"}
+        forbidden_names = {
+            "$coverage",
+            "coverage.out",
+            ".coverage",
+            "appicon.png",
+        }
+        forbidden_suffixes = {".exe", ".dll", ".pdb", ".pyc", ".syso"}
         for path in ROOT.rglob("*"):
+            if ".git" in path.relative_to(ROOT).parts:
+                continue
             self.assertFalse(path.is_dir() and path.name in forbidden_dirs, path)
             if path.is_file():
-                name = path.name.lower()
-                self.assertNotIn(path.name, forbidden_files, path)
-                self.assertFalse(name.endswith((".tmp", ".bak", ".orig", ".pyc")), path)
-                self.assertFalse(
-                    any(f"{1}.{1}.{patch}" in name for patch in range(7)), path
-                )
+                self.assertNotIn(path.name, forbidden_names, path)
+                self.assertNotIn(path.suffix.lower(), forbidden_suffixes, path)
+
+    def test_release_shell_scripts_are_real_executables(self):
+        for name in ("release-gate.sh", "build-release.sh"):
+            path = ROOT / "scripts" / name
+            self.assertTrue(path.read_bytes().startswith(b"#!/usr/bin/env bash\n"))
+            if os.name != "nt":
+                self.assertTrue(path.stat().st_mode & stat.S_IXUSR, name)
+
+    def test_frontend_smoke_redacts_missing_browser_details(self):
+        sensitive = "/" + "home/private-user/playwright/chrome"
+        error = PlaywrightError(f"Executable doesn't exist at {sensitive}")
+        category = playwright_failure_category(error)
+        self.assertEqual(category, "BROWSER_MISSING")
+        self.assertNotIn(sensitive, category)
+        self.assertNotIn("private-user", category)
 
 
 if __name__ == "__main__":
