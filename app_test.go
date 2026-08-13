@@ -1567,7 +1567,10 @@ func TestPrimaryNavigationContainsOnlyWorkingSections(t *testing.T) {
 	}
 	script := string(data)
 	start := strings.Index(script, "const navItems = [")
-	end := strings.Index(script[start:], "];\n")
+	end := -1
+	if start >= 0 {
+		end = strings.Index(script[start:], "];")
+	}
 	if start < 0 || end < 0 {
 		t.Fatal("primary navigation definition is missing")
 	}

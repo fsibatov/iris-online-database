@@ -271,6 +271,12 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("Windows tooling self-test: PASS", script)
         self.assertIn("-Action SelfTest", workflow)
         self.assertIn("System.Management.Automation.Language.Parser", workflow)
+        self.assertIn(
+            "$driveRoot = [IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)", workflow
+        )
+        self.assertIn("$env:TEMP = $testTemp", workflow)
+        self.assertIn("$env:TMP = $testTemp", workflow)
+        self.assertIn("Remove-Item -LiteralPath $testTemp", workflow)
 
     def test_windows_govulncheck_retries_and_fails_closed_on_network(self):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(

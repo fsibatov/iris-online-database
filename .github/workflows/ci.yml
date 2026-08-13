@@ -230,7 +230,28 @@ jobs:
           go install github.com/wailsapp/wails/v2/cmd/wails@v2.14.0
           $env:GOBIN | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Windows Go tests
-        run: go test -count=1 ./...
+        shell: pwsh
+        run: |
+          $driveRoot = [IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)
+          $testTemp = Join-Path $driveRoot ("iris-go-test-temp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")
+          New-Item -ItemType Directory -Force -Path $testTemp | Out-Null
+          $oldTemp = $env:TEMP
+          $oldTmp = $env:TMP
+          $oldTmpDir = $env:TMPDIR
+          $goTestExitCode = 0
+          try {
+            $env:TEMP = $testTemp
+            $env:TMP = $testTemp
+            $env:TMPDIR = $testTemp
+            go test -count=1 ./...
+            $goTestExitCode = $LASTEXITCODE
+          } finally {
+            $env:TEMP = $oldTemp
+            $env:TMP = $oldTmp
+            $env:TMPDIR = $oldTmpDir
+            Remove-Item -LiteralPath $testTemp -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if ($goTestExitCode -ne 0) { exit $goTestExitCode }
       - name: Build production desktop executable
         shell: pwsh
         run: |
