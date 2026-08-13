@@ -588,9 +588,21 @@ function Install-Tools {
 function Assert-CleanTree {
     Push-Location $Root
     try {
+        # A source archive can be created on Unix with core.filemode=true. After the
+        # archive is extracted on NTFS, Git for Windows cannot preserve Unix execute
+        # bits and otherwise reports executable shell scripts as modified even when
+        # their contents are byte-for-byte identical to the index.
+        if ($env:OS -eq "Windows_NT") {
+            & git config --local core.filemode false
+            if ($LASTEXITCODE -ne 0) {
+                throw "Git could not configure Windows file-mode handling."
+            }
+        }
         $Status = (& git status "--porcelain=v1" "--untracked-files=all")
+        if ($LASTEXITCODE -ne 0) { throw "Git status failed." }
         if ($Status) { throw "The Git working tree must be clean." }
         $Branch = (& git branch --show-current).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "Git branch detection failed." }
         if ($Branch -ne "main") { throw "Release operations require branch main." }
     } finally { Pop-Location }
 }

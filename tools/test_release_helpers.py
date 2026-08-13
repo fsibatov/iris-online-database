@@ -101,6 +101,24 @@ class ReleaseHelperTests(unittest.TestCase):
     def test_optional_test_launcher_is_kept_outside_source(self):
         self.assertFalse((ROOT / "01_TEST.bat").exists())
 
+    def test_windows_release_gate_normalizes_ntfs_file_mode_tracking(self):
+        windows = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
+        assert_clean_tree = windows.split("function Assert-CleanTree {", 1)[1].split(
+            "function Test-Release {", 1
+        )[0]
+        self.assertIn('$env:OS -eq "Windows_NT"', assert_clean_tree)
+        self.assertIn("git config --local core.filemode false", assert_clean_tree)
+        self.assertLess(
+            assert_clean_tree.index("git config --local core.filemode false"),
+            assert_clean_tree.index('git status "--porcelain=v1"'),
+        )
+        self.assertIn(
+            'if ($LASTEXITCODE -ne 0) { throw "Git status failed." }',
+            assert_clean_tree,
+        )
+
     def test_release_metadata_diagnostic_identifies_cgo_without_raw_payload(self):
         valid = "\n".join(marker for _category, marker in EXPECTED_METADATA_MARKERS)
         self.assertEqual(missing_metadata_categories(valid), [])
