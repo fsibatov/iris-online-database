@@ -323,6 +323,112 @@ function Get-VersionLine {
     return [string]$Value
 }
 
+function ConvertFrom-WailsModuleMetadata {
+    param([string[]]$Lines)
+    $ExpectedMainPath = "github.com/wailsapp/wails/v2/cmd/wails"
+    $ExpectedModulePath = "github.com/wailsapp/wails/v2"
+    $MainPathFound = $false
+    $ModuleVersion = ""
+    foreach ($Line in $Lines) {
+        $Text = ([string]$Line).Trim()
+        if ($Text -match ("^path\s+" + [Regex]::Escape($ExpectedMainPath) + "$")) {
+            $MainPathFound = $true
+            continue
+        }
+        if ($Text -match ("^mod\s+" + [Regex]::Escape($ExpectedModulePath) + "\s+([^\s]+)(?:\s+.*)?$")) {
+            $ModuleVersion = $Matches[1]
+        }
+    }
+    if (-not $MainPathFound -or -not $ModuleVersion) { return "FAIL" }
+    return $ModuleVersion
+}
+
+function Get-GoBinDirectory {
+    $GoExecutable = Get-Command "go.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $GoExecutable) {
+        $GoExecutable = Get-Command "go" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if (-not $GoExecutable) { return "" }
+    try {
+        $GoBin = (& $GoExecutable.Source env GOBIN 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { return "" }
+        if (-not $GoBin) {
+            $GoPath = (& $GoExecutable.Source env GOPATH 2>$null | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $GoPath) { return "" }
+            $GoPathEntries = $GoPath -split [Regex]::Escape([string][IO.Path]::PathSeparator)
+            $GoPath = $GoPathEntries | Where-Object { $_ } | Select-Object -First 1
+            if (-not $GoPath) { return "" }
+            $GoBin = Join-Path $GoPath "bin"
+        }
+        return [IO.Path]::GetFullPath($GoBin)
+    } catch {
+        return ""
+    }
+}
+
+function Get-WailsModuleVersion {
+    param([string]$Executable)
+    if (-not $Executable -or -not (Test-Path -LiteralPath $Executable -PathType Leaf)) { return "MISSING" }
+    $GoExecutable = Get-Command "go.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $GoExecutable) {
+        $GoExecutable = Get-Command "go" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if (-not $GoExecutable) { return "FAIL" }
+    try {
+        $Output = & $GoExecutable.Source version -m $Executable 2>&1
+        $ExitCode = $LASTEXITCODE
+    } catch {
+        return "FAIL"
+    }
+    if ($ExitCode -ne 0) { return "FAIL" }
+    return ConvertFrom-WailsModuleMetadata -Lines @($Output)
+}
+
+function Get-WailsInfo {
+    $Candidates = New-Object System.Collections.Generic.List[string]
+    $Seen = @{}
+    $GoBin = Get-GoBinDirectory
+    if ($GoBin) {
+        $Candidate = Join-Path $GoBin "wails.exe"
+        $Key = $Candidate.ToLowerInvariant()
+        if (-not $Seen.ContainsKey($Key)) { $Seen[$Key] = $true; $Candidates.Add($Candidate) }
+    }
+    if ($env:USERPROFILE) {
+        $Candidate = Join-Path $env:USERPROFILE "go\bin\wails.exe"
+        $Key = $Candidate.ToLowerInvariant()
+        if (-not $Seen.ContainsKey($Key)) { $Seen[$Key] = $true; $Candidates.Add($Candidate) }
+    }
+    $PathWails = Get-Command "wails.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $PathWails) {
+        $PathWails = Get-Command "wails" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if ($PathWails) {
+        $Candidate = $PathWails.Source
+        $Key = $Candidate.ToLowerInvariant()
+        if (-not $Seen.ContainsKey($Key)) { $Seen[$Key] = $true; $Candidates.Add($Candidate) }
+    }
+
+    $FirstExisting = $null
+    foreach ($Candidate in $Candidates) {
+        if (-not (Test-Path -LiteralPath $Candidate -PathType Leaf)) { continue }
+        $Version = Get-WailsModuleVersion -Executable $Candidate
+        $Info = [pscustomobject]@{ Path = [IO.Path]::GetFullPath($Candidate); Version = $Version }
+        if (-not $FirstExisting) { $FirstExisting = $Info }
+        if ($Version -eq $WailsPin) { return $Info }
+    }
+    if ($FirstExisting) { return $FirstExisting }
+    return [pscustomobject]@{ Path = ""; Version = "MISSING" }
+}
+
+function Get-PinnedWailsExecutable {
+    $Info = Get-WailsInfo
+    if ($Info.Version -eq $WailsPin -and $Info.Path) { return $Info.Path }
+    if ($Info.Path) {
+        throw "Wails version mismatch. Required $WailsPin; found $($Info.Version) at $($Info.Path). Run menu option 5 - INSTALL/UPDATE TOOLS."
+    }
+    throw "Wails $WailsPin executable is missing. Run menu option 5 - INSTALL/UPDATE TOOLS."
+}
+
 function Get-AuditPackageVersion {
     param([string]$Package)
     if (-not (Test-Path -LiteralPath $AuditPython)) { return "MISSING" }
@@ -366,6 +472,14 @@ function Test-WindowsTooling {
     }
     if ((ConvertFrom-StaticcheckVersionLine "staticcheck.exe 2026.1 (v0.7.0)") -ne "2026.1") {
         $FailedProbes.Add("STATICCHECK_VERSION_PARSE")
+    }
+    $WailsMetadataProbe = @(
+        "C:\probe\wails.exe: go1.26.5",
+        "path`tgithub.com/wailsapp/wails/v2/cmd/wails",
+        "mod`tgithub.com/wailsapp/wails/v2`tv2.14.0`th1:fixture"
+    )
+    if ((ConvertFrom-WailsModuleMetadata -Lines $WailsMetadataProbe) -ne $WailsPin) {
+        $FailedProbes.Add("WAILS_METADATA_PARSE")
     }
     if (-not (Test-GovulncheckNetworkFailure "fetching vulnerabilities: read tcp: wsarecv")) {
         $FailedProbes.Add("NETWORK_CLASSIFICATION")
@@ -731,7 +845,8 @@ function Show-ToolTable {
     $GoActual = if (Get-Command go -ErrorAction SilentlyContinue) { (& go env GOVERSION).Trim() } else { "MISSING" }
     $PythonActual = Get-VersionLine "python" @("--version")
     $NodeActual = Get-VersionLine "node" @("--version")
-    $WailsActual = Get-VersionLine "wails" @("version")
+    $WailsInfo = Get-WailsInfo
+    $WailsActual = if ($WailsInfo.Path) { "$($WailsInfo.Version) @ $($WailsInfo.Path)" } else { $WailsInfo.Version }
     $StaticcheckActual = Get-StaticcheckVersion
     $GovulncheckActual = Get-GovulncheckVersion
     $GitleaksActual = Get-VersionLine "gitleaks" @("version")
@@ -760,7 +875,7 @@ function Show-ToolTable {
         [pscustomobject]@{ Tool = "Go"; Required = "go$GoPin"; Actual = $GoActual; Status = (Get-ToolStatus ($GoActual -eq "go$GoPin")) },
         [pscustomobject]@{ Tool = "Python"; Required = "3.13.x"; Actual = $PythonActual; Status = (Get-ToolStatus ($PythonActual -match "^Python 3\.13(?:\.|$)")) },
         [pscustomobject]@{ Tool = "Node"; Required = "24.x"; Actual = $NodeActual; Status = (Get-ToolStatus ($NodeActual -match "^v24\.")) },
-        [pscustomobject]@{ Tool = "Wails"; Required = $WailsPin; Actual = $WailsActual; Status = (Get-ToolStatus ($WailsActual -eq $WailsPin)) },
+        [pscustomobject]@{ Tool = "Wails"; Required = $WailsPin; Actual = $WailsActual; Status = (Get-ToolStatus ($WailsInfo.Version -eq $WailsPin)) },
         [pscustomobject]@{ Tool = "Staticcheck"; Required = $StaticcheckPin; Actual = $StaticcheckActual; Status = (Get-ToolStatus ($StaticcheckActual -eq $StaticcheckPin)) },
         [pscustomobject]@{ Tool = "Govulncheck"; Required = $GovulncheckPin; Actual = $GovulncheckActual; Status = (Get-ToolStatus ($GovulncheckActual -eq $GovulncheckPin)) },
         [pscustomobject]@{ Tool = "Gitleaks"; Required = $GitleaksPin; Actual = $GitleaksActual; Status = (Get-ToolStatus ($GitleaksActual -eq $GitleaksPin)) },
@@ -796,7 +911,14 @@ function Install-Tools {
     $GoBin = (& go env GOBIN).Trim()
     if (-not $GoBin) { $GoBin = Join-Path ((& go env GOPATH).Trim()) "bin" }
     if ($env:PATH -notlike "*$GoBin*") { $env:PATH = $GoBin + ";" + $env:PATH }
-    if ((Get-VersionLine "wails" @("version")) -ne $WailsPin) { Invoke-Checked "go" @("install", "github.com/wailsapp/wails/v2/cmd/wails@$WailsPin") 480 }
+    $WailsInfo = Get-WailsInfo
+    if ($WailsInfo.Version -ne $WailsPin) {
+        Invoke-Checked "go" @("install", "github.com/wailsapp/wails/v2/cmd/wails@$WailsPin") 480
+        $WailsInfo = Get-WailsInfo
+        if ($WailsInfo.Version -ne $WailsPin) {
+            throw "Wails installation completed but pinned module metadata is not $WailsPin."
+        }
+    }
     if ((Get-StaticcheckVersion) -ne $StaticcheckPin) { Invoke-Checked "go" @("install", "honnef.co/go/tools/cmd/staticcheck@$StaticcheckPin") 480 }
     if ((Get-GovulncheckVersion) -ne $GovulncheckPin) { Invoke-Checked "go" @("install", "golang.org/x/vuln/cmd/govulncheck@$GovulncheckPin") 480 }
     Install-Gitleaks
@@ -834,7 +956,8 @@ function Test-Release {
     Push-Location $Root
     try {
         if ((& go env GOVERSION).Trim() -ne "go$GoPin") { throw "Go version mismatch." }
-        if ((Get-VersionLine "wails" @("version")) -ne $WailsPin) { throw "Wails version mismatch." }
+        $WailsExecutable = Get-PinnedWailsExecutable
+        Write-Host "Wails: $WailsPin @ $WailsExecutable"
         $BeforeHead = (& git rev-parse HEAD).Trim()
         Invoke-Checked $AuditPython @("-B", "tools/repository_audit.py") 120
         $GoFiles = Get-ChildItem -LiteralPath $Root -Filter "*.go" -File | ForEach-Object { $_.FullName }
@@ -880,6 +1003,7 @@ function Clear-BuildGenerated {
 function Build-Release {
     Assert-CleanTree
     Ensure-AuditEnvironment
+    $WailsExecutable = Get-PinnedWailsExecutable
     Push-Location $Root
     try {
         Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
@@ -913,7 +1037,7 @@ function Build-Release {
                 Remove-Item Env:\GOARM64 -ErrorAction SilentlyContinue
                 $env:CGO_ENABLED = "0"
                 Set-Item -Path "Env:$($Target.LevelName)" -Value $Target.LevelValue
-                Invoke-Checked "wails" @(
+                Invoke-Checked $WailsExecutable @(
                     "build",
                     "-platform", $Target.Platform,
                     "-webview2", "embed",

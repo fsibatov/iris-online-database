@@ -321,6 +321,25 @@ class ReleaseHelperTests(unittest.TestCase):
             script,
         )
 
+    def test_windows_wails_pin_uses_go_module_metadata_and_exact_binary(self):
+        script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("function ConvertFrom-WailsModuleMetadata", script)
+        self.assertIn("function Get-GoBinDirectory", script)
+        self.assertIn("function Get-WailsModuleVersion", script)
+        self.assertIn("function Get-WailsInfo", script)
+        self.assertIn("function Get-PinnedWailsExecutable", script)
+        self.assertIn("& $GoExecutable.Source version -m $Executable 2>&1", script)
+        self.assertIn("github.com/wailsapp/wails/v2/cmd/wails", script)
+        self.assertIn("^path\\s+", script)
+        self.assertIn("^mod\\s+", script)
+        self.assertIn("WAILS_METADATA_PARSE", script)
+        self.assertIn("$WailsExecutable = Get-PinnedWailsExecutable", script)
+        self.assertIn("Invoke-Checked $WailsExecutable @(", script)
+        self.assertNotIn('Get-VersionLine "wails" @("version")', script)
+        self.assertNotIn('Invoke-Checked "wails" @(', script)
+
     def test_windows_tool_check_elevates_and_reads_native_output_safely(self):
         launcher = (ROOT / "IrisTools.ps1").read_text(encoding="utf-8")
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
