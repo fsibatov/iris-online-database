@@ -17,11 +17,13 @@ from playwright.sync_api import Error as PlaywrightError
 from release_fingerprint import FingerprintError, assert_release_tree, source_hash
 from release_targets import RELEASE_TARGETS
 from repository_audit import python_mode_violation
+from verify_release_assets import expected_asset_names, verify_release_assets
 from verify_executables import (
     EXPECTED_METADATA_MARKERS,
     expected_metadata_markers,
     missing_metadata_categories,
 )
+from verify_windows_resources import verify_version_resource, version_tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -80,6 +82,47 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("permonitorv2", manifest.lower())
         self.assertIn("longPathAware", manifest)
         self.assertIn('level="asInvoker"', manifest)
+        verifier = (ROOT / "tools" / "verify_windows_resources.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("verify_version_resource(resource_payloads(path, 16)", verifier)
+        self.assertIn('"FileVersion".encode("utf-16le")', verifier)
+        self.assertIn('"ProductVersion".encode("utf-16le")', verifier)
+
+    def test_windows_fixed_version_resource_is_exact(self):
+        import struct
+
+        self.assertEqual(version_tuple("2.0.0"), (2, 0, 0, 0))
+        fixed = (
+            0xFEEF04BD,
+            0x00010000,
+            0x00020000,
+            0x00000000,
+            0x00020000,
+            0x00000000,
+            0x0000003F,
+            0x00000000,
+            0x00040004,
+            0x00000001,
+            0x00000000,
+            0x00000000,
+            0x00000000,
+        )
+        payload = b"".join(
+            (
+                "Iris Online Database".encode("utf-16le"),
+                "FileVersion".encode("utf-16le"),
+                "ProductVersion".encode("utf-16le"),
+                "2.0.0".encode("utf-16le"),
+                struct.pack("<13I", *fixed),
+            )
+        )
+        verify_version_resource([payload], "2.0.0", "amd64")
+        broken = bytearray(payload)
+        offset = broken.find(struct.pack("<I", 0xFEEF04BD))
+        struct.pack_into("<I", broken, offset + 8, 0x00030000)
+        with self.assertRaises(SystemExit):
+            verify_version_resource([bytes(broken)], "2.0.0", "amd64")
 
     def test_release_build_is_external_and_fingerprint_gated(self):
         build = (ROOT / "scripts" / "build-release.sh").read_text(encoding="utf-8")
@@ -264,6 +307,14 @@ class ReleaseHelperTests(unittest.TestCase):
         combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
         self.assertNotIn("--source", combined)
         self.assertIn("data_presentation_audit.py", combined)
+        self.assertIn("function Test-GitleaksDetection", combined)
+        self.assertIn("Gitleaks functional detection self-test failed.", combined)
+        self.assertIn("iris_resolve_gitleaks", combined)
+        self.assertIn("iris_test_gitleaks_detection", combined)
+        self.assertIn("Invoke-GitleaksHistoryScan", combined)
+        self.assertIn("iris_gitleaks_history_scan", combined)
+        self.assertIn("commits scanned", combined)
+        self.assertIn("--exit-code 37", combined)
         self.assertNotIn("python3 -B tools/raw_projection_audit.py\n", combined)
         self.assertNotIn("python3 -B tools/drop_table_audit.py\n", combined)
 
@@ -274,7 +325,7 @@ class ReleaseHelperTests(unittest.TestCase):
         for check in (
             "Linux quality and security",
             "Go race detector",
-            "Native Windows amd64 Wails build",
+            "Native Windows Wails release matrix",
             "Analyze (go)",
             "Analyze (python)",
         ):
@@ -283,8 +334,14 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn('conclusion -ne "success"', script)
         self.assertIn("Required GitHub check is still running", script)
         self.assertIn("Required GitHub check failed", script)
+        self.assertIn("check-runs?filter=latest&per_page=100", script)
+        self.assertIn(
+            "GitHub check-runs response exceeded the verified page size.", script
+        )
+        self.assertIn("Sort-Object -Property id -Descending", script)
         self.assertNotIn('"neutral", "skipped"', script)
-        self.assertIn("Release artifact changed after verification", script)
+        self.assertIn("tools/verify_release_assets.py", script)
+        self.assertIn("SHA256SUMS.txt", script)
 
     def test_windows_audit_environment_rebuild_is_side_by_side(self):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
@@ -306,6 +363,9 @@ class ReleaseHelperTests(unittest.TestCase):
             script,
         )
         self.assertIn("reused validated environment", script)
+        self.assertIn('Tool = "Audit Python"', script)
+        self.assertIn("$AuditEnvironmentReady = $false", script)
+        self.assertIn("if (-not $AuditEnvironmentReady -and", script)
         self.assertIn("Only now require a bootstrap Python 3.13", script)
         self.assertLess(
             script.index("reused validated environment"),
@@ -373,19 +433,25 @@ class ReleaseHelperTests(unittest.TestCase):
         )
         self.assertIn("-File $ExecutablePath", script)
         self.assertIn("function Invoke-Staticcheck", script)
+        self.assertIn("function Get-GoToolCandidates", script)
+        self.assertIn("function Get-StaticcheckInfo", script)
+        self.assertIn("function Get-PinnedStaticcheckExecutable", script)
         self.assertIn(
-            '$StaticcheckExecutable = Resolve-NativeExecutablePath -File "staticcheck"',
-            script,
+            "$StaticcheckExecutable = Get-PinnedStaticcheckExecutable", script
         )
         self.assertIn('$Output = & $StaticcheckExecutable @Arguments 2>&1', script)
-        self.assertIn(
-            '$StaticcheckOutput = & $StaticcheckExecutable -version 2>&1', script
-        )
-        self.assertIn('$FailedProbes.Add("STATICCHECK_VERSION")', script)
+        self.assertIn('Invoke-Staticcheck @("-version")', script)
         self.assertIn('$FailedProbes.Add("STATICCHECK_DIRECT")', script)
         self.assertNotIn('$FailedProbes.Add("STATICCHECK_CAPTURE")', script)
         self.assertNotIn('Invoke-Checked "staticcheck" @("./...")', script)
         self.assertIn('Invoke-Staticcheck @("./...")', script)
+        self.assertNotRegex(script, r'(?m)^\s*& winget\s+install\b')
+        self.assertIn('Invoke-Checked "winget" @("install"', script)
+        self.assertIn(
+            '$GitleaksWindowsX64Sha256 = "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e"',
+            script,
+        )
+        self.assertIn('$Expected -ne $GitleaksWindowsX64Sha256', script)
         self.assertNotIn("function Read-NativeCaptureFile", script)
         self.assertIn("-Action SelfTest", workflow)
         self.assertIn("System.Management.Automation.Language.Parser", workflow)
@@ -403,8 +469,166 @@ class ReleaseHelperTests(unittest.TestCase):
             self.assertIn(platform, workflow)
             self.assertIn(f'Suffix = "{suffix}"', workflow)
         self.assertIn("IrisOnlineDB-$version-Windows-$($target.Suffix).exe", workflow)
+        self.assertIn("verify_release_assets.py --directory $artifactDir", workflow)
         self.assertIn("verify_executables.py --directory $artifactDir", workflow)
         self.assertIn("verify_windows_resources.py --directory $artifactDir", workflow)
+
+    def test_windows_ci_installs_pinned_tools_before_real_selftest(self):
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("name: Native Windows Wails release matrix", workflow)
+        python_setup = workflow.index(
+            "- name: Setup Python 3.13", workflow.index("windows-build:")
+        )
+        go_setup = workflow.index("- name: Setup pinned Go", python_setup)
+        install = workflow.index(
+            "- name: Install pinned Windows release Go tools", go_setup
+        )
+        selftest = workflow.index(
+            "- name: Parse and self-test Windows PowerShell 5.1 tooling", install
+        )
+        self.assertLess(python_setup, selftest)
+        self.assertLess(go_setup, selftest)
+        self.assertLess(install, selftest)
+        install_block = workflow[install:selftest]
+        self.assertIn("wails@v2.14.0", install_block)
+        self.assertIn("staticcheck@2026.1", install_block)
+        self.assertIn("govulncheck@v1.6.0", install_block)
+        self.assertIn('GOBIN: ${{ runner.temp }}\\go-tools', workflow)
+        self.assertNotIn("shell: pwsh", workflow[workflow.index("windows-build:"):])
+
+    def test_windows_bat_has_cmd_safe_encoding_menu_and_fail_closed_actions(self):
+        path = ROOT / "scripts" / "windows" / "00_RELEASE_WINDOWS.bat"
+        raw = path.read_bytes()
+        self.assertTrue(raw.startswith(b"@echo off\r\n"))
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
+        self.assertEqual(raw.replace(b"\r\n", b"").count(b"\n"), 0)
+        raw.decode("ascii")
+        text = raw.decode("ascii")
+        for line in (
+            "1 - PREPARE RELEASE",
+            "2 - PUSH COMMIT",
+            "3 - GITHUB RELEASE",
+            "4 - CHECK TOOLS",
+            "5 - INSTALL/UPDATE TOOLS",
+            "6 - OPEN RELEASE FOLDER",
+            "0 - EXIT",
+        ):
+            self.assertIn(line, text)
+        self.assertIn("setlocal EnableExtensions DisableDelayedExpansion", text)
+        self.assertIn("pushd \"%REPO%\" || exit /b 1", text)
+        self.assertIn("-NoLogo -NoProfile -ExecutionPolicy Bypass", text)
+        self.assertIn('if not "%RC%"=="0" goto failed', text)
+        self.assertIn('if "%CHOICE%"=="1" goto action_prepare', text)
+        self.assertIn(':action_prepare\r\nset "ACTION=Prepare"', text)
+        self.assertNotRegex(text, r'(?im)^if .*&\s*goto ')
+        self.assertIn("exit /b %RC%", text)
+        self.assertNotIn("git push", text.lower())
+        self.assertNotIn("gh release", text.lower())
+
+    def test_prepare_release_runs_complete_gate_before_artifact_build(self):
+        script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
+        prepare = script.split("function Prepare-Release {", 1)[1].split(
+            "function Invoke-GitFetchMain {", 1
+        )[0]
+        self.assertLess(prepare.index("Test-Release"), prepare.index("Build-Release"))
+        gate = script.split("function Test-Release {", 1)[1].split(
+            "function Clear-BuildGenerated {", 1
+        )[0]
+        for marker in (
+            "repository_audit.py",
+            'Invoke-Checked "go" @("mod", "verify")',
+            'Invoke-Checked "go" @("mod", "tidy", "-diff")',
+            'Invoke-Checked "go" @("build"',
+            'Invoke-Checked "go" @("test"',
+            'Invoke-Checked "go" @("vet"',
+            'Invoke-Staticcheck @("./...")',
+            "Invoke-Govulncheck",
+            "unittest",
+            'ruff.exe") @("check"',
+            'ruff.exe") @("format"',
+            'bandit.exe")',
+            'pip-audit.exe")',
+            "validate_workflows.py",
+            'Invoke-Checked "node" @("--check", "web/app.js")',
+            "data_presentation_audit.py",
+            "frontend_smoke_test.py",
+            'gitleaks.exe"',
+            "release_fingerprint.py\", \"--write",
+        ):
+            self.assertIn(marker, gate)
+
+    def test_shell_release_tools_do_not_trust_wails_path_or_version_text(self):
+        helper = (ROOT / "scripts" / "release-tools.sh").read_text(encoding="utf-8")
+        build = (ROOT / "scripts" / "build-release.sh").read_text(encoding="utf-8")
+        gate = (ROOT / "scripts" / "release-gate.sh").read_text(encoding="utf-8")
+        self.assertIn("go version -m", helper)
+        self.assertIn("github.com/wailsapp/wails/v2/cmd/wails", helper)
+        self.assertIn("iris_resolve_staticcheck", helper)
+        self.assertIn("iris_resolve_govulncheck", helper)
+        self.assertIn("iris_resolve_gitleaks", helper)
+        self.assertIn("iris_test_gitleaks_detection", helper)
+        self.assertIn('GITLEAKS_BIN="$(iris_resolve_gitleaks 8.30.1', gate)
+        self.assertIn('WAILS_BIN="$(iris_resolve_wails v2.14.0', build)
+        self.assertIn('"$WAILS_BIN" build', build)
+        self.assertIn('STATICCHECK_BIN="$(iris_resolve_staticcheck 2026.1', gate)
+        self.assertNotIn("wails version", build + gate)
+        self.assertNotRegex(build + gate, r"(?m)^\s*wails build")
+
+    def test_release_assets_are_exact_and_checksum_verified(self):
+        self.assertEqual(
+            expected_asset_names("2.0.0"),
+            (
+                "IrisOnlineDB-2.0.0-Windows-x64.exe",
+                "IrisOnlineDB-2.0.0-Windows-x86.exe",
+                "IrisOnlineDB-2.0.0-Windows-arm64.exe",
+                "SHA256SUMS.txt",
+            ),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-release-assets-") as temporary:
+            directory = Path(temporary)
+            names = expected_asset_names("2.0.0")[:-1]
+            import hashlib
+
+            lines = []
+            for index, name in enumerate(names, start=1):
+                payload = b"MZ" + bytes([index])
+                (directory / name).write_bytes(payload)
+                lines.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+            (directory / "SHA256SUMS.txt").write_text(
+                "\n".join(lines) + "\n", encoding="ascii"
+            )
+            verify_release_assets(directory, "2.0.0")
+            (directory / "debug.pdb").write_bytes(b"debug")
+            with self.assertRaises(SystemExit):
+                verify_release_assets(directory, "2.0.0")
+
+    def test_release_uses_explicit_gpg_identity_and_signed_tag_verification(self):
+        script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('$ReleaseGitName = "fsibatov"', script)
+        self.assertIn('$ReleaseGitEmail = "farushik01@gmail.com"', script)
+        self.assertIn(
+            '$ReleaseGpgExecutable = "C:\\Program Files\\Git\\usr\\bin\\gpg.exe"',
+            script,
+        )
+        self.assertIn(
+            '$ReleaseGpgFingerprint = "B0A5D341B2EE901172F485DE9BC0EBCFE2795291"',
+            script,
+        )
+        self.assertIn("function Assert-ReleaseSigningIdentity", script)
+        self.assertIn('"--list-secret-keys", $ReleaseGpgFingerprint', script)
+        self.assertIn('"tag", "-s", "-u", $ReleaseGpgFingerprint', script)
+        self.assertIn('"verify-tag", "--raw", $Tag', script)
+        self.assertIn("[GNUPG:\\] VALIDSIG", script)
+        self.assertIn("function Ensure-ReleaseTag", script)
+        self.assertIn("Local and origin release tag objects differ.", script)
+        self.assertIn('"--verify-tag"', script)
+        self.assertNotIn('"tag", "-a"', script)
 
     def test_windows_govulncheck_retries_and_fails_closed_on_network(self):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(

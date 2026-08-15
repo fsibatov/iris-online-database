@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Menu", "Check", "Install", "Test", "Build", "Publish", "Release", "SelfTest")]
+    [ValidateSet("Menu", "Check", "Install", "Prepare", "Test", "Build", "Publish", "Release", "Open", "SelfTest")]
     [string]$Action = "Menu",
     [string]$OutputDirectory = ""
 )
@@ -12,6 +12,7 @@ $WailsPin = "v2.14.0"
 $StaticcheckPin = "2026.1"
 $GovulncheckPin = "v1.6.0"
 $GitleaksPin = "8.30.1"
+$GitleaksWindowsX64Sha256 = "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e"
 $ToolRoot = Join-Path $env:LOCALAPPDATA "IrisOnlineDatabase\BuildTools"
 $AuditEnvPointer = Join-Path $ToolRoot "python-audit-active.txt"
 $AuditEnv = Join-Path $ToolRoot "python-audit"
@@ -32,6 +33,11 @@ if (Test-Path -LiteralPath $AuditEnvPointer -PathType Leaf) {
 }
 $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $ToolRoot "playwright"
 $PinnedGitleaksDirectory = Join-Path $ToolRoot "gitleaks-$GitleaksPin"
+$RepositorySlug = "fsibatov/iris-online-database"
+$ReleaseGitName = "fsibatov"
+$ReleaseGitEmail = "farushik01@gmail.com"
+$ReleaseGpgExecutable = "C:\Program Files\Git\usr\bin\gpg.exe"
+$ReleaseGpgFingerprint = "B0A5D341B2EE901172F485DE9BC0EBCFE2795291"
 
 function Test-IsAdministrator {
     $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -273,8 +279,11 @@ function Invoke-Checked {
 
 function Invoke-Govulncheck {
     param([int]$TimeoutSeconds = 300)
-    $Executable = Get-Command "govulncheck" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $Executable) { throw "[SECURITY FAIL] govulncheck executable is missing." }
+    try {
+        $GovulncheckExecutable = Get-PinnedGovulncheckExecutable
+    } catch {
+        throw "[SECURITY FAIL] pinned govulncheck executable is missing or incompatible."
+    }
 
     $DatabaseAttempts = @(
         [pscustomobject]@{ Name = "canonical"; URL = "https://vuln.go.dev" },
@@ -288,7 +297,7 @@ function Invoke-Govulncheck {
         try {
             Write-Host "+ govulncheck -db $($Database.URL) ./... (attempt $Attempt/$Attempts)"
             $Result = Invoke-CapturedNativeProcess `
-                -File $Executable.Source `
+                -File $GovulncheckExecutable `
                 -Arguments @("-db", $Database.URL, "./...") `
                 -WorkingDirectory $Root `
                 -TimeoutSeconds $TimeoutSeconds
@@ -467,11 +476,31 @@ function Get-RequirementPin {
     return $Matches[1]
 }
 
-function Get-GovulncheckVersion {
-    if (-not (Get-Command govulncheck -ErrorAction SilentlyContinue)) { return "MISSING" }
-    $Output = (& govulncheck -version 2>&1 | Out-String)
-    if ($LASTEXITCODE -ne 0 -or $Output -notmatch "Scanner:\s+govulncheck@(v[^\s]+)") { return "FAIL" }
-    return $Matches[1]
+function Get-GoToolCandidates {
+    param([string]$Name)
+    $Candidates = New-Object System.Collections.Generic.List[string]
+    $Seen = @{}
+    $GoBin = Get-GoBinDirectory
+    if ($GoBin) {
+        $Candidate = Join-Path $GoBin ($Name + ".exe")
+        $Key = $Candidate.ToLowerInvariant()
+        if (-not $Seen.ContainsKey($Key)) { $Seen[$Key] = $true; $Candidates.Add($Candidate) }
+    }
+    if ($env:USERPROFILE) {
+        $Candidate = Join-Path $env:USERPROFILE ("go\bin\" + $Name + ".exe")
+        $Key = $Candidate.ToLowerInvariant()
+        if (-not $Seen.ContainsKey($Key)) { $Seen[$Key] = $true; $Candidates.Add($Candidate) }
+    }
+    $PathTool = Get-Command ($Name + ".exe") -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $PathTool) {
+        $PathTool = Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
+    if ($PathTool) {
+        $Candidate = [string]$PathTool.Source
+        $Key = $Candidate.ToLowerInvariant()
+        if (-not $Seen.ContainsKey($Key)) { $Seen[$Key] = $true; $Candidates.Add($Candidate) }
+    }
+    return $Candidates.ToArray()
 }
 
 function ConvertFrom-StaticcheckVersionLine {
@@ -480,13 +509,70 @@ function ConvertFrom-StaticcheckVersionLine {
     return $Line
 }
 
+function Get-StaticcheckInfo {
+    $FirstExisting = $null
+    foreach ($Candidate in @(Get-GoToolCandidates -Name "staticcheck")) {
+        if (-not (Test-Path -LiteralPath $Candidate -PathType Leaf)) { continue }
+        try {
+            $Output = & $Candidate -version 2>&1
+            $ExitCode = $LASTEXITCODE
+            $Line = $Output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ } | Select-Object -First 1
+            $Version = if ($ExitCode -eq 0 -and $Line) { ConvertFrom-StaticcheckVersionLine ([string]$Line) } else { "FAIL" }
+        } catch {
+            $Version = "FAIL"
+        }
+        $Info = [pscustomobject]@{ Path = [IO.Path]::GetFullPath($Candidate); Version = $Version }
+        if (-not $FirstExisting) { $FirstExisting = $Info }
+        if ($Version -eq $StaticcheckPin) { return $Info }
+    }
+    if ($FirstExisting) { return $FirstExisting }
+    return [pscustomobject]@{ Path = ""; Version = "MISSING" }
+}
+
+function Get-PinnedStaticcheckExecutable {
+    $Info = Get-StaticcheckInfo
+    if ($Info.Path -and $Info.Version -eq $StaticcheckPin) { return $Info.Path }
+    if ($Info.Path) { throw "Staticcheck version mismatch. Required $StaticcheckPin." }
+    throw "Staticcheck $StaticcheckPin executable is missing. Run menu option 5 - INSTALL/UPDATE TOOLS."
+}
+
 function Get-StaticcheckVersion {
-    return ConvertFrom-StaticcheckVersionLine (Get-VersionLine "staticcheck" @("-version"))
+    return (Get-StaticcheckInfo).Version
+}
+
+function Get-GovulncheckInfo {
+    $FirstExisting = $null
+    foreach ($Candidate in @(Get-GoToolCandidates -Name "govulncheck")) {
+        if (-not (Test-Path -LiteralPath $Candidate -PathType Leaf)) { continue }
+        try {
+            $Output = (& $Candidate -version 2>&1 | Out-String)
+            $ExitCode = $LASTEXITCODE
+            $Version = if ($ExitCode -eq 0 -and $Output -match "Scanner:\s+govulncheck@(v[^\s]+)") { $Matches[1] } else { "FAIL" }
+        } catch {
+            $Version = "FAIL"
+        }
+        $Info = [pscustomobject]@{ Path = [IO.Path]::GetFullPath($Candidate); Version = $Version }
+        if (-not $FirstExisting) { $FirstExisting = $Info }
+        if ($Version -eq $GovulncheckPin) { return $Info }
+    }
+    if ($FirstExisting) { return $FirstExisting }
+    return [pscustomobject]@{ Path = ""; Version = "MISSING" }
+}
+
+function Get-PinnedGovulncheckExecutable {
+    $Info = Get-GovulncheckInfo
+    if ($Info.Path -and $Info.Version -eq $GovulncheckPin) { return $Info.Path }
+    if ($Info.Path) { throw "govulncheck version mismatch. Required $GovulncheckPin." }
+    throw "govulncheck $GovulncheckPin executable is missing. Run menu option 5 - INSTALL/UPDATE TOOLS."
+}
+
+function Get-GovulncheckVersion {
+    return (Get-GovulncheckInfo).Version
 }
 
 function Invoke-Staticcheck {
     param([string[]]$Arguments = @("./..."))
-    $StaticcheckExecutable = Resolve-NativeExecutablePath -File "staticcheck"
+    $StaticcheckExecutable = Get-PinnedStaticcheckExecutable
     Write-Host ("+ " + $StaticcheckExecutable + " " + ($Arguments -join " "))
     $Output = & $StaticcheckExecutable @Arguments 2>&1
     $ExitCode = $LASTEXITCODE
@@ -508,18 +594,10 @@ function Test-WindowsTooling {
         $FailedProbes.Add("STATICCHECK_VERSION_PARSE")
     }
     try {
-        $StaticcheckExecutable = Resolve-NativeExecutablePath -File "staticcheck"
-        $StaticcheckOutput = & $StaticcheckExecutable -version 2>&1
-        $StaticcheckExitCode = $LASTEXITCODE
-        $StaticcheckLine = $StaticcheckOutput |
-            ForEach-Object { ([string]$_).Trim() } |
-            Where-Object { $_ } |
-            Select-Object -First 1
-        $StaticcheckVersion = ConvertFrom-StaticcheckVersionLine ([string]$StaticcheckLine)
-        Write-Host "Staticcheck: $StaticcheckVersion @ $StaticcheckExecutable"
-        if ($StaticcheckExitCode -ne 0 -or $StaticcheckVersion -ne $StaticcheckPin) {
-            $FailedProbes.Add("STATICCHECK_VERSION")
-        }
+        # Exercise the exact production path, including the pinned resolver and
+        # direct PowerShell invocation. Do not route this probe through the
+        # generic ProcessStartInfo capture wrapper.
+        Invoke-Staticcheck @("-version")
     } catch {
         $FailedProbes.Add("STATICCHECK_DIRECT")
     }
@@ -530,6 +608,17 @@ function Test-WindowsTooling {
     )
     if ((ConvertFrom-WailsModuleMetadata -Lines $WailsMetadataProbe) -ne $WailsPin) {
         $FailedProbes.Add("WAILS_METADATA_PARSE")
+    }
+    try {
+        $PinnedWailsExecutable = Get-PinnedWailsExecutable
+        Write-Host "Wails: $WailsPin @ $PinnedWailsExecutable"
+    } catch {
+        $FailedProbes.Add("WAILS_RESOLVER")
+    }
+    try {
+        [void](Get-PinnedGovulncheckExecutable)
+    } catch {
+        $FailedProbes.Add("GOVULNCHECK_RESOLVER")
     }
     if (-not (Test-GovulncheckNetworkFailure "fetching vulnerabilities: read tcp: wsarecv")) {
         $FailedProbes.Add("NETWORK_CLASSIFICATION")
@@ -860,26 +949,93 @@ function Ensure-AuditEnvironment {
 function Install-Gitleaks {
     $Destination = Join-Path $ToolRoot "gitleaks-$GitleaksPin"
     $Binary = Join-Path $Destination "gitleaks.exe"
-    if (Test-Path -LiteralPath $Binary) {
-        $env:PATH = $Destination + ";" + $env:PATH
-        return
+    if (Test-Path -LiteralPath $Binary -PathType Leaf) {
+        $ExistingVersion = Get-VersionLine $Binary @("version")
+        if ($ExistingVersion -eq $GitleaksPin) {
+            $env:PATH = $Destination + ";" + $env:PATH
+            return
+        }
+        Remove-Item -LiteralPath $Destination -Recurse -Force
+    } elseif (Test-Path -LiteralPath $Destination) {
+        Remove-Item -LiteralPath $Destination -Recurse -Force
     }
-    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+
+    $Staging = Join-Path $ToolRoot ("gitleaks-install-" + [Guid]::NewGuid().ToString("N"))
+    $DownloadRoot = Join-Path $env:TEMP ("iris-gitleaks-download-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $Staging, $DownloadRoot | Out-Null
     $ArchiveName = "gitleaks_${GitleaksPin}_windows_x64.zip"
     $ChecksumsName = "gitleaks_${GitleaksPin}_checksums.txt"
-    $Archive = Join-Path $env:TEMP $ArchiveName
-    $Checksums = Join-Path $env:TEMP $ChecksumsName
+    $Archive = Join-Path $DownloadRoot $ArchiveName
+    $Checksums = Join-Path $DownloadRoot $ChecksumsName
     $Base = "https://github.com/gitleaks/gitleaks/releases/download/v$GitleaksPin"
-    Invoke-WebRequest -UseBasicParsing -Uri "$Base/$ArchiveName" -OutFile $Archive
-    Invoke-WebRequest -UseBasicParsing -Uri "$Base/$ChecksumsName" -OutFile $Checksums
-    $ExpectedLine = Get-Content -LiteralPath $Checksums | Where-Object { $_ -match [Regex]::Escape($ArchiveName) } | Select-Object -First 1
-    if (-not $ExpectedLine) { throw "Official Gitleaks checksum is missing." }
-    $Expected = ($ExpectedLine -split "\s+")[0].ToLowerInvariant()
-    $Actual = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($Actual -ne $Expected) { throw "Gitleaks archive checksum verification failed." }
-    Expand-Archive -LiteralPath $Archive -DestinationPath $Destination -Force
-    Remove-Item -LiteralPath $Archive, $Checksums -Force
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri "$Base/$ArchiveName" -OutFile $Archive
+        Invoke-WebRequest -UseBasicParsing -Uri "$Base/$ChecksumsName" -OutFile $Checksums
+        $ExpectedLine = Get-Content -LiteralPath $Checksums | Where-Object { $_ -match [Regex]::Escape($ArchiveName) } | Select-Object -First 1
+        if (-not $ExpectedLine) { throw "Official Gitleaks checksum is missing." }
+        $Expected = ($ExpectedLine -split "\s+")[0].ToLowerInvariant()
+        $Actual = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($Expected -ne $GitleaksWindowsX64Sha256) { throw "Official Gitleaks checksum does not match the pinned Windows x64 digest." }
+        if ($Actual -ne $Expected -or $Actual -ne $GitleaksWindowsX64Sha256) { throw "Gitleaks archive checksum verification failed." }
+        Expand-Archive -LiteralPath $Archive -DestinationPath $Staging -Force
+        $StagedBinary = Join-Path $Staging "gitleaks.exe"
+        if ((Get-VersionLine $StagedBinary @("version")) -ne $GitleaksPin) {
+            throw "Downloaded Gitleaks executable does not match the pinned version."
+        }
+        Move-Item -LiteralPath $Staging -Destination $Destination
+    } finally {
+        if (Test-Path -LiteralPath $Staging) { Remove-Item -LiteralPath $Staging -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $DownloadRoot) { Remove-Item -LiteralPath $DownloadRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     $env:PATH = $Destination + ";" + $env:PATH
+}
+
+function Test-GitleaksDetection {
+    $GitleaksExecutable = Join-Path $PinnedGitleaksDirectory "gitleaks.exe"
+    if ((Get-VersionLine $GitleaksExecutable @("version")) -ne $GitleaksPin) {
+        throw "Pinned Gitleaks executable is missing or has the wrong version."
+    }
+    $ProbeDirectory = Join-Path $env:TEMP ("iris-gitleaks-probe-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $ProbeDirectory | Out-Null
+    try {
+        $SyntheticSecret = "ghp_" + "wA9mK2pLxN4vRtQzY6bC8dEfGhJlM0oPq1rS"
+        Set-Content -LiteralPath (Join-Path $ProbeDirectory "probe.txt") -Value ("token=" + $SyntheticSecret) -Encoding ASCII
+        $Result = Invoke-CapturedNativeProcess `
+            -File $GitleaksExecutable `
+            -Arguments @("dir", "--no-banner", "--redact", "--exit-code", "37", $ProbeDirectory) `
+            -WorkingDirectory $Root `
+            -TimeoutSeconds 60
+        if ($Result.TimedOut -or $Result.ExitCode -ne 37) {
+            throw "Gitleaks functional detection self-test failed."
+        }
+    } finally {
+        Remove-Item -LiteralPath $ProbeDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Write-Host "Gitleaks detection self-test: PASS" -ForegroundColor Green
+}
+
+function Invoke-GitleaksHistoryScan {
+    param([int]$TimeoutSeconds = 600)
+    $GitleaksExecutable = Join-Path $PinnedGitleaksDirectory "gitleaks.exe"
+    if ((Get-VersionLine $GitleaksExecutable @("version")) -ne $GitleaksPin) {
+        throw "Pinned Gitleaks executable is missing or has the wrong version."
+    }
+    Write-Host "+ gitleaks git --no-banner --redact --log-level info ."
+    $Result = Invoke-CapturedNativeProcess `
+        -File $GitleaksExecutable `
+        -Arguments @("git", "--no-banner", "--redact", "--log-level", "info", ".") `
+        -WorkingDirectory $Root `
+        -TimeoutSeconds $TimeoutSeconds
+    $Combined = (([string]$Result.Stdout) + [Environment]::NewLine + ([string]$Result.Stderr)).Trim()
+    if ($Combined) {
+        $SafeOutput = ConvertTo-SafeToolOutput $Combined
+        if ($SafeOutput) { Write-Host $SafeOutput }
+    }
+    if ($Result.TimedOut) { throw "Gitleaks Git-history scan timed out." }
+    if ($Result.ExitCode -ne 0) { throw "Gitleaks Git-history scan failed with exit code $($Result.ExitCode)." }
+    if ($Combined -notmatch "(?im)\b[1-9][0-9]* commits scanned\.") {
+        throw "Gitleaks Git-history scan did not prove that any commits were scanned."
+    }
 }
 
 function Show-ToolTable {
@@ -893,13 +1049,16 @@ function Show-ToolTable {
     $GitActual = Get-VersionLine "git" @("--version")
     $GitHubCLIActual = Get-VersionLine "gh" @("--version")
     $GoActual = if (Get-Command go -ErrorAction SilentlyContinue) { (& go env GOVERSION).Trim() } else { "MISSING" }
-    $PythonActual = Get-VersionLine "python" @("--version")
+    $AuditPythonVersion = Get-Python313Version -Python $AuditPython
+    $PythonActual = if ($AuditPythonVersion) { "$AuditPythonVersion @ $AuditPython" } else { "MISSING" }
     $NodeActual = Get-VersionLine "node" @("--version")
     $WailsInfo = Get-WailsInfo
     $WailsActual = if ($WailsInfo.Path) { "$($WailsInfo.Version) @ $($WailsInfo.Path)" } else { $WailsInfo.Version }
-    $StaticcheckActual = Get-StaticcheckVersion
-    $GovulncheckActual = Get-GovulncheckVersion
-    $GitleaksActual = Get-VersionLine "gitleaks" @("version")
+    $StaticcheckInfo = Get-StaticcheckInfo
+    $StaticcheckActual = if ($StaticcheckInfo.Path) { "$($StaticcheckInfo.Version) @ $($StaticcheckInfo.Path)" } else { $StaticcheckInfo.Version }
+    $GovulncheckInfo = Get-GovulncheckInfo
+    $GovulncheckActual = if ($GovulncheckInfo.Path) { "$($GovulncheckInfo.Version) @ $($GovulncheckInfo.Path)" } else { $GovulncheckInfo.Version }
+    $GitleaksActual = Get-VersionLine (Join-Path $PinnedGitleaksDirectory "gitleaks.exe") @("version")
     $RuffPin = Get-RequirementPin "ruff"
     $BanditPin = Get-RequirementPin "bandit"
     $PipPin = Get-RequirementPin "pip"
@@ -923,11 +1082,11 @@ function Show-ToolTable {
         [pscustomobject]@{ Tool = "Git"; Required = "available"; Actual = $GitActual; Status = (Get-ToolStatus ($GitActual -notin @("MISSING", "FAIL"))) },
         [pscustomobject]@{ Tool = "GitHub CLI"; Required = "available"; Actual = $GitHubCLIActual; Status = (Get-ToolStatus ($GitHubCLIActual -notin @("MISSING", "FAIL"))) },
         [pscustomobject]@{ Tool = "Go"; Required = "go$GoPin"; Actual = $GoActual; Status = (Get-ToolStatus ($GoActual -eq "go$GoPin")) },
-        [pscustomobject]@{ Tool = "Python"; Required = "3.13.x"; Actual = $PythonActual; Status = (Get-ToolStatus ($PythonActual -match "^Python 3\.13(?:\.|$)")) },
+        [pscustomobject]@{ Tool = "Audit Python"; Required = "3.13.x isolated"; Actual = $PythonActual; Status = (Get-ToolStatus ([bool]$AuditPythonVersion)) },
         [pscustomobject]@{ Tool = "Node"; Required = "24.x"; Actual = $NodeActual; Status = (Get-ToolStatus ($NodeActual -match "^v24\.")) },
         [pscustomobject]@{ Tool = "Wails"; Required = $WailsPin; Actual = $WailsActual; Status = (Get-ToolStatus ($WailsInfo.Version -eq $WailsPin)) },
-        [pscustomobject]@{ Tool = "Staticcheck"; Required = $StaticcheckPin; Actual = $StaticcheckActual; Status = (Get-ToolStatus ($StaticcheckActual -eq $StaticcheckPin)) },
-        [pscustomobject]@{ Tool = "Govulncheck"; Required = $GovulncheckPin; Actual = $GovulncheckActual; Status = (Get-ToolStatus ($GovulncheckActual -eq $GovulncheckPin)) },
+        [pscustomobject]@{ Tool = "Staticcheck"; Required = $StaticcheckPin; Actual = $StaticcheckActual; Status = (Get-ToolStatus ($StaticcheckInfo.Version -eq $StaticcheckPin)) },
+        [pscustomobject]@{ Tool = "Govulncheck"; Required = $GovulncheckPin; Actual = $GovulncheckActual; Status = (Get-ToolStatus ($GovulncheckInfo.Version -eq $GovulncheckPin)) },
         [pscustomobject]@{ Tool = "Gitleaks"; Required = $GitleaksPin; Actual = $GitleaksActual; Status = (Get-ToolStatus ($GitleaksActual -eq $GitleaksPin)) },
         [pscustomobject]@{ Tool = "Ruff"; Required = $RuffPin; Actual = $RuffActual; Status = (Get-ToolStatus ($RuffActual -eq $RuffPin)) },
         [pscustomobject]@{ Tool = "Bandit"; Required = $BanditPin; Actual = $BanditActual; Status = (Get-ToolStatus ($BanditActual -eq $BanditPin)) },
@@ -950,12 +1109,21 @@ function Install-Tools {
         throw "winget is required to install missing system tools."
     }
     Update-ProcessPath
-    if ((Get-VersionLine "git" @("--version")) -in @("MISSING", "FAIL")) { & winget install --exact --id Git.Git --accept-package-agreements --accept-source-agreements }
-    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { & winget install --exact --id GitHub.cli --accept-package-agreements --accept-source-agreements }
-    if ((Get-VersionLine "python" @("--version")) -notmatch "^Python 3\.13(?:\.|$)") { & winget install --exact --id Python.Python.3.13 --accept-package-agreements --accept-source-agreements }
-    if ((Get-VersionLine "node" @("--version")) -notmatch "^v24\.") { & winget install --exact --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements }
-    if (-not (Get-Command go -ErrorAction SilentlyContinue) -or (& go env GOVERSION).Trim() -ne "go$GoPin") { & winget install --exact --id GoLang.Go --version $GoPin --accept-package-agreements --accept-source-agreements }
-    if ((Get-WebView2Version) -eq "MISSING") { & winget install --exact --id Microsoft.EdgeWebView2Runtime --accept-package-agreements --accept-source-agreements }
+    $AuditEnvironmentReady = $false
+    try {
+        Ensure-AuditEnvironment
+        $AuditEnvironmentReady = $true
+    } catch {
+        if ($_.Exception.Message -notlike "Python 3.13 executable is missing and no validated Python audit environment is available.*") {
+            throw
+        }
+    }
+    if ((Get-VersionLine "git" @("--version")) -in @("MISSING", "FAIL")) { Invoke-Checked "winget" @("install", "--exact", "--id", "Git.Git", "--accept-package-agreements", "--accept-source-agreements") 900 }
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { Invoke-Checked "winget" @("install", "--exact", "--id", "GitHub.cli", "--accept-package-agreements", "--accept-source-agreements") 900 }
+    if (-not $AuditEnvironmentReady -and (Get-VersionLine "python" @("--version")) -notmatch "^Python 3\.13(?:\.|$)") { Invoke-Checked "winget" @("install", "--exact", "--id", "Python.Python.3.13", "--accept-package-agreements", "--accept-source-agreements") 900 }
+    if ((Get-VersionLine "node" @("--version")) -notmatch "^v24\.") { Invoke-Checked "winget" @("install", "--exact", "--id", "OpenJS.NodeJS.LTS", "--accept-package-agreements", "--accept-source-agreements") 900 }
+    if (-not (Get-Command go -ErrorAction SilentlyContinue) -or (& go env GOVERSION).Trim() -ne "go$GoPin") { Invoke-Checked "winget" @("install", "--exact", "--id", "GoLang.Go", "--version", $GoPin, "--accept-package-agreements", "--accept-source-agreements") 900 }
+    if ((Get-WebView2Version) -eq "MISSING") { Invoke-Checked "winget" @("install", "--exact", "--id", "Microsoft.EdgeWebView2Runtime", "--accept-package-agreements", "--accept-source-agreements") 900 }
     Update-ProcessPath
     if (-not (Get-Command go -ErrorAction SilentlyContinue)) { throw "Restart the terminal after installing Go, then run Install again." }
     $GoBin = (& go env GOBIN).Trim()
@@ -972,7 +1140,7 @@ function Install-Tools {
     if ((Get-StaticcheckVersion) -ne $StaticcheckPin) { Invoke-Checked "go" @("install", "honnef.co/go/tools/cmd/staticcheck@$StaticcheckPin") 480 }
     if ((Get-GovulncheckVersion) -ne $GovulncheckPin) { Invoke-Checked "go" @("install", "golang.org/x/vuln/cmd/govulncheck@$GovulncheckPin") 480 }
     Install-Gitleaks
-    Ensure-AuditEnvironment
+    if (-not $AuditEnvironmentReady) { Ensure-AuditEnvironment }
     Invoke-Checked $AuditPython @("-m", "playwright", "install", "chromium") 900
     if (-not (Show-ToolTable)) { throw "One or more required tools are missing or incompatible. Restart the terminal if system tools were installed." }
 }
@@ -1031,8 +1199,10 @@ function Test-Release {
         foreach ($Audit in @("data_presentation_audit.py", "frontend_smoke_test.py")) {
             Invoke-Checked $AuditPython @("-B", ("tools/" + $Audit)) 900
         }
-        Invoke-Checked "gitleaks" @("dir", "--no-banner", "--redact", ".") 600
-        Invoke-Checked "gitleaks" @("git", "--no-banner", "--redact", ".") 600
+        $GitleaksExecutable = Join-Path $PinnedGitleaksDirectory "gitleaks.exe"
+        Test-GitleaksDetection
+        Invoke-Checked $GitleaksExecutable @("dir", "--no-banner", "--redact", ".") 600
+        Invoke-GitleaksHistoryScan 600
         Invoke-Checked $AuditPython @("-B", "tools/repository_audit.py") 120
         Assert-CleanTree
         if ((& git rev-parse HEAD).Trim() -ne $BeforeHead) { throw "HEAD changed during the RELEASE gate." }
@@ -1120,11 +1290,149 @@ function Build-Release {
         }
         Set-Content -LiteralPath (Join-Path $OutputFull "SHA256SUMS.txt") -Value $ChecksumLines -Encoding ASCII
         Assert-CleanTree
+        Invoke-Checked $AuditPython @("-B", "tools/verify_release_assets.py", "--directory", $OutputFull, "--version", $Version) 120
         Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version) 120
         Invoke-Checked $AuditPython @("-B", "tools/verify_windows_resources.py", "--directory", $OutputFull, "--version", $Version) 120
+        if ((& git rev-parse HEAD).Trim() -ne $Head) { throw "HEAD changed during release artifact build." }
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
         Write-Host "Release build: PASS (Windows x64, x86, arm64)" -ForegroundColor Green
         Write-Host $OutputFull
     } finally { Pop-Location }
+}
+
+function Prepare-Release {
+    # No publishable artifact is created until the complete strict gate has
+    # succeeded and written a fingerprint for this exact HEAD/source tree.
+    Test-Release
+    Build-Release
+    Write-Host "PREPARE RELEASE: PASS" -ForegroundColor Green
+}
+
+function Invoke-GitFetchMain {
+    Invoke-Checked "git" @("fetch", "--prune", "origin", "main") 300
+}
+
+function Assert-ReleaseSigningIdentity {
+    $GitName = (& git config --get user.name | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $GitName -ne $ReleaseGitName) { throw "Git release user.name is not configured as required." }
+    $GitEmail = (& git config --get user.email | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $GitEmail -ne $ReleaseGitEmail) { throw "Git release user.email is not configured as required." }
+    if (-not (Test-Path -LiteralPath $ReleaseGpgExecutable -PathType Leaf)) { throw "Required Git for Windows GPG executable is missing." }
+    $Result = Invoke-CapturedNativeProcess `
+        -File $ReleaseGpgExecutable `
+        -Arguments @("--batch", "--with-colons", "--list-secret-keys", $ReleaseGpgFingerprint) `
+        -WorkingDirectory $Root `
+        -TimeoutSeconds 30
+    if ($Result.TimedOut -or $Result.ExitCode -ne 0) { throw "Configured GPG release secret key could not be verified." }
+    $FingerprintFound = $false
+    foreach ($Line in ([string]$Result.Stdout -split "`r?`n")) {
+        $Fields = $Line -split ":"
+        if ($Fields.Count -gt 9 -and $Fields[0] -eq "fpr" -and $Fields[9] -eq $ReleaseGpgFingerprint) {
+            $FingerprintFound = $true
+            break
+        }
+    }
+    if (-not $FingerprintFound) { throw "Configured GPG release fingerprint is unavailable in the secret keyring." }
+}
+
+function Assert-ReleaseTag {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][string]$Head
+    )
+    $TagCommit = (& git rev-list -n 1 $Tag | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $TagCommit) { throw "Release tag target could not be resolved." }
+    if ($TagCommit -ne $Head) { throw "Release tag does not point to the tested HEAD." }
+
+    $GitExecutable = Resolve-NativeExecutablePath -File "git"
+    $VerifyResult = Invoke-CapturedNativeProcess `
+        -File $GitExecutable `
+        -Arguments @("-c", "gpg.program=$ReleaseGpgExecutable", "verify-tag", "--raw", $Tag) `
+        -WorkingDirectory $Root `
+        -TimeoutSeconds 60
+    if ($VerifyResult.TimedOut -or $VerifyResult.ExitCode -ne 0) { throw "Release tag signature verification failed." }
+    $SignatureOutput = ([string]$VerifyResult.Stdout) + "`n" + ([string]$VerifyResult.Stderr)
+    $FingerprintPattern = "(?m)^\[GNUPG:\] VALIDSIG " + [regex]::Escape($ReleaseGpgFingerprint) + "(?:\s|$)"
+    if ($SignatureOutput -notmatch $FingerprintPattern) { throw "Release tag was not signed by the configured release fingerprint." }
+}
+
+function Get-RemoteReleaseTagObjectId {
+    param([Parameter(Mandatory = $true)][string]$Tag)
+    $GitExecutable = Resolve-NativeExecutablePath -File "git"
+    $Result = Invoke-CapturedNativeProcess `
+        -File $GitExecutable `
+        -Arguments @("ls-remote", "--exit-code", "--tags", "origin", "refs/tags/$Tag") `
+        -WorkingDirectory $Root `
+        -TimeoutSeconds 60
+    if ($Result.TimedOut) { throw "Remote release tag query timed out." }
+    if ($Result.ExitCode -eq 2) { return $null }
+    if ($Result.ExitCode -ne 0) { throw "Remote release tag state could not be verified." }
+    $Lines = @(([string]$Result.Stdout -split "`r?`n") | Where-Object { $_.Trim() })
+    if ($Lines.Count -ne 1) { throw "Remote release tag query returned an unexpected result." }
+    $Fields = $Lines[0] -split "\s+"
+    if ($Fields.Count -lt 2 -or $Fields[1] -ne "refs/tags/$Tag" -or $Fields[0] -notmatch "^[0-9a-fA-F]{40,64}$") {
+        throw "Remote release tag response was invalid."
+    }
+    return $Fields[0].ToLowerInvariant()
+}
+
+function Ensure-ReleaseTag {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][string]$Head
+    )
+    $RemoteTagObject = Get-RemoteReleaseTagObjectId -Tag $Tag
+    & git show-ref --verify --quiet "refs/tags/$Tag"
+    $LocalTagExists = $LASTEXITCODE -eq 0
+
+    if ($RemoteTagObject -and -not $LocalTagExists) {
+        Invoke-Checked "git" @("fetch", "origin", "refs/tags/$Tag:refs/tags/$Tag") 120
+        $LocalTagExists = $true
+    }
+
+    if (-not $LocalTagExists) {
+        Invoke-Checked "git" @(
+            "-c", "gpg.program=$ReleaseGpgExecutable",
+            "-c", "user.signingkey=$ReleaseGpgFingerprint",
+            "tag", "-s", "-u", $ReleaseGpgFingerprint,
+            "-m", "Iris Online Database $Version", $Tag
+        ) 120
+    }
+
+    Assert-ReleaseTag -Tag $Tag -Head $Head
+    $LocalTagObject = (& git rev-parse "refs/tags/$Tag" | Out-String).Trim().ToLowerInvariant()
+    if ($LASTEXITCODE -ne 0 -or $LocalTagObject -notmatch "^[0-9a-f]{40,64}$") { throw "Local release tag object could not be resolved." }
+
+    if ($RemoteTagObject) {
+        if ($RemoteTagObject -ne $LocalTagObject) { throw "Local and origin release tag objects differ." }
+        return
+    }
+
+    Invoke-Checked "git" @("push", "origin", "refs/tags/$Tag:refs/tags/$Tag") 300
+    $RemoteTagObject = Get-RemoteReleaseTagObjectId -Tag $Tag
+    if (-not $RemoteTagObject -or $RemoteTagObject -ne $LocalTagObject) { throw "Pushed release tag could not be verified on origin." }
+}
+
+function Get-GitHubCheckRuns {
+    param([string]$Head)
+    $GhExecutable = Resolve-NativeExecutablePath -File "gh"
+    $Result = Invoke-CapturedNativeProcess `
+        -File $GhExecutable `
+        -Arguments @("api", "-H", "X-GitHub-Api-Version: 2026-03-10", "repos/$RepositorySlug/commits/$Head/check-runs?filter=latest&per_page=100") `
+        -WorkingDirectory $Root `
+        -TimeoutSeconds 120
+    if ($Result.TimedOut -or $Result.ExitCode -ne 0) { throw "GitHub check-runs query failed." }
+    try {
+        $Payload = ConvertFrom-Json ([string]$Result.Stdout)
+        $Runs = @($Payload.check_runs)
+        if ([int]$Payload.total_count -gt $Runs.Count) {
+            throw "GitHub check-runs response exceeded the verified page size."
+        }
+        return $Runs
+    } catch {
+        if ($_.Exception.Message -eq "GitHub check-runs response exceeded the verified page size.") { throw }
+        throw "GitHub check-runs response was invalid."
+    }
 }
 
 function Publish-Commit {
@@ -1133,11 +1441,15 @@ function Publish-Commit {
     Push-Location $Root
     try {
         Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
-        Invoke-Checked "git" @("push", "origin", "main") 300
-        $Head = (& git rev-parse HEAD).Trim()
-        $RemoteHead = (& git rev-parse "origin/main").Trim()
-        if ($Head -ne $RemoteHead) { throw "Pushed commit does not match the tested HEAD." }
-        Write-Host "Commit published. Wait for GitHub CI and CodeQL before Release." -ForegroundColor Green
+        $Head = (& git rev-parse HEAD | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $Head) { throw "Git HEAD could not be resolved." }
+        Invoke-GitFetchMain
+        Invoke-Checked "git" @("push", "origin", "main:main") 300
+        Invoke-GitFetchMain
+        $RemoteHead = (& git rev-parse "origin/main" | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $Head -ne $RemoteHead) { throw "Pushed commit does not match the tested HEAD." }
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
+        Write-Host "Commit published. GitHub CI and CodeQL must be PASS before GITHUB RELEASE." -ForegroundColor Green
     } finally { Pop-Location }
 }
 
@@ -1148,24 +1460,30 @@ function Create-Release {
     Push-Location $Root
     try {
         Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
-        $Head = (& git rev-parse HEAD).Trim()
-        if ($Head -ne (& git rev-parse "origin/main").Trim()) { throw "HEAD is not the published origin/main commit." }
-        $Checks = (& gh api -H "X-GitHub-Api-Version: 2026-03-10" "repos/fsibatov/iris-online-database/commits/$Head/check-runs?per_page=100" | ConvertFrom-Json).check_runs
-        $RequiredChecks = @("Linux quality and security", "Go race detector", "Native Windows amd64 Wails build", "Analyze (go)", "Analyze (python)")
+        Invoke-GitFetchMain
+        $Head = (& git rev-parse HEAD | Out-String).Trim()
+        $RemoteHead = (& git rev-parse "origin/main" | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $Head -ne $RemoteHead) { throw "HEAD is not the published origin/main commit." }
+        $Checks = Get-GitHubCheckRuns -Head $Head
+        $RequiredChecks = @("Linux quality and security", "Go race detector", "Native Windows Wails release matrix", "Analyze (go)", "Analyze (python)")
         foreach ($Name in $RequiredChecks) {
-            $Match = @($Checks | Where-Object { $_.name -eq $Name })
-            if (-not $Match) {
-                throw "Required GitHub check is missing: $Name"
-            }
-            if ($Match | Where-Object { $_.status -ne "completed" }) {
-                throw "Required GitHub check is still running: $Name. Run Release again after GitHub Actions finishes."
-            }
-            if ($Match | Where-Object { $_.conclusion -ne "success" }) {
-                throw "Required GitHub check failed: $Name"
-            }
+            $Matches = @($Checks | Where-Object { $_.name -eq $Name })
+            if (-not $Matches) { throw "Required GitHub check is missing: $Name" }
+            $Latest = $Matches | Sort-Object -Property id -Descending | Select-Object -First 1
+            if ($Latest.status -ne "completed") { throw "Required GitHub check is still running: $Name. Run GITHUB RELEASE again after GitHub Actions finishes." }
+            if ($Latest.conclusion -ne "success") { throw "Required GitHub check failed: $Name" }
         }
         if (-not $OutputDirectory) { $script:OutputDirectory = Join-Path (Split-Path $Root -Parent) "iris-online-database-release-$Version" }
         $OutputFull = [IO.Path]::GetFullPath($OutputDirectory)
+        Invoke-Checked $AuditPython @("-B", "tools/verify_release_assets.py", "--directory", $OutputFull, "--version", $Version) 120
+        Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version) 120
+        Invoke-Checked $AuditPython @("-B", "tools/verify_windows_resources.py", "--directory", $OutputFull, "--version", $Version) 120
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
+        Assert-ReleaseSigningIdentity
+
+        $Tag = "v$Version"
+        Ensure-ReleaseTag -Tag $Tag -Head $Head
+
         $ArtifactNames = @(
             "IrisOnlineDB-$Version-Windows-x64.exe",
             "IrisOnlineDB-$Version-Windows-x86.exe",
@@ -1173,53 +1491,44 @@ function Create-Release {
         )
         $Artifacts = @($ArtifactNames | ForEach-Object { Join-Path $OutputFull $_ })
         $Checksums = Join-Path $OutputFull "SHA256SUMS.txt"
-        foreach ($Artifact in $Artifacts) {
-            if (-not (Test-Path -LiteralPath $Artifact -PathType Leaf)) { throw "Build all release executables first." }
-        }
-        if (-not (Test-Path -LiteralPath $Checksums -PathType Leaf)) { throw "Build SHA256SUMS.txt first." }
-        $ChecksumLines = @(Get-Content -LiteralPath $Checksums | Where-Object { $_.Trim() })
-        if ($ChecksumLines.Count -ne $Artifacts.Count) { throw "SHA256SUMS.txt must contain exactly three release executable entries." }
-        foreach ($Artifact in $Artifacts) {
-            $ArtifactName = Split-Path $Artifact -Leaf
-            $Pattern = "^([0-9a-fA-F]{64})  " + [Regex]::Escape($ArtifactName) + "$"
-            $MatchingLines = @($ChecksumLines | Where-Object { $_ -match $Pattern })
-            if ($MatchingLines.Count -ne 1) { throw "Release checksum entry is missing or duplicated: $ArtifactName" }
-            [void]($MatchingLines[0] -match $Pattern)
-            $ExpectedHash = $Matches[1].ToLowerInvariant()
-            $ActualHash = (Get-FileHash -LiteralPath $Artifact -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($ExpectedHash -ne $ActualHash) { throw "Release artifact changed after verification: $ArtifactName" }
-        }
-        Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version) 120
-        Invoke-Checked $AuditPython @("-B", "tools/verify_windows_resources.py", "--directory", $OutputFull, "--version", $Version) 120
-        Invoke-Checked "git" @("tag", "-s", "v$Version", "-m", "Iris Online Database $Version") 120
-        Invoke-Checked "git" @("push", "origin", "v$Version") 300
-        $ReleaseArguments = @("release", "create", "v$Version") + $Artifacts + @(
+        $ReleaseArguments = @("release", "create", $Tag) + $Artifacts + @(
             $Checksums,
             "--verify-tag",
             "--title", "Iris Online Database $Version",
             "--notes-file", "CHANGELOG.md"
         )
         Invoke-Checked "gh" $ReleaseArguments 600
-        Write-Host "GitHub release v$Version created." -ForegroundColor Green
+        Write-Host "GitHub release $Tag created." -ForegroundColor Green
     } finally { Pop-Location }
+}
+
+function Open-ReleaseFolder {
+    if (-not $OutputDirectory) { $script:OutputDirectory = Join-Path (Split-Path $Root -Parent) "iris-online-database-release-$Version" }
+    $OutputFull = [IO.Path]::GetFullPath($OutputDirectory)
+    if (-not (Test-Path -LiteralPath $OutputFull -PathType Container)) { throw "Release folder does not exist yet." }
+    $Explorer = Join-Path $env:SystemRoot "explorer.exe"
+    & $Explorer $OutputFull
+    if ($LASTEXITCODE -ne 0) { throw "Explorer could not open the release folder." }
 }
 
 if ($Action -eq "Menu") {
     Write-Host "Iris Online Database $Version release tools"
-    Write-Host "0 - Check tools"
-    Write-Host "1 - Install/update tools"
-    Write-Host "2 - Strict RELEASE gate"
-    Write-Host "3 - Build 3 EXE and SHA256"
-    Write-Host "4 - Push tested commit"
-    Write-Host "5 - Create signed tag and GitHub release"
+    Write-Host "1 - PREPARE RELEASE"
+    Write-Host "2 - PUSH COMMIT"
+    Write-Host "3 - GITHUB RELEASE"
+    Write-Host "4 - CHECK TOOLS"
+    Write-Host "5 - INSTALL/UPDATE TOOLS"
+    Write-Host "6 - OPEN RELEASE FOLDER"
+    Write-Host "0 - EXIT"
     $Choice = Read-Host "Select"
     $Action = switch ($Choice) {
-        "0" { "Check" }
-        "1" { "Install" }
-        "2" { "Test" }
-        "3" { "Build" }
-        "4" { "Publish" }
-        "5" { "Release" }
+        "1" { "Prepare" }
+        "2" { "Publish" }
+        "3" { "Release" }
+        "4" { "Check" }
+        "5" { "Install" }
+        "6" { "Open" }
+        "0" { return }
         default { throw "Unknown selection." }
     }
 }
@@ -1227,9 +1536,11 @@ if ($Action -eq "Menu") {
 switch ($Action) {
     "Check" { if (-not (Show-ToolTable)) { throw "Tool check: FAIL" } }
     "Install" { Install-Tools }
+    "Prepare" { Prepare-Release }
     "Test" { Test-Release }
     "Build" { Build-Release }
     "Publish" { Publish-Commit }
     "Release" { Create-Release }
+    "Open" { Open-ReleaseFolder }
     "SelfTest" { Test-WindowsTooling }
 }

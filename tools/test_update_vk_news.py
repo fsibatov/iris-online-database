@@ -29,6 +29,12 @@ class VKNewsUpdaterTests(unittest.TestCase):
             module.normalize_text("  Один  \\n\\n Два   слова "), "Один\nДва слова"
         )
 
+    def test_normalize_text_caps_preview_at_700_characters(self):
+        text = module.normalize_text("А" * 900)
+        self.assertEqual(module.MAX_TEXT_LENGTH, 700)
+        self.assertEqual(len(text), 700)
+        self.assertTrue(text.endswith("…"))
+
     def test_post_text_fallback_selectors_cover_dom_and_metadata(self):
         self.assertIn('[data-testid="post_text"]', module.POST_TEXT_SELECTORS)
         self.assertIn('[data-testid="wall_post_text"]', module.POST_TEXT_SELECTORS)
@@ -44,6 +50,7 @@ class VKNewsUpdaterTests(unittest.TestCase):
 
     def test_http_body_decoder_honours_declared_windows_1251_charset(self):
         raw = '<meta charset="windows-1251"><p>А</p>'.encode("windows-1251")
+        self.assertIn(b"\xc0", raw)
         decoded = module._decode_http_body(
             raw, {"Content-Type": "text/html; charset=windows-1251"}
         )

@@ -96,6 +96,15 @@ jobs:
           printf '%s  %s\n' "$GITLEAKS_LINUX_X64_SHA256" "$RUNNER_TEMP/$asset" | sha256sum --check --strict
           mkdir -p "$RUNNER_TEMP/gitleaks"
           tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          test "$("$RUNNER_TEMP/gitleaks/gitleaks" version)" = "$GITLEAKS_VERSION"
+          probe_dir="$(mktemp -d "$RUNNER_TEMP/gitleaks-probe.XXXXXXXX")"
+          printf 'token=%s%s\n' 'ghp_' 'wA9mK2pLxN4vRtQzY6bC8dEfGhJlM0oPq1rS' > "$probe_dir/probe.txt"
+          set +e
+          "$RUNNER_TEMP/gitleaks/gitleaks" dir --no-banner --redact --exit-code 37 "$probe_dir" >/dev/null 2>&1
+          probe_exit=$?
+          set -e
+          rm -rf -- "$probe_dir"
+          test "$probe_exit" -eq 37
           echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
 
       - name: Repository audit before checks
@@ -163,14 +172,26 @@ jobs:
         run: timeout 10m gitleaks dir --no-banner --redact .
 
       - name: Gitleaks complete Git history
-        run: timeout 10m gitleaks git --no-banner --redact .
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/gitleaks-history.log"
+          set +e
+          timeout 10m gitleaks git --no-banner --redact --log-level info . >"$output" 2>&1
+          exit_code=$?
+          set -e
+          cat "$output"
+          test "$exit_code" -eq 0
+          grep -Eq '[1-9][0-9]* commits scanned\.' "$output"
 
       - name: Source tree remains clean
         shell: bash
         run: |
+          set -euo pipefail
           python -B tools/repository_audit.py
           git diff --exit-code
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          status="$(git status --porcelain=v1 --untracked-files=all)"
+          test -z "$status"
 
   race:
     name: Go race detector
@@ -188,16 +209,40 @@ jobs:
         run: timeout 20m go test -race -count=1 ./...
 
   windows-build:
-    name: Native Windows amd64 Wails build
+    name: Native Windows Wails release matrix
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
+    env:
+      GOBIN: ${{ runner.temp }}\go-tools
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Setup Python 3.13
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
+
+      - name: Setup pinned Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: .go-version
+          cache: true
+
+      - name: Install pinned Windows release Go tools
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path $env:GOBIN | Out-Null
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.14.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go install honnef.co/go/tools/cmd/staticcheck@2026.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [IO.File]::AppendAllText($env:GITHUB_PATH, $env:GOBIN + [Environment]::NewLine, $utf8NoBom)
+
       - name: Parse and self-test Windows PowerShell 5.1 tooling
         shell: powershell
         run: |
@@ -217,20 +262,9 @@ jobs:
           }
           powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action SelfTest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Setup pinned Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version-file: .go-version
-          cache: true
-      - name: Install pinned Wails CLI
-        shell: pwsh
-        run: |
-          $env:GOBIN = Join-Path $env:RUNNER_TEMP "go-tools"
-          New-Item -ItemType Directory -Force -Path $env:GOBIN | Out-Null
-          go install github.com/wailsapp/wails/v2/cmd/wails@v2.14.0
-          $env:GOBIN | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Windows Go tests
-        shell: pwsh
+        shell: powershell
         run: |
           $driveRoot = [IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)
           $testTemp = Join-Path $driveRoot ("iris-go-test-temp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")
@@ -252,14 +286,19 @@ jobs:
             Remove-Item -LiteralPath $testTemp -Recurse -Force -ErrorAction SilentlyContinue
           }
           if ($goTestExitCode -ne 0) { exit $goTestExitCode }
-      - name: Build production desktop executables (x64, x86, arm64)
-        shell: pwsh
+
+      - name: Build production desktop executables and SHA256 (x64, x86, arm64)
+        shell: powershell
         run: |
+          $ErrorActionPreference = "Stop"
           $version = (Get-Content VERSION -Raw).Trim()
           $head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $artifactDir = Join-Path $env:RUNNER_TEMP "iris-release-multiarch"
           Remove-Item -LiteralPath $artifactDir -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+          $wails = Join-Path $env:GOBIN "wails.exe"
+          if (-not (Test-Path -LiteralPath $wails -PathType Leaf)) { throw "Pinned Wails executable is missing." }
           $targets = @(
             [pscustomobject]@{ Platform = "windows/amd64"; Suffix = "x64"; LevelName = "GOAMD64"; LevelValue = "v1" },
             [pscustomobject]@{ Platform = "windows/386"; Suffix = "x86"; LevelName = "GO386"; LevelValue = "sse2" },
@@ -270,6 +309,7 @@ jobs:
           foreach ($name in $environmentNames) {
             $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
           }
+          $artifacts = New-Object System.Collections.Generic.List[string]
           try {
             foreach ($target in $targets) {
               Remove-Item Env:\GOAMD64 -ErrorAction SilentlyContinue
@@ -277,10 +317,11 @@ jobs:
               Remove-Item Env:\GOARM64 -ErrorAction SilentlyContinue
               $env:CGO_ENABLED = "0"
               Set-Item -Path "Env:$($target.LevelName)" -Value $target.LevelValue
-              & "$env:RUNNER_TEMP\go-tools\wails.exe" build -platform $target.Platform -webview2 embed -trimpath -clean -skipbindings -s -nosyncgomod -m -o IrisOnlineDatabase.exe -ldflags "-buildid= -X main.appVersion=$version -X main.releaseMarker=IrisOnlineRelease/$version/$head"
+              & $wails build -platform $target.Platform -webview2 embed -trimpath -clean -skipbindings -s -nosyncgomod -m -o IrisOnlineDatabase.exe -ldflags "-buildid= -X main.appVersion=$version -X main.releaseMarker=IrisOnlineRelease/$version/$head"
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
               $artifact = Join-Path $artifactDir "IrisOnlineDB-$version-Windows-$($target.Suffix).exe"
               Copy-Item build\bin\IrisOnlineDatabase.exe $artifact -Force
+              $artifacts.Add($artifact)
             }
           } finally {
             foreach ($name in $environmentNames) {
@@ -294,11 +335,28 @@ jobs:
             Remove-Item build\bin, build\generated, web\wailsjs -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item build\appicon.png -Force -ErrorAction SilentlyContinue
           }
+          $checksumLines = foreach ($artifact in $artifacts) {
+            $hash = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $(Split-Path $artifact -Leaf)"
+          }
+          Set-Content -LiteralPath (Join-Path $artifactDir "SHA256SUMS.txt") -Value $checksumLines -Encoding ASCII
+          python -B tools/verify_release_assets.py --directory $artifactDir --version $version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -B tools/verify_executables.py --directory $artifactDir --version $version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -B tools/verify_windows_resources.py --directory $artifactDir --version $version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Source tree remains clean
-        shell: pwsh
+        shell: powershell
         run: |
           python -B tools/repository_audit.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git diff --exit-code
-          if (git status --porcelain=v1 --untracked-files=all) { exit 1 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $status = @(git status --porcelain=v1 --untracked-files=all)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($status.Count -ne 0) {
+            $status | ForEach-Object { Write-Host $_ }
+            exit 1
+          }

@@ -136,8 +136,55 @@ def decode_manifest(payload: bytes) -> str:
     raise ValueError("manifest is not valid Unicode")
 
 
+def version_tuple(version: str) -> tuple[int, int, int, int]:
+    parts = version.split(".")
+    if len(parts) not in (3, 4) or any(not part.isdigit() for part in parts):
+        raise ValueError(
+            "release version must contain three or four numeric components"
+        )
+    values = [int(part) for part in parts]
+    if any(value > 0xFFFF for value in values):
+        raise ValueError("release version component exceeds Windows resource range")
+    while len(values) < 4:
+        values.append(0)
+    return values[0], values[1], values[2], values[3]
+
+
+def verify_version_resource(payloads: list[bytes], version: str, goarch: str) -> None:
+    if len(payloads) != 1:
+        raise SystemExit(f"Windows version resource count is invalid ({goarch})")
+    payload = payloads[0]
+    required = (
+        "Iris Online Database".encode("utf-16le"),
+        "FileVersion".encode("utf-16le"),
+        "ProductVersion".encode("utf-16le"),
+        version.encode("utf-16le"),
+    )
+    if any(marker not in payload for marker in required):
+        raise SystemExit(f"Windows version metadata is incomplete ({goarch})")
+
+    signature = struct.pack("<I", 0xFEEF04BD)
+    offsets = []
+    start = 0
+    while True:
+        offset = payload.find(signature, start)
+        if offset < 0:
+            break
+        offsets.append(offset)
+        start = offset + 1
+    if len(offsets) != 1 or offsets[0] + 52 > len(payload):
+        raise SystemExit(f"VS_FIXEDFILEINFO is missing or ambiguous ({goarch})")
+
+    fields = struct.unpack_from("<13I", payload, offsets[0])
+    expected = version_tuple(version)
+    expected_ms = (expected[0] << 16) | expected[1]
+    expected_ls = (expected[2] << 16) | expected[3]
+    if fields[2:6] != (expected_ms, expected_ls, expected_ms, expected_ls):
+        raise SystemExit(f"Windows fixed version metadata is not {version} ({goarch})")
+
+
 def verify_target(path: pathlib.Path, version: str, target) -> None:
-    machine, sections, data, timestamp, magic, packed_flags = parse_pe(path)
+    machine, sections, _data, timestamp, magic, packed_flags = parse_pe(path)
     subsystem = packed_flags & 0xFFFF
     dll_characteristics = packed_flags >> 16
     if (
@@ -183,14 +230,7 @@ def verify_target(path: pathlib.Path, version: str, target) -> None:
     for marker in ("permonitorv2", "asinvoker", "longpathaware"):
         if marker not in lowered_manifest:
             raise SystemExit(f"application manifest is incomplete ({target.goarch})")
-    for marker in (
-        "Iris Online Database".encode("utf-16le"),
-        version.encode("utf-16le"),
-    ):
-        if marker not in data:
-            raise SystemExit(
-                f"Windows version metadata is incomplete ({target.goarch})"
-            )
+    verify_version_resource(resource_payloads(path, 16), version, target.goarch)
 
     hardening = ["ASLR", "NX", "Terminal Server aware"]
     if target.require_high_entropy_va:

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Menu", "Check", "Install", "Test", "Build", "Publish", "Release", "SelfTest")]
+    [ValidateSet("Menu", "Check", "Install", "Prepare", "Test", "Build", "Publish", "Release", "Open", "SelfTest")]
     [string]$Action = "Menu",
     [string]$OutputDirectory = "",
     [switch]$ElevatedSession
@@ -42,20 +42,22 @@ function Restart-AsAdministrator {
 if ($Action -eq "Menu") {
     $Version = (Get-Content -LiteralPath (Join-Path $PSScriptRoot "VERSION") -Raw).Trim()
     Write-Host "Iris Online Database $Version release tools"
-    Write-Host "0 - Check tools"
-    Write-Host "1 - Install/update tools"
-    Write-Host "2 - Strict RELEASE gate"
-    Write-Host "3 - Build EXE and SHA256"
-    Write-Host "4 - Push tested commit"
-    Write-Host "5 - Create signed tag and GitHub release"
+    Write-Host "1 - PREPARE RELEASE"
+    Write-Host "2 - PUSH COMMIT"
+    Write-Host "3 - GITHUB RELEASE"
+    Write-Host "4 - CHECK TOOLS"
+    Write-Host "5 - INSTALL/UPDATE TOOLS"
+    Write-Host "6 - OPEN RELEASE FOLDER"
+    Write-Host "0 - EXIT"
     $Choice = Read-Host "Select"
     $Action = switch ($Choice) {
-        "0" { "Check" }
-        "1" { "Install" }
-        "2" { "Test" }
-        "3" { "Build" }
-        "4" { "Publish" }
-        "5" { "Release" }
+        "1" { "Prepare" }
+        "2" { "Publish" }
+        "3" { "Release" }
+        "4" { "Check" }
+        "5" { "Install" }
+        "6" { "Open" }
+        "0" { return }
         default { throw "Unknown selection." }
     }
 }

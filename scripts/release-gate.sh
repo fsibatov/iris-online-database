@@ -14,8 +14,17 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$ROOT_DIR"
-if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+. "$ROOT_DIR/scripts/release-tools.sh"
+if ! INITIAL_STATUS="$(git status --porcelain=v1 --untracked-files=all)"; then
+  echo "Git status failed before the RELEASE gate."
+  exit 1
+fi
+if [ -n "$INITIAL_STATUS" ]; then
   echo "RELEASE gate requires a clean Git working tree."
+  exit 1
+fi
+if [ "$(git branch --show-current)" != "main" ]; then
+  echo "RELEASE gate requires branch main."
   exit 1
 fi
 BEFORE_HEAD="$(git rev-parse HEAD)"
@@ -26,8 +35,24 @@ if [ "$ACTUAL_GO" != "go$EXPECTED_GO" ]; then
   echo "Go version mismatch: expected go$EXPECTED_GO, got $ACTUAL_GO"
   exit 1
 fi
-if [ "$(wails version | head -n 1 | tr -d '\r')" != "v2.14.0" ]; then
-  echo "Wails CLI v2.14.0 is required."
+WAILS_BIN="$(iris_resolve_wails v2.14.0 || true)"
+STATICCHECK_BIN="$(iris_resolve_staticcheck 2026.1 || true)"
+GOVULNCHECK_BIN="$(iris_resolve_govulncheck v1.6.0 || true)"
+GITLEAKS_BIN="$(iris_resolve_gitleaks 8.30.1 || true)"
+if [ -z "$WAILS_BIN" ]; then
+  echo "Pinned Wails CLI v2.14.0 could not be resolved from Go module metadata."
+  exit 1
+fi
+if [ -z "$STATICCHECK_BIN" ]; then
+  echo "Pinned Staticcheck 2026.1 could not be resolved."
+  exit 1
+fi
+if [ -z "$GOVULNCHECK_BIN" ]; then
+  echo "Pinned govulncheck v1.6.0 could not be resolved."
+  exit 1
+fi
+if [ -z "$GITLEAKS_BIN" ]; then
+  echo "Pinned Gitleaks 8.30.1 could not be resolved."
   exit 1
 fi
 
@@ -44,8 +69,8 @@ timeout 10m go build -trimpath -o "$TASK_TMP/build-probe" .
 timeout 15m go test -count=1 ./...
 timeout 20m go test -race -count=1 ./...
 timeout 10m go vet ./...
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 timeout 15m staticcheck ./...
-timeout 15m govulncheck ./...
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 timeout 15m "$STATICCHECK_BIN" ./...
+timeout 15m "$GOVULNCHECK_BIN" ./...
 
 REQ_HASH="$(python3 - <<'PY'
 import hashlib
@@ -92,8 +117,9 @@ node --check web/app.js
 python3 -B tools/data_presentation_audit.py
 python3 -B tools/frontend_smoke_test.py
 
-timeout 10m gitleaks dir --no-banner --redact .
-timeout 10m gitleaks git --no-banner --redact .
+iris_test_gitleaks_detection "$GITLEAKS_BIN"
+timeout 10m "$GITLEAKS_BIN" dir --no-banner --redact .
+iris_gitleaks_history_scan "$GITLEAKS_BIN" .
 python3 -B tools/repository_audit.py
 
 AFTER_HEAD="$(git rev-parse HEAD)"

@@ -34,7 +34,7 @@ WALL_URLS = (
     f"https://m.vk.com/wall-{COMMUNITY_ID}",
 )
 POST_PATTERN = re.compile(rf"wall-{re.escape(COMMUNITY_ID)}_(\d+)", re.IGNORECASE)
-MAX_TEXT_LENGTH = 4000
+MAX_TEXT_LENGTH = 700
 MIN_PREVIEW_LENGTH = 2
 NAVIGATION_TIMEOUT_MS = 30000
 DOM_CONTENT_TIMEOUT_MS = 8000
@@ -79,7 +79,7 @@ def normalize_text(value: str) -> str:
             lines.append(line)
     result = "\n".join(lines).strip()
     if len(result) > MAX_TEXT_LENGTH:
-        result = result[:MAX_TEXT_LENGTH].rstrip() + "…"
+        result = result[: MAX_TEXT_LENGTH - 1].rstrip() + "…"
     return result
 
 

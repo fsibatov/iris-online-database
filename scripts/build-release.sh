@@ -17,6 +17,7 @@ case "$OUTPUT_DIR/" in
 esac
 
 cd "$ROOT_DIR"
+. "$ROOT_DIR/scripts/release-tools.sh"
 python3 -B tools/release_fingerprint.py --verify
 VERSION="$(tr -d '[:space:]' < VERSION)"
 HEAD="$(git rev-parse HEAD)"
@@ -25,8 +26,9 @@ if [ "$(go env GOVERSION)" != "go$EXPECTED_GO" ]; then
   echo "Go $EXPECTED_GO is required."
   exit 1
 fi
-if [ "$(wails version | head -n 1 | tr -d '\r')" != "v2.14.0" ]; then
-  echo "Wails CLI v2.14.0 is required."
+WAILS_BIN="$(iris_resolve_wails v2.14.0 || true)"
+if [ -z "$WAILS_BIN" ]; then
+  echo "Pinned Wails CLI v2.14.0 could not be resolved from Go module metadata."
   exit 1
 fi
 
@@ -48,7 +50,7 @@ build_target() {
 
   env -u GOAMD64 -u GO386 -u GOARM64 \
     CGO_ENABLED=0 "$level_name=$level_value" \
-    wails build \
+    "$WAILS_BIN" build \
       -platform "$platform" \
       -webview2 embed \
       -trimpath \
@@ -86,6 +88,9 @@ if [ "$BEFORE" != "$AFTER" ]; then
   echo "Build changed the source tree."
   exit 1
 fi
+python3 -B tools/verify_release_assets.py --directory "$OUTPUT_DIR" --version "$VERSION"
 python3 -B tools/verify_executables.py --directory "$OUTPUT_DIR" --version "$VERSION"
 python3 -B tools/verify_windows_resources.py --directory "$OUTPUT_DIR" --version "$VERSION"
+[ "$(git rev-parse HEAD)" = "$HEAD" ] || { echo "HEAD changed during release artifact build."; exit 1; }
+python3 -B tools/release_fingerprint.py --verify
 echo "Release build: PASS (Windows x64, x86, arm64)"
