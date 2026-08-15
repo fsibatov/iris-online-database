@@ -484,6 +484,21 @@ function Get-StaticcheckVersion {
     return ConvertFrom-StaticcheckVersionLine (Get-VersionLine "staticcheck" @("-version"))
 }
 
+function Invoke-Staticcheck {
+    param([string[]]$Arguments = @("./..."))
+    $StaticcheckExecutable = Resolve-NativeExecutablePath -File "staticcheck"
+    Write-Host ("+ " + $StaticcheckExecutable + " " + ($Arguments -join " "))
+    $Output = & $StaticcheckExecutable @Arguments 2>&1
+    $ExitCode = $LASTEXITCODE
+    if ($Output) {
+        $SafeOutput = ConvertTo-SafeToolOutput (($Output | Out-String).TrimEnd())
+        if ($SafeOutput) { Write-Host $SafeOutput }
+    }
+    if ($ExitCode -ne 0) {
+        throw "staticcheck failed with exit code $ExitCode."
+    }
+}
+
 function Test-WindowsTooling {
     $FailedProbes = New-Object System.Collections.Generic.List[string]
     if ((Get-VersionLine "cmd.exe" @("/d", "/c", "echo", "iris-native-probe")) -ne "iris-native-probe") {
@@ -494,17 +509,19 @@ function Test-WindowsTooling {
     }
     try {
         $StaticcheckExecutable = Resolve-NativeExecutablePath -File "staticcheck"
-        $StaticcheckProbe = Invoke-CapturedNativeProcess `
-            -File $StaticcheckExecutable `
-            -Arguments @("-version") `
-            -WorkingDirectory $Root `
-            -TimeoutSeconds 30
-        $StaticcheckVersion = ConvertFrom-StaticcheckVersionLine (($StaticcheckProbe.Stdout + "`n" + $StaticcheckProbe.Stderr).Trim())
-        if ($StaticcheckProbe.TimedOut -or $StaticcheckProbe.ExitCode -ne 0 -or $StaticcheckVersion -ne $StaticcheckPin) {
-            $FailedProbes.Add("STATICCHECK_CAPTURE")
+        $StaticcheckOutput = & $StaticcheckExecutable -version 2>&1
+        $StaticcheckExitCode = $LASTEXITCODE
+        $StaticcheckLine = $StaticcheckOutput |
+            ForEach-Object { ([string]$_).Trim() } |
+            Where-Object { $_ } |
+            Select-Object -First 1
+        $StaticcheckVersion = ConvertFrom-StaticcheckVersionLine ([string]$StaticcheckLine)
+        Write-Host "Staticcheck: $StaticcheckVersion @ $StaticcheckExecutable"
+        if ($StaticcheckExitCode -ne 0 -or $StaticcheckVersion -ne $StaticcheckPin) {
+            $FailedProbes.Add("STATICCHECK_VERSION")
         }
     } catch {
-        $FailedProbes.Add("STATICCHECK_CAPTURE")
+        $FailedProbes.Add("STATICCHECK_DIRECT")
     }
     $WailsMetadataProbe = @(
         "C:\probe\wails.exe: go1.26.5",
@@ -1002,7 +1019,7 @@ function Test-Release {
         Invoke-Checked "go" @("build", "-trimpath", "-o", (Join-Path $env:TEMP "iris-build-probe.exe"), ".") 600
         Invoke-Checked "go" @("test", "-count=1", "./...") 900
         Invoke-Checked "go" @("vet", "./...") 600
-        Invoke-Checked "staticcheck" @("./...") 900
+        Invoke-Staticcheck @("./...")
         Invoke-Govulncheck
         Invoke-Checked $AuditPython @("-B", "-m", "unittest", "discover", "-s", "tools", "-p", "test_*.py") 600
         Invoke-Checked (Join-Path $AuditEnv "Scripts\ruff.exe") @("check", "--no-cache", ".") 300

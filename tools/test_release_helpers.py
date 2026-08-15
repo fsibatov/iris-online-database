@@ -372,11 +372,20 @@ class ReleaseHelperTests(unittest.TestCase):
             "$ExecutablePath = Resolve-NativeExecutablePath -File $File", script
         )
         self.assertIn("-File $ExecutablePath", script)
+        self.assertIn("function Invoke-Staticcheck", script)
         self.assertIn(
             '$StaticcheckExecutable = Resolve-NativeExecutablePath -File "staticcheck"',
             script,
         )
-        self.assertIn('$FailedProbes.Add("STATICCHECK_CAPTURE")', script)
+        self.assertIn('$Output = & $StaticcheckExecutable @Arguments 2>&1', script)
+        self.assertIn(
+            '$StaticcheckOutput = & $StaticcheckExecutable -version 2>&1', script
+        )
+        self.assertIn('$FailedProbes.Add("STATICCHECK_VERSION")', script)
+        self.assertIn('$FailedProbes.Add("STATICCHECK_DIRECT")', script)
+        self.assertNotIn('$FailedProbes.Add("STATICCHECK_CAPTURE")', script)
+        self.assertNotIn('Invoke-Checked "staticcheck" @("./...")', script)
+        self.assertIn('Invoke-Staticcheck @("./...")', script)
         self.assertNotIn("function Read-NativeCaptureFile", script)
         self.assertIn("-Action SelfTest", workflow)
         self.assertIn("System.Management.Automation.Language.Parser", workflow)
