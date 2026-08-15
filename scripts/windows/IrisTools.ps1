@@ -459,16 +459,40 @@ function Get-ToolStatus {
     return "FAIL"
 }
 
-function Test-AuditEnvironmentContent {
-    param([string]$EnvironmentPath, [string]$ExpectedPythonVersion)
-    if (-not $EnvironmentPath) { return $false }
-    $Python = Join-Path $EnvironmentPath "Scripts\python.exe"
-    if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { return $false }
+function Get-Python313Version {
+    param([string]$Python)
+    if (-not $Python -or -not (Test-Path -LiteralPath $Python -PathType Leaf)) { return "" }
     try {
         $ActualPythonVersion = (& $Python --version 2>&1 | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or $ActualPythonVersion -ne $ExpectedPythonVersion) {
-            return $false
+        if ($LASTEXITCODE -ne 0 -or $ActualPythonVersion -notmatch "^Python 3\.13(?:\.|$)") {
+            return ""
         }
+        return $ActualPythonVersion
+    } catch {
+        return ""
+    }
+}
+
+function Get-AuditEnvironmentHash {
+    param([string]$Requirements, [string]$PythonVersion)
+    $HashInput = ((Get-FileHash -LiteralPath $Requirements -Algorithm SHA256).Hash + "|" + $PythonVersion)
+    $Bytes = [Text.Encoding]::UTF8.GetBytes($HashInput)
+    $Hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($Hasher.ComputeHash($Bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $Hasher.Dispose()
+    }
+}
+
+function Test-AuditEnvironmentContent {
+    param([string]$EnvironmentPath, [string]$ExpectedPythonVersion = "")
+    if (-not $EnvironmentPath) { return $false }
+    $Python = Join-Path $EnvironmentPath "Scripts\python.exe"
+    $ActualPythonVersion = Get-Python313Version -Python $Python
+    if (-not $ActualPythonVersion) { return $false }
+    if ($ExpectedPythonVersion -and $ActualPythonVersion -ne $ExpectedPythonVersion) { return $false }
+    try {
         & $Python -B (Join-Path $Root "tools\verify_python_environment.py") *> $null
         if ($LASTEXITCODE -ne 0) { return $false }
         & $Python -m pip check *> $null
@@ -516,66 +540,118 @@ function Use-AuditEnvironment {
     $script:AuditPython = Join-Path $EnvironmentPath "Scripts\python.exe"
 }
 
+function Add-UniquePathCandidate {
+    param(
+        [System.Collections.Generic.List[string]]$List,
+        [string]$Path
+    )
+    if (-not $Path) { return }
+    try {
+        $Full = [IO.Path]::GetFullPath($Path)
+    } catch {
+        return
+    }
+    if (-not $List.Contains($Full)) { $List.Add($Full) }
+}
+
+function Find-Python313Executable {
+    param([string[]]$AuditEnvironmentCandidates)
+    $Candidates = New-Object System.Collections.Generic.List[string]
+
+    $PythonCommand = Get-Command "python.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($PythonCommand) { Add-UniquePathCandidate -List $Candidates -Path $PythonCommand.Source }
+
+    if ($env:LOCALAPPDATA) {
+        Add-UniquePathCandidate -List $Candidates -Path (Join-Path $env:LOCALAPPDATA "Programs\Python\Python313\python.exe")
+        Add-UniquePathCandidate -List $Candidates -Path (Join-Path $env:LOCALAPPDATA "Programs\Python\Python313-32\python.exe")
+    }
+    if ($env:ProgramFiles) {
+        Add-UniquePathCandidate -List $Candidates -Path (Join-Path $env:ProgramFiles "Python313\python.exe")
+    }
+    if (${env:ProgramFiles(x86)}) {
+        Add-UniquePathCandidate -List $Candidates -Path (Join-Path ${env:ProgramFiles(x86)} "Python313-32\python.exe")
+    }
+
+    foreach ($EnvironmentPath in $AuditEnvironmentCandidates) {
+        if ($EnvironmentPath) {
+            Add-UniquePathCandidate -List $Candidates -Path (Join-Path $EnvironmentPath "Scripts\python.exe")
+        }
+    }
+
+    $PyLauncher = Get-Command "py.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($PyLauncher) {
+        try {
+            $Resolved = (& $PyLauncher.Source -3.13 -c "import sys; print(sys.executable)" 2>$null | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and $Resolved) {
+                Add-UniquePathCandidate -List $Candidates -Path $Resolved
+            }
+        } catch {
+            # Continue with the other explicit executable candidates.
+        }
+    }
+
+    foreach ($Candidate in $Candidates) {
+        if (Get-Python313Version -Python $Candidate) { return $Candidate }
+    }
+    return ""
+}
+
 function Ensure-AuditEnvironment {
     New-Item -ItemType Directory -Force -Path $ToolRoot | Out-Null
     $Requirements = Join-Path $Root "tools\requirements-audit.txt"
-    $PythonCommand = Get-Command "python" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $PythonCommand) { throw "Python 3.13 executable is missing." }
-    $BasePython = $PythonCommand.Source
-    $PythonVersion = (& $BasePython --version 2>&1 | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $PythonVersion -notmatch "^Python 3\.13(?:\.|$)") {
-        throw "Python 3.13 executable could not be verified."
-    }
-    $HashInput = ((Get-FileHash -LiteralPath $Requirements -Algorithm SHA256).Hash + "|" + $PythonVersion)
-    $Bytes = [Text.Encoding]::UTF8.GetBytes($HashInput)
-    $Hasher = [Security.Cryptography.SHA256]::Create()
-    try {
-        $Hash = ([BitConverter]::ToString($Hasher.ComputeHash($Bytes))).Replace("-", "").ToLowerInvariant()
-    } finally {
-        $Hasher.Dispose()
-    }
 
-    $PreferredAuditEnv = Join-Path $ToolRoot ("python-audit-" + $Hash.Substring(0, 16))
-    $Candidates = New-Object System.Collections.Generic.List[string]
+    # First recover any already-working isolated environment. This path must not
+    # depend on a system Python command being visible in an elevated PowerShell.
+    $ExistingCandidates = New-Object System.Collections.Generic.List[string]
     if (Test-Path -LiteralPath $AuditEnvPointer -PathType Leaf) {
         try {
             $PointerCandidate = (Get-Content -LiteralPath $AuditEnvPointer -Raw).Trim()
             $PointerCandidateFull = [IO.Path]::GetFullPath($PointerCandidate)
             $ToolRootFull = [IO.Path]::GetFullPath($ToolRoot)
             if ($PointerCandidateFull.StartsWith($ToolRootFull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-                $Candidates.Add($PointerCandidateFull)
+                Add-UniquePathCandidate -List $ExistingCandidates -Path $PointerCandidateFull
             }
         } catch {
-            # Ignore a stale/corrupt pointer and fall back to the deterministic environment path.
+            # Ignore a stale/corrupt pointer and continue with directory discovery.
         }
     }
-    if (-not $Candidates.Contains($PreferredAuditEnv)) { $Candidates.Add($PreferredAuditEnv) }
+    Add-UniquePathCandidate -List $ExistingCandidates -Path $AuditEnv
+    Add-UniquePathCandidate -List $ExistingCandidates -Path (Join-Path $ToolRoot "python-audit")
+    Get-ChildItem -LiteralPath $ToolRoot -Directory -Filter "python-audit*" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        ForEach-Object { Add-UniquePathCandidate -List $ExistingCandidates -Path $_.FullName }
 
-    foreach ($Candidate in $Candidates) {
-        if (Test-AuditEnvironment -EnvironmentPath $Candidate -ExpectedHash $Hash -ExpectedPythonVersion $PythonVersion) {
+    foreach ($Candidate in $ExistingCandidates) {
+        $CandidatePython = Join-Path $Candidate "Scripts\python.exe"
+        $CandidatePythonVersion = Get-Python313Version -Python $CandidatePython
+        if (-not $CandidatePythonVersion) { continue }
+        if (-not (Test-AuditEnvironmentContent -EnvironmentPath $Candidate -ExpectedPythonVersion $CandidatePythonVersion)) { continue }
+
+        # Exact current pins and pip check passed, so it is safe to adopt an older
+        # pre-fingerprint environment and stamp the current deterministic marker.
+        $CandidateHash = Get-AuditEnvironmentHash -Requirements $Requirements -PythonVersion $CandidatePythonVersion
+        $CandidateMarker = Join-Path $Candidate ".iris-requirements-sha256"
+        Set-Content -LiteralPath $CandidateMarker -Value $CandidateHash -Encoding ASCII
+        if (Test-AuditEnvironment -EnvironmentPath $Candidate -ExpectedHash $CandidateHash -ExpectedPythonVersion $CandidatePythonVersion) {
             Use-AuditEnvironment -EnvironmentPath $Candidate
             Set-Content -LiteralPath $AuditEnvPointer -Value $Candidate -Encoding UTF8
+            Write-Host "Python audit environment: reused validated environment." -ForegroundColor Green
             return
         }
     }
 
-    # Adopt the pre-fingerprint audit environment from older release tooling only
-    # after re-validating the exact Python version, every direct pin, and pip check.
-    $LegacyAuditEnv = Join-Path $ToolRoot "python-audit"
-    if (Test-AuditEnvironmentContent -EnvironmentPath $LegacyAuditEnv -ExpectedPythonVersion $PythonVersion) {
-        $LegacyMarker = Join-Path $LegacyAuditEnv ".iris-requirements-sha256"
-        Set-Content -LiteralPath $LegacyMarker -Value $Hash -Encoding ASCII
-        if (Test-AuditEnvironment -EnvironmentPath $LegacyAuditEnv -ExpectedHash $Hash -ExpectedPythonVersion $PythonVersion) {
-            Use-AuditEnvironment -EnvironmentPath $LegacyAuditEnv
-            Set-Content -LiteralPath $AuditEnvPointer -Value $LegacyAuditEnv -Encoding UTF8
-            Write-Host "Python audit environment: migrated validated legacy environment." -ForegroundColor Green
-            return
-        }
+    # No reusable environment exists. Only now require a bootstrap Python 3.13.
+    # Search explicit user/system installs, py.exe, and any recoverable venv Python
+    # because App Execution Aliases may disappear after UAC elevation.
+    $BasePython = Find-Python313Executable -AuditEnvironmentCandidates $ExistingCandidates.ToArray()
+    if (-not $BasePython) {
+        throw "Python 3.13 executable is missing and no validated Python audit environment is available. Run INSTALL/UPDATE TOOLS, then retry."
     }
+    $PythonVersion = Get-Python313Version -Python $BasePython
+    if (-not $PythonVersion) { throw "Python 3.13 executable could not be verified." }
+    $Hash = Get-AuditEnvironmentHash -Requirements $Requirements -PythonVersion $PythonVersion
 
-    # Never clear an existing venv in-place on Windows. Antivirus, Playwright, or a
-    # recently-exited Python child can temporarily keep DLL/PYD/EXE files open.
-    # Build a complete replacement alongside it, verify it, then select it.
+    $PreferredAuditEnv = Join-Path $ToolRoot ("python-audit-" + $Hash.Substring(0, 16))
     if (Test-Path -LiteralPath $PreferredAuditEnv) {
         $NewAuditEnv = Join-Path $ToolRoot (
             "python-audit-" + $Hash.Substring(0, 16) + "-repair-" + [Guid]::NewGuid().ToString("N")

@@ -296,15 +296,25 @@ class ReleaseHelperTests(unittest.TestCase):
             '$AuditEnvPointer = Join-Path $ToolRoot "python-audit-active.txt"', script
         )
         self.assertIn("function Test-AuditEnvironmentContent", script)
-        self.assertIn('Get-Command "python" -CommandType Application', script)
-        self.assertIn("$BasePython = $PythonCommand.Source", script)
+        self.assertIn("function Get-Python313Version", script)
+        self.assertIn("function Find-Python313Executable", script)
+        self.assertIn('Get-Command "python.exe" -CommandType Application', script)
+        self.assertIn('Get-Command "py.exe" -CommandType Application', script)
+        self.assertIn("Programs\\Python\\Python313\\python.exe", script)
+        self.assertIn(
+            'Get-ChildItem -LiteralPath $ToolRoot -Directory -Filter "python-audit*"',
+            script,
+        )
+        self.assertIn("reused validated environment", script)
+        self.assertIn("Only now require a bootstrap Python 3.13", script)
+        self.assertLess(
+            script.index("reused validated environment"),
+            script.index("Find-Python313Executable -AuditEnvironmentCandidates"),
+        )
         self.assertIn("function Invoke-PythonVenv", script)
         self.assertIn(
             "Invoke-PythonVenv -Python $BasePython -Destination $NewAuditEnv", script
         )
-        self.assertIn("Never clear an existing venv in-place on Windows", script)
-        self.assertIn('LegacyAuditEnv = Join-Path $ToolRoot "python-audit"', script)
-        self.assertIn("migrated validated legacy environment", script)
         self.assertIn(
             "Test-AuditEnvironment -EnvironmentPath $NewAuditEnv "
             "-ExpectedHash $Hash -ExpectedPythonVersion $PythonVersion",
