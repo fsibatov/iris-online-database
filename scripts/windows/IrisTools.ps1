@@ -459,24 +459,54 @@ function Get-ToolStatus {
     return "FAIL"
 }
 
-function Test-AuditEnvironment {
-    param([string]$EnvironmentPath, [string]$ExpectedHash)
+function Test-AuditEnvironmentContent {
+    param([string]$EnvironmentPath, [string]$ExpectedPythonVersion)
     if (-not $EnvironmentPath) { return $false }
     $Python = Join-Path $EnvironmentPath "Scripts\python.exe"
-    $Marker = Join-Path $EnvironmentPath ".iris-requirements-sha256"
-    if (-not (Test-Path -LiteralPath $Python -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $Marker -PathType Leaf)) {
-        return $false
-    }
+    if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { return $false }
     try {
-        $Current = (Get-Content -LiteralPath $Marker -Raw).Trim()
-        if ($Current -ne $ExpectedHash) { return $false }
+        $ActualPythonVersion = (& $Python --version 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $ActualPythonVersion -ne $ExpectedPythonVersion) {
+            return $false
+        }
         & $Python -B (Join-Path $Root "tools\verify_python_environment.py") *> $null
         if ($LASTEXITCODE -ne 0) { return $false }
         & $Python -m pip check *> $null
         return $LASTEXITCODE -eq 0
     } catch {
         return $false
+    }
+}
+
+function Test-AuditEnvironment {
+    param(
+        [string]$EnvironmentPath,
+        [string]$ExpectedHash,
+        [string]$ExpectedPythonVersion
+    )
+    if (-not (Test-AuditEnvironmentContent -EnvironmentPath $EnvironmentPath -ExpectedPythonVersion $ExpectedPythonVersion)) {
+        return $false
+    }
+    $Marker = Join-Path $EnvironmentPath ".iris-requirements-sha256"
+    if (-not (Test-Path -LiteralPath $Marker -PathType Leaf)) { return $false }
+    try {
+        return (Get-Content -LiteralPath $Marker -Raw).Trim() -eq $ExpectedHash
+    } catch {
+        return $false
+    }
+}
+
+function Invoke-PythonVenv {
+    param([string]$Python, [string]$Destination)
+    Write-Host ("+ " + $Python + " -m venv " + $Destination)
+    & $Python -m venv $Destination
+    $ExitCode = $LASTEXITCODE
+    if ($ExitCode -ne 0) {
+        throw "Python venv creation failed with exit code $ExitCode."
+    }
+    $CreatedPython = Join-Path $Destination "Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $CreatedPython -PathType Leaf)) {
+        throw "Python venv creation completed without Scripts\python.exe."
     }
 }
 
@@ -489,7 +519,13 @@ function Use-AuditEnvironment {
 function Ensure-AuditEnvironment {
     New-Item -ItemType Directory -Force -Path $ToolRoot | Out-Null
     $Requirements = Join-Path $Root "tools\requirements-audit.txt"
-    $PythonVersion = Get-VersionLine "python" @("--version")
+    $PythonCommand = Get-Command "python" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $PythonCommand) { throw "Python 3.13 executable is missing." }
+    $BasePython = $PythonCommand.Source
+    $PythonVersion = (& $BasePython --version 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $PythonVersion -notmatch "^Python 3\.13(?:\.|$)") {
+        throw "Python 3.13 executable could not be verified."
+    }
     $HashInput = ((Get-FileHash -LiteralPath $Requirements -Algorithm SHA256).Hash + "|" + $PythonVersion)
     $Bytes = [Text.Encoding]::UTF8.GetBytes($HashInput)
     $Hasher = [Security.Cryptography.SHA256]::Create()
@@ -516,9 +552,23 @@ function Ensure-AuditEnvironment {
     if (-not $Candidates.Contains($PreferredAuditEnv)) { $Candidates.Add($PreferredAuditEnv) }
 
     foreach ($Candidate in $Candidates) {
-        if (Test-AuditEnvironment -EnvironmentPath $Candidate -ExpectedHash $Hash) {
+        if (Test-AuditEnvironment -EnvironmentPath $Candidate -ExpectedHash $Hash -ExpectedPythonVersion $PythonVersion) {
             Use-AuditEnvironment -EnvironmentPath $Candidate
             Set-Content -LiteralPath $AuditEnvPointer -Value $Candidate -Encoding UTF8
+            return
+        }
+    }
+
+    # Adopt the pre-fingerprint audit environment from older release tooling only
+    # after re-validating the exact Python version, every direct pin, and pip check.
+    $LegacyAuditEnv = Join-Path $ToolRoot "python-audit"
+    if (Test-AuditEnvironmentContent -EnvironmentPath $LegacyAuditEnv -ExpectedPythonVersion $PythonVersion) {
+        $LegacyMarker = Join-Path $LegacyAuditEnv ".iris-requirements-sha256"
+        Set-Content -LiteralPath $LegacyMarker -Value $Hash -Encoding ASCII
+        if (Test-AuditEnvironment -EnvironmentPath $LegacyAuditEnv -ExpectedHash $Hash -ExpectedPythonVersion $PythonVersion) {
+            Use-AuditEnvironment -EnvironmentPath $LegacyAuditEnv
+            Set-Content -LiteralPath $AuditEnvPointer -Value $LegacyAuditEnv -Encoding UTF8
+            Write-Host "Python audit environment: migrated validated legacy environment." -ForegroundColor Green
             return
         }
     }
@@ -537,7 +587,7 @@ function Ensure-AuditEnvironment {
     $NewMarker = Join-Path $NewAuditEnv ".iris-requirements-sha256"
 
     try {
-        Invoke-Checked "python" @("-m", "venv", $NewAuditEnv) 180
+        Invoke-PythonVenv -Python $BasePython -Destination $NewAuditEnv
         $Installed = $false
         for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
             try {
@@ -553,7 +603,7 @@ function Ensure-AuditEnvironment {
         Invoke-Checked $NewAuditPython @("-B", (Join-Path $Root "tools\verify_python_environment.py")) 120
         Invoke-Checked $NewAuditPython @("-m", "pip", "check") 120
         Set-Content -LiteralPath $NewMarker -Value $Hash -Encoding ASCII
-        if (-not (Test-AuditEnvironment -EnvironmentPath $NewAuditEnv -ExpectedHash $Hash)) {
+        if (-not (Test-AuditEnvironment -EnvironmentPath $NewAuditEnv -ExpectedHash $Hash -ExpectedPythonVersion $PythonVersion)) {
             throw "Python audit environment verification failed after installation."
         }
         Use-AuditEnvironment -EnvironmentPath $NewAuditEnv

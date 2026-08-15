@@ -295,12 +295,19 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn(
             '$AuditEnvPointer = Join-Path $ToolRoot "python-audit-active.txt"', script
         )
+        self.assertIn("function Test-AuditEnvironmentContent", script)
+        self.assertIn('Get-Command "python" -CommandType Application', script)
+        self.assertIn("$BasePython = $PythonCommand.Source", script)
+        self.assertIn("function Invoke-PythonVenv", script)
         self.assertIn(
-            'Invoke-Checked "python" @("-m", "venv", $NewAuditEnv) 180', script
+            "Invoke-PythonVenv -Python $BasePython -Destination $NewAuditEnv", script
         )
         self.assertIn("Never clear an existing venv in-place on Windows", script)
+        self.assertIn('LegacyAuditEnv = Join-Path $ToolRoot "python-audit"', script)
+        self.assertIn("migrated validated legacy environment", script)
         self.assertIn(
-            "Test-AuditEnvironment -EnvironmentPath $NewAuditEnv -ExpectedHash $Hash",
+            "Test-AuditEnvironment -EnvironmentPath $NewAuditEnv "
+            "-ExpectedHash $Hash -ExpectedPythonVersion $PythonVersion",
             script,
         )
 
