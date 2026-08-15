@@ -366,6 +366,18 @@ class ReleaseHelperTests(unittest.TestCase):
         )
         self.assertNotIn('Invoke-Checked "python" @("-B"', script)
         self.assertIn("Windows tooling self-test: PASS", script)
+        self.assertIn("function Resolve-NativeExecutablePath", script)
+        self.assertIn("Get-Command $File -CommandType Application", script)
+        self.assertIn(
+            "$ExecutablePath = Resolve-NativeExecutablePath -File $File", script
+        )
+        self.assertIn("-File $ExecutablePath", script)
+        self.assertIn(
+            '$StaticcheckExecutable = Resolve-NativeExecutablePath -File "staticcheck"',
+            script,
+        )
+        self.assertIn('$FailedProbes.Add("STATICCHECK_CAPTURE")', script)
+        self.assertNotIn("function Read-NativeCaptureFile", script)
         self.assertIn("-Action SelfTest", workflow)
         self.assertIn("System.Management.Automation.Language.Parser", workflow)
         self.assertIn(
@@ -403,12 +415,7 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("Invoke-Govulncheck", script)
         self.assertNotIn('Invoke-Checked "govulncheck" @("./...")', script)
         self.assertIn("WaitForExit($TimeoutSeconds * 1000)", script)
-        self.assertNotIn("ReadToEndAsync()", script)
-        self.assertIn("function Read-NativeCaptureFile", script)
-        self.assertIn("-RedirectStandardOutput $StdoutPath", script)
-        self.assertIn("-RedirectStandardError $StderrPath", script)
-        self.assertIn("Read-NativeCaptureFile -Path $StdoutPath", script)
-        self.assertIn("Read-NativeCaptureFile -Path $StderrPath", script)
+        self.assertIn("ReadToEndAsync()", script)
         self.assertIn("$Process.ExitCode", script)
         self.assertIn("without a successful result (exit code $ExitCode)", script)
         self.assertEqual(script.count('URL = "https://vuln.go.dev"'), 2)
@@ -424,19 +431,14 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("[redacted-path]", script)
         self.assertIn("[redacted-token]", script)
         self.assertNotIn("Start-Job -ScriptBlock", script)
-        self.assertNotIn("$StartInfo.StandardOutputEncoding = $Utf8", script)
-        self.assertNotIn("$StartInfo.StandardErrorEncoding = $Utf8", script)
-        self.assertIn('$env:PYTHONIOENCODING = "utf-8"', script)
-        self.assertIn('$env:PYTHONUTF8 = "1"', script)
-        self.assertIn("iris-native-capture-", script)
-        self.assertIn("Remove-Item -LiteralPath $CaptureDirectory", script)
-        self.assertIn("Required tool failed with exit code $ExitCode", script)
+        self.assertIn("$StartInfo.StandardOutputEncoding = $Utf8", script)
+        self.assertIn("$StartInfo.StandardErrorEncoding = $Utf8", script)
         self.assertIn(
-            "Required tool process could not be completed: $SafeDetail", script
+            '$StartInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"',
+            script,
         )
-        self.assertNotIn(
-            'throw "Required tool process could not be completed."', script
-        )
+        self.assertIn('$StartInfo.EnvironmentVariables["PYTHONUTF8"] = "1"', script)
+        self.assertIn("Required tool failed with exit code $ExitCode", script)
         self.assertIn("ConvertTo-SafeToolOutput $Text", script)
         self.assertIn(
             'Invoke-Checked $CmdExecutable @("/d", "/c", "exit", "/b", "0") 30',

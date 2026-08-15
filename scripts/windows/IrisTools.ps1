@@ -176,14 +176,6 @@ function ConvertTo-NativeArgumentString {
     return $EncodedArguments -join " "
 }
 
-function Read-NativeCaptureFile {
-    param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return "" }
-    $Bytes = [IO.File]::ReadAllBytes($Path)
-    if ($Bytes.Length -eq 0) { return "" }
-    return [Text.Encoding]::UTF8.GetString($Bytes)
-}
-
 function Invoke-CapturedNativeProcess {
     param(
         [string]$File,
@@ -191,41 +183,26 @@ function Invoke-CapturedNativeProcess {
         [string]$WorkingDirectory,
         [int]$TimeoutSeconds
     )
-    $CaptureDirectory = Join-Path $env:TEMP ("iris-native-capture-" + [Guid]::NewGuid().ToString("N"))
-    $StdoutPath = Join-Path $CaptureDirectory "stdout.bin"
-    $StderrPath = Join-Path $CaptureDirectory "stderr.bin"
-    $ArgumentString = ConvertTo-NativeArgumentString $Arguments
-    $OldPythonIoEncoding = [Environment]::GetEnvironmentVariable("PYTHONIOENCODING", "Process")
-    $OldPythonUtf8 = [Environment]::GetEnvironmentVariable("PYTHONUTF8", "Process")
-    $Process = $null
-    try {
-        New-Item -ItemType Directory -Force -Path $CaptureDirectory | Out-Null
-        $env:PYTHONIOENCODING = "utf-8"
-        $env:PYTHONUTF8 = "1"
-        try {
-            $Process = Start-Process `
-                -FilePath $File `
-                -ArgumentList $ArgumentString `
-                -WorkingDirectory $WorkingDirectory `
-                -NoNewWindow `
-                -RedirectStandardOutput $StdoutPath `
-                -RedirectStandardError $StderrPath `
-                -PassThru `
-                -ErrorAction Stop
-        } finally {
-            if ($null -eq $OldPythonIoEncoding) {
-                Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue
-            } else {
-                $env:PYTHONIOENCODING = $OldPythonIoEncoding
-            }
-            if ($null -eq $OldPythonUtf8) {
-                Remove-Item Env:PYTHONUTF8 -ErrorAction SilentlyContinue
-            } else {
-                $env:PYTHONUTF8 = $OldPythonUtf8
-            }
-        }
-        if ($null -eq $Process) { throw "Native process did not start." }
+    $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $StartInfo.FileName = $File
+    $StartInfo.Arguments = ConvertTo-NativeArgumentString $Arguments
+    $StartInfo.WorkingDirectory = $WorkingDirectory
+    $StartInfo.UseShellExecute = $false
+    $StartInfo.CreateNoWindow = $true
+    $StartInfo.RedirectStandardOutput = $true
+    $StartInfo.RedirectStandardError = $true
+    $Utf8 = New-Object System.Text.UTF8Encoding($false)
+    $StartInfo.StandardOutputEncoding = $Utf8
+    $StartInfo.StandardErrorEncoding = $Utf8
+    $StartInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"
+    $StartInfo.EnvironmentVariables["PYTHONUTF8"] = "1"
 
+    $Process = New-Object System.Diagnostics.Process
+    $Process.StartInfo = $StartInfo
+    try {
+        if (-not $Process.Start()) { throw "Native process did not start." }
+        $StdoutTask = $Process.StandardOutput.ReadToEndAsync()
+        $StderrTask = $Process.StandardError.ReadToEndAsync()
         $TimedOut = -not $Process.WaitForExit($TimeoutSeconds * 1000)
         if ($TimedOut) {
             $Taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
@@ -235,9 +212,8 @@ function Invoke-CapturedNativeProcess {
             if (-not $Process.HasExited) { $Process.Kill() }
         }
         [void]$Process.WaitForExit()
-
-        $StdoutText = Read-NativeCaptureFile -Path $StdoutPath
-        $StderrText = Read-NativeCaptureFile -Path $StderrPath
+        $StdoutText = $StdoutTask.GetAwaiter().GetResult()
+        $StderrText = $StderrTask.GetAwaiter().GetResult()
         $ExitCode = if ($TimedOut) { -1 } else { $Process.ExitCode }
         return [pscustomobject]@{
             ExitCode = $ExitCode
@@ -246,26 +222,42 @@ function Invoke-CapturedNativeProcess {
             Stderr = [string]$StderrText
         }
     } catch {
-        $SafeDetail = ConvertTo-SafeToolOutput ([string]$_.Exception.Message)
-        throw "Native process could not be started or monitored: $SafeDetail"
+        throw "Native process could not be started or monitored."
     } finally {
-        if ($Process) { $Process.Dispose() }
-        Remove-Item -LiteralPath $CaptureDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        $Process.Dispose()
     }
+}
+
+function Resolve-NativeExecutablePath {
+    param([string]$File)
+    if ([string]::IsNullOrWhiteSpace($File)) {
+        throw "Required tool executable name is empty."
+    }
+    if ([IO.Path]::IsPathRooted($File) -or $File.Contains("\") -or $File.Contains("/")) {
+        if (-not (Test-Path -LiteralPath $File -PathType Leaf)) {
+            throw "Required tool executable is missing."
+        }
+        return [IO.Path]::GetFullPath($File)
+    }
+    $Executable = Get-Command $File -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $Executable) {
+        throw "Required tool executable is missing: $File"
+    }
+    return [string]$Executable.Source
 }
 
 function Invoke-Checked {
     param([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds = 600)
     Write-Host ("+ " + $File + " " + ($Arguments -join " "))
     try {
+        $ExecutablePath = Resolve-NativeExecutablePath -File $File
         $Result = Invoke-CapturedNativeProcess `
-            -File $File `
+            -File $ExecutablePath `
             -Arguments $Arguments `
             -WorkingDirectory (Get-Location).Path `
             -TimeoutSeconds $TimeoutSeconds
     } catch {
-        $SafeDetail = ConvertTo-SafeToolOutput ([string]$_.Exception.Message)
-        throw "Required tool process could not be completed: $SafeDetail"
+        throw "Required tool process could not be completed."
     }
     foreach ($Text in @([string]$Result.Stdout, [string]$Result.Stderr)) {
         if (-not $Text) { continue }
@@ -499,6 +491,20 @@ function Test-WindowsTooling {
     }
     if ((ConvertFrom-StaticcheckVersionLine "staticcheck.exe 2026.1 (v0.7.0)") -ne "2026.1") {
         $FailedProbes.Add("STATICCHECK_VERSION_PARSE")
+    }
+    try {
+        $StaticcheckExecutable = Resolve-NativeExecutablePath -File "staticcheck"
+        $StaticcheckProbe = Invoke-CapturedNativeProcess `
+            -File $StaticcheckExecutable `
+            -Arguments @("-version") `
+            -WorkingDirectory $Root `
+            -TimeoutSeconds 30
+        $StaticcheckVersion = ConvertFrom-StaticcheckVersionLine (($StaticcheckProbe.Stdout + "`n" + $StaticcheckProbe.Stderr).Trim())
+        if ($StaticcheckProbe.TimedOut -or $StaticcheckProbe.ExitCode -ne 0 -or $StaticcheckVersion -ne $StaticcheckPin) {
+            $FailedProbes.Add("STATICCHECK_CAPTURE")
+        }
+    } catch {
+        $FailedProbes.Add("STATICCHECK_CAPTURE")
     }
     $WailsMetadataProbe = @(
         "C:\probe\wails.exe: go1.26.5",
