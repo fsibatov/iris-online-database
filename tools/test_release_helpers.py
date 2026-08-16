@@ -381,6 +381,44 @@ class ReleaseHelperTests(unittest.TestCase):
             script,
         )
 
+    def test_windows_go_pin_uses_private_verified_official_toolchain(self):
+        go_pin = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", go_pin)
+        self.assertIsNotNone(match)
+        self.assertGreaterEqual(tuple(map(int, match.groups())), (1, 26, 6))
+
+        script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('$PinnedGoDirectory = Join-Path $ToolRoot', script)
+        self.assertIn(
+            '$PinnedGoBinDirectory = Join-Path $PinnedGoDirectory "go\\bin"', script
+        )
+        self.assertIn('$env:GOTOOLCHAIN = "local"', script)
+        self.assertIn('function Test-ExactGoExecutable', script)
+        self.assertIn('function Install-PinnedGo', script)
+        self.assertIn('https://go.dev/dl/?mode=json&include=all', script)
+        self.assertIn('$ArchiveName = "go$GoPin.windows-amd64.zip"', script)
+        self.assertIn('Get-FileHash -LiteralPath $Archive -Algorithm SHA256', script)
+        self.assertIn('$ActualSize -ne $ExpectedSize', script)
+        self.assertIn('$ActualHash -ne $ExpectedHash', script)
+        self.assertIn('Test-ExactGoExecutable -Executable $StagedGo', script)
+        self.assertIn('Install-PinnedGo', script)
+        self.assertNotIn('"GoLang.Go", "--version", $GoPin', script)
+
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        codeql = (ROOT / ".github" / "workflows" / "codeql.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("go-version-file: .go-version", workflow)
+        self.assertIn("go-version-file: .go-version", codeql)
+        release_tools = (ROOT / "scripts" / "release-tools.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("export GOTOOLCHAIN=local", release_tools)
+
     def test_windows_wails_pin_uses_go_module_metadata_and_exact_binary(self):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
             encoding="utf-8"

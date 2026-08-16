@@ -8,12 +8,16 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Version = (Get-Content -LiteralPath (Join-Path $Root "VERSION") -Raw).Trim()
 $GoPin = (Get-Content -LiteralPath (Join-Path $Root ".go-version") -Raw).Trim()
+$env:GOTOOLCHAIN = "local"
 $WailsPin = "v2.14.0"
 $StaticcheckPin = "2026.1"
 $GovulncheckPin = "v1.6.0"
 $GitleaksPin = "8.30.1"
 $GitleaksWindowsX64Sha256 = "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e"
 $ToolRoot = Join-Path $env:LOCALAPPDATA "IrisOnlineDatabase\BuildTools"
+$PinnedGoDirectory = Join-Path $ToolRoot ("go-" + $GoPin + "-windows-amd64")
+$PinnedGoBinDirectory = Join-Path $PinnedGoDirectory "go\bin"
+$PinnedGoExecutable = Join-Path $PinnedGoBinDirectory "go.exe"
 $AuditEnvPointer = Join-Path $ToolRoot "python-audit-active.txt"
 $AuditEnv = Join-Path $ToolRoot "python-audit"
 $AuditPython = Join-Path $AuditEnv "Scripts\python.exe"
@@ -61,6 +65,7 @@ function Update-ProcessPath {
     }
     $KnownDirectories += Join-Path $env:LOCALAPPDATA "Programs\Git\cmd"
     $KnownDirectories += Join-Path $env:LOCALAPPDATA "Programs\nodejs"
+    $KnownDirectories += $PinnedGoBinDirectory
     $KnownDirectories += Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links"
 
     $Seen = @{}
@@ -602,7 +607,7 @@ function Test-WindowsTooling {
         $FailedProbes.Add("STATICCHECK_DIRECT")
     }
     $WailsMetadataProbe = @(
-        "C:\probe\wails.exe: go1.26.5",
+        ("C:\probe\wails.exe: go" + $GoPin),
         "path`tgithub.com/wailsapp/wails/v2/cmd/wails",
         "mod`tgithub.com/wailsapp/wails/v2`tv2.14.0`th1:fixture"
     )
@@ -946,6 +951,96 @@ function Ensure-AuditEnvironment {
     }
 }
 
+function Test-ExactGoExecutable {
+    param([string]$Executable)
+    if (-not $Executable -or -not (Test-Path -LiteralPath $Executable -PathType Leaf)) { return $false }
+    try {
+        $Output = & $Executable version 2>&1
+        $ExitCode = $LASTEXITCODE
+        if ($ExitCode -ne 0) { return $false }
+        $Line = (($Output | Out-String).Trim())
+        return ($Line -match ("^go version go" + [Regex]::Escape($GoPin) + " windows/amd64$"))
+    } catch {
+        return $false
+    }
+}
+
+function Install-PinnedGo {
+    if (-not [Environment]::Is64BitOperatingSystem) {
+        throw "The Windows release toolchain requires a 64-bit Windows host."
+    }
+
+    Update-ProcessPath
+    $CurrentGo = Get-Command go -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($CurrentGo -and (Test-ExactGoExecutable -Executable $CurrentGo.Source)) { return }
+    if (Test-ExactGoExecutable -Executable $PinnedGoExecutable) {
+        Update-ProcessPath
+        return
+    }
+
+    $MetadataUri = "https://go.dev/dl/?mode=json&include=all"
+    Write-Host "+ official Go release metadata: $MetadataUri"
+    try {
+        $MetadataResponse = Invoke-WebRequest -UseBasicParsing -Uri $MetadataUri -TimeoutSec 60
+        $Releases = $MetadataResponse.Content | ConvertFrom-Json
+    } catch {
+        throw "Official Go release metadata could not be downloaded or parsed."
+    }
+
+    $Release = @($Releases | Where-Object { $_.version -eq ("go" + $GoPin) }) | Select-Object -First 1
+    if (-not $Release) {
+        throw "Pinned Go $GoPin is not present in the official go.dev release metadata yet. The release gate remains blocked."
+    }
+    $ArchiveName = "go$GoPin.windows-amd64.zip"
+    $FileMetadata = @($Release.files | Where-Object { $_.filename -eq $ArchiveName }) | Select-Object -First 1
+    if (-not $FileMetadata) {
+        throw "The official Windows amd64 archive for pinned Go $GoPin is not available yet. The release gate remains blocked."
+    }
+    $ExpectedHash = ([string]$FileMetadata.sha256).Trim().ToLowerInvariant()
+    $ExpectedSize = [Int64]$FileMetadata.size
+    if ($ExpectedHash -notmatch "^[0-9a-f]{64}$" -or $ExpectedSize -le 0) {
+        throw "Official Go release metadata is incomplete or invalid."
+    }
+
+    $DownloadRoot = Join-Path $env:TEMP ("iris-go-download-" + [Guid]::NewGuid().ToString("N"))
+    $Staging = Join-Path $ToolRoot ("go-install-" + [Guid]::NewGuid().ToString("N"))
+    $Archive = Join-Path $DownloadRoot $ArchiveName
+    New-Item -ItemType Directory -Force -Path $DownloadRoot, $Staging | Out-Null
+    try {
+        $ArchiveUri = "https://go.dev/dl/$ArchiveName"
+        Write-Host "+ download $ArchiveUri"
+        Invoke-WebRequest -UseBasicParsing -Uri $ArchiveUri -OutFile $Archive -TimeoutSec 300
+        $ActualSize = (Get-Item -LiteralPath $Archive).Length
+        if ($ActualSize -ne $ExpectedSize) {
+            throw "Downloaded Go archive size does not match official release metadata."
+        }
+        $ActualHash = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($ActualHash -ne $ExpectedHash) {
+            throw "Downloaded Go archive checksum does not match official release metadata."
+        }
+        Expand-Archive -LiteralPath $Archive -DestinationPath $Staging -Force
+        $StagedGo = Join-Path $Staging "go\bin\go.exe"
+        if (-not (Test-ExactGoExecutable -Executable $StagedGo)) {
+            throw "Downloaded Go toolchain does not report the pinned Windows amd64 version."
+        }
+
+        if (Test-Path -LiteralPath $PinnedGoDirectory) {
+            Remove-Item -LiteralPath $PinnedGoDirectory -Recurse -Force
+        }
+        Move-Item -LiteralPath $Staging -Destination $PinnedGoDirectory
+    } finally {
+        if (Test-Path -LiteralPath $Staging) { Remove-Item -LiteralPath $Staging -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $DownloadRoot) { Remove-Item -LiteralPath $DownloadRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    Update-ProcessPath
+    $InstalledGo = Get-Command go -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $InstalledGo -or -not (Test-ExactGoExecutable -Executable $InstalledGo.Source)) {
+        throw "Pinned Go installation completed but the exact toolchain is not active in PATH."
+    }
+    Write-Host "Go: go$GoPin @ $($InstalledGo.Source)" -ForegroundColor Green
+}
+
 function Install-Gitleaks {
     $Destination = Join-Path $ToolRoot "gitleaks-$GitleaksPin"
     $Binary = Join-Path $Destination "gitleaks.exe"
@@ -1122,7 +1217,7 @@ function Install-Tools {
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { Invoke-Checked "winget" @("install", "--exact", "--id", "GitHub.cli", "--accept-package-agreements", "--accept-source-agreements") 900 }
     if (-not $AuditEnvironmentReady -and (Get-VersionLine "python" @("--version")) -notmatch "^Python 3\.13(?:\.|$)") { Invoke-Checked "winget" @("install", "--exact", "--id", "Python.Python.3.13", "--accept-package-agreements", "--accept-source-agreements") 900 }
     if ((Get-VersionLine "node" @("--version")) -notmatch "^v24\.") { Invoke-Checked "winget" @("install", "--exact", "--id", "OpenJS.NodeJS.LTS", "--accept-package-agreements", "--accept-source-agreements") 900 }
-    if (-not (Get-Command go -ErrorAction SilentlyContinue) -or (& go env GOVERSION).Trim() -ne "go$GoPin") { Invoke-Checked "winget" @("install", "--exact", "--id", "GoLang.Go", "--version", $GoPin, "--accept-package-agreements", "--accept-source-agreements") 900 }
+    Install-PinnedGo
     if ((Get-WebView2Version) -eq "MISSING") { Invoke-Checked "winget" @("install", "--exact", "--id", "Microsoft.EdgeWebView2Runtime", "--accept-package-agreements", "--accept-source-agreements") 900 }
     Update-ProcessPath
     if (-not (Get-Command go -ErrorAction SilentlyContinue)) { throw "Restart the terminal after installing Go, then run Install again." }

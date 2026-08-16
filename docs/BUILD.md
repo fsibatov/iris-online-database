@@ -3,14 +3,14 @@
 ## Закреплённые зависимости
 
 - Windows 10/11 для запуска release tooling; публикуемые цели: x64 (`amd64`), x86 (`386`) и ARM64 (`arm64`);
-- Go 1.26.5 — единственный pin находится в `.go-version`;
+- Go 1.26.6 — единственный pin находится в `.go-version`;
 - Wails CLI 2.14.0;
 - Git, Python 3.13 и Node.js 24;
 - Staticcheck 2026.1, govulncheck 1.6.0;
 - Python tools — только `tools/requirements-audit.txt`;
 - Gitleaks 8.30.1 для Linux и Windows. Linux CI проверяет закреплённый SHA-256, Windows tooling сверяет ZIP с официальным checksums-файлом перед распаковкой. Историческое расхождение Windows x64 asset 8.30.1 повторно проверено 13.08.2026: текущий официальный ZIP соответствует опубликованному SHA-256.
 
-`go.mod` содержит минимальный language compatibility level зависимостей, но фактический воспроизводимый toolchain выбирается `.go-version`.
+`go.mod` содержит минимальный language compatibility level зависимостей, но фактический воспроизводимый toolchain выбирается `.go-version`. На Windows `Install` не зависит от задержки каталога Winget для Go: exact `windows-amd64` ZIP загружается только из `go.dev`, размер и SHA-256 сверяются с официальным release metadata, после чего проверяется фактический `go version`. Проверенный toolchain хранится versioned под `%LOCALAPPDATA%\IrisOnlineDatabase\BuildTools` и ставится первым в process `PATH`; системная установка Go не перезаписывается.
 
 ## Windows
 

@@ -1,6 +1,8 @@
 # Shared fail-closed resolver for pinned Go-installed release tools.
 # This file is sourced by release-gate.sh and build-release.sh.
 
+export GOTOOLCHAIN=local
+
 iris_go_bin_dir() {
   local gobin gopath
   gobin="$(go env GOBIN)"
