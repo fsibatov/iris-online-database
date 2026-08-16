@@ -132,7 +132,11 @@ jobs:
         run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 timeout 15m staticcheck ./...
 
       - name: Govulncheck
-        run: timeout 15m govulncheck ./...
+        shell: bash
+        run: |
+          set -euo pipefail
+          . ./scripts/release-tools.sh
+          iris_run_govulncheck "$(command -v govulncheck)" 15m
 
       - name: Python compile and regression tests
         shell: bash

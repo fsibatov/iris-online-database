@@ -17,12 +17,12 @@ from playwright.sync_api import Error as PlaywrightError
 from release_fingerprint import FingerprintError, assert_release_tree, source_hash
 from release_targets import RELEASE_TARGETS
 from repository_audit import python_mode_violation
-from verify_release_assets import expected_asset_names, verify_release_assets
 from verify_executables import (
     EXPECTED_METADATA_MARKERS,
     expected_metadata_markers,
     missing_metadata_categories,
 )
+from verify_release_assets import expected_asset_names, verify_release_assets
 from verify_windows_resources import verify_version_resource, version_tuple
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -414,6 +414,9 @@ class ReleaseHelperTests(unittest.TestCase):
         )
         self.assertIn("go-version-file: .go-version", workflow)
         self.assertIn("go-version-file: .go-version", codeql)
+        self.assertIn(
+            'iris_run_govulncheck "$(command -v govulncheck)" 15m', workflow
+        )
         release_tools = (ROOT / "scripts" / "release-tools.sh").read_text(
             encoding="utf-8"
         )
@@ -620,6 +623,14 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("github.com/wailsapp/wails/v2/cmd/wails", helper)
         self.assertIn("iris_resolve_staticcheck", helper)
         self.assertIn("iris_resolve_govulncheck", helper)
+        self.assertIn("iris_run_govulncheck", helper)
+        self.assertIn("iris_govuln_network_failure", helper)
+        self.assertLess(
+            helper.index('"https://storage.googleapis.com/go-vulndb"'),
+            helper.index('"https://vuln.go.dev"'),
+        )
+        self.assertIn('iris_run_govulncheck "$GOVULNCHECK_BIN" 15m', gate)
+        self.assertNotIn('timeout 15m "$GOVULNCHECK_BIN" ./...', gate)
         self.assertIn("iris_resolve_gitleaks", helper)
         self.assertIn("iris_test_gitleaks_detection", helper)
         self.assertIn('GITLEAKS_BIN="$(iris_resolve_gitleaks 8.30.1', gate)
@@ -702,8 +713,21 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("ReadToEndAsync()", script)
         self.assertIn("$Process.ExitCode", script)
         self.assertIn("without a successful result (exit code $ExitCode)", script)
-        self.assertEqual(script.count('URL = "https://vuln.go.dev"'), 2)
-        self.assertIn('URL = "https://storage.googleapis.com/go-vulndb"', script)
+        self.assertEqual(
+            script.count('URL = "https://storage.googleapis.com/go-vulndb"'), 2
+        )
+        self.assertEqual(script.count('URL = "https://vuln.go.dev"'), 1)
+        storage_primary = script.index(
+            'Name = "Google storage"; URL = "https://storage.googleapis.com/go-vulndb"'
+        )
+        storage_retry = script.index(
+            'Name = "Google storage retry"; URL = "https://storage.googleapis.com/go-vulndb"'
+        )
+        canonical_fallback = script.index(
+            'Name = "canonical fallback"; URL = "https://vuln.go.dev"'
+        )
+        self.assertLess(storage_primary, storage_retry)
+        self.assertLess(storage_retry, canonical_fallback)
         self.assertIn('-Arguments @("-db", $Database.URL, "./...")', script)
         self.assertIn("$DelaySeconds = 2", script)
         self.assertNotIn("Start-Process -FilePath $Executable.Source", script)

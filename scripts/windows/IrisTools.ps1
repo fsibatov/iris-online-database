@@ -291,9 +291,9 @@ function Invoke-Govulncheck {
     }
 
     $DatabaseAttempts = @(
-        [pscustomobject]@{ Name = "canonical"; URL = "https://vuln.go.dev" },
-        [pscustomobject]@{ Name = "canonical retry"; URL = "https://vuln.go.dev" },
-        [pscustomobject]@{ Name = "Google storage fallback"; URL = "https://storage.googleapis.com/go-vulndb" }
+        [pscustomobject]@{ Name = "Google storage"; URL = "https://storage.googleapis.com/go-vulndb" },
+        [pscustomobject]@{ Name = "Google storage retry"; URL = "https://storage.googleapis.com/go-vulndb" },
+        [pscustomobject]@{ Name = "canonical fallback"; URL = "https://vuln.go.dev" }
     )
     for ($AttemptIndex = 0; $AttemptIndex -lt $DatabaseAttempts.Count; $AttemptIndex++) {
         $Attempt = $AttemptIndex + 1
@@ -317,8 +317,8 @@ function Invoke-Govulncheck {
         if (-not $TimedOut -and $ExitCode -eq 0) {
             if ($StdoutText) { Write-Host (ConvertTo-SafeToolOutput $StdoutText).TrimEnd() }
             if ($StderrText) { Write-Host (ConvertTo-SafeToolOutput $StderrText).TrimEnd() }
-            if ($Database.Name -eq "Google storage fallback") {
-                Write-Host "[NETWORK/INFRASTRUCTURE FALLBACK] Canonical host was unavailable; the scan used the Google-hosted Go vulnerability database storage endpoint." -ForegroundColor Yellow
+            if ($Database.Name -eq "canonical fallback") {
+                Write-Host "[NETWORK/INFRASTRUCTURE FALLBACK] Google-hosted Go vulnerability database storage was unavailable; the scan used the canonical vuln.go.dev endpoint." -ForegroundColor Yellow
             }
             Write-Host "govulncheck: PASS" -ForegroundColor Green
             return
@@ -340,7 +340,7 @@ function Invoke-Govulncheck {
             continue
         }
 
-        throw "[NETWORK/INFRASTRUCTURE SKIP] govulncheck could not reach the Go vulnerability database through its canonical and Google storage endpoints after $Attempts attempts. Vulnerability status is UNKNOWN; RELEASE gate remains FAILED. Allow HTTPS/443 access to vuln.go.dev and storage.googleapis.com and retry."
+        throw "[NETWORK/INFRASTRUCTURE SKIP] govulncheck could not reach the Go vulnerability database through its Google storage and canonical endpoints after $Attempts attempts. Vulnerability status is UNKNOWN; RELEASE gate remains FAILED. Allow HTTPS/443 access to storage.googleapis.com and vuln.go.dev and retry."
     }
 }
 

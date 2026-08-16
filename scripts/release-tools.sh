@@ -70,6 +70,64 @@ iris_resolve_govulncheck() {
   return 1
 }
 
+iris_govuln_network_failure() {
+  local output_file="$1"
+  grep -Eqi \
+    'fetching vulnerabilities|(^|[^[:alpha:]])(dial|read|write) tcp([^[:alpha:]]|$)|wsarecv|no such host|temporary failure in name resolution|i/o timeout|timed out|tls handshake timeout|context deadline exceeded|connection (refused|reset|timed out)|proxyconnect tcp|unexpected eof|http2: client connection lost|x509:|status( code)? (403|408|429|5[0-9][0-9])' \
+    "$output_file"
+}
+
+iris_run_govulncheck() {
+  local executable="$1" timeout_duration="${2:-15m}" output exit_code attempt name url next_name
+  local -a names=("Google storage" "Google storage retry" "canonical fallback")
+  local -a urls=(
+    "https://storage.googleapis.com/go-vulndb"
+    "https://storage.googleapis.com/go-vulndb"
+    "https://vuln.go.dev"
+  )
+
+  output="$(mktemp "${TMPDIR:-/tmp}/iris-govulncheck.XXXXXXXX")"
+  for attempt in 0 1 2; do
+    name="${names[$attempt]}"
+    url="${urls[$attempt]}"
+    printf '+ govulncheck -db %s ./... (attempt %d/3)\n' "$url" "$((attempt + 1))"
+    if timeout "$timeout_duration" "$executable" -db "$url" ./... >"$output" 2>&1; then
+      exit_code=0
+    else
+      exit_code=$?
+    fi
+
+    if [ "$exit_code" -eq 0 ]; then
+      cat "$output"
+      if [ "$name" = "canonical fallback" ]; then
+        echo "[NETWORK/INFRASTRUCTURE FALLBACK] Google-hosted Go vulnerability database storage was unavailable; the scan used the canonical vuln.go.dev endpoint."
+      fi
+      rm -f -- "$output"
+      echo "govulncheck: PASS"
+      return 0
+    fi
+
+    if [ "$exit_code" -ne 124 ] && ! iris_govuln_network_failure "$output"; then
+      cat "$output"
+      rm -f -- "$output"
+      echo "[SECURITY FAIL] govulncheck completed without a successful result (exit code $exit_code)." >&2
+      return "$exit_code"
+    fi
+
+    if [ "$attempt" -lt 2 ]; then
+      next_name="${names[$((attempt + 1))]}"
+      echo "[NETWORK/INFRASTRUCTURE RETRY] Go vulnerability database is unavailable through $name (attempt $((attempt + 1))/3); retrying through $next_name in 2 seconds."
+      sleep 2
+      continue
+    fi
+
+    cat "$output"
+    rm -f -- "$output"
+    echo "[NETWORK/INFRASTRUCTURE SKIP] govulncheck could not reach the Go vulnerability database through its Google storage and canonical endpoints after 3 attempts. Vulnerability status is UNKNOWN; RELEASE gate remains FAILED." >&2
+    return 1
+  done
+}
+
 iris_resolve_gitleaks() {
   local expected="$1" candidate version
   candidate="$(command -v gitleaks 2>/dev/null || true)"
