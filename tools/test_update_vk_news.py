@@ -233,7 +233,9 @@ class VKNewsUpdaterTests(unittest.TestCase):
         self.assertIn('importlib.metadata.version("playwright")', workflow)
         self.assertIn("git diff --quiet -- data/latest-vk.json", workflow)
         self.assertIn("for attempt in 1 2 3", workflow)
-        self.assertIn("VK update failed after 3 attempts", workflow)
+        self.assertIn("VK transient failure", workflow)
+        self.assertIn("::warning::VK is temporarily unavailable", workflow)
+        self.assertIn("VK updater failed with non-transient category", workflow)
         self.assertNotIn("VK_ACCESS_TOKEN", workflow)
 
     def test_seed_news_file_is_valid(self):
