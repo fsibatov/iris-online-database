@@ -412,6 +412,13 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("Restart-AsAdministrator", launcher)
         self.assertIn("-Verb RunAs", launcher)
         self.assertIn("-EncodedCommand", launcher)
+        failure_display = launcher.index('Write-Host ("FAILED: " + $FailureMessage)')
+        elevated_pause = launcher.index(
+            'Read-Host "Press Enter to close the administrator window"'
+        )
+        failure_throw = launcher.index("throw $FailureMessage")
+        self.assertLess(failure_display, elevated_pause)
+        self.assertLess(elevated_pause, failure_throw)
         self.assertIn('Tool = "PowerShell"', script)
         self.assertIn(">=5.1 / Administrator", script)
         self.assertIn("$ExitCode = $LASTEXITCODE", script)
@@ -517,13 +524,19 @@ class ReleaseHelperTests(unittest.TestCase):
         ):
             self.assertIn(line, text)
         self.assertIn("setlocal EnableExtensions DisableDelayedExpansion", text)
-        self.assertIn("pushd \"%REPO%\" || exit /b 1", text)
+        self.assertIn('pushd "%REPO%"', text)
+        self.assertIn("if errorlevel 1 (", text)
+        self.assertIn("ERROR: Could not enter repository directory.", text)
         self.assertIn("-NoLogo -NoProfile -ExecutionPolicy Bypass", text)
         self.assertIn('if not "%RC%"=="0" goto failed', text)
         self.assertIn('if "%CHOICE%"=="1" goto action_prepare', text)
         self.assertIn(':action_prepare\r\nset "ACTION=Prepare"', text)
         self.assertNotRegex(text, r'(?im)^if .*&\s*goto ')
-        self.assertIn("exit /b %RC%", text)
+        failed_block = text.split(":failed\r\n", 1)[1].split(":success_exit\r\n", 1)[0]
+        self.assertIn("pause\r\ngoto menu", failed_block)
+        self.assertNotIn("exit /b", failed_block)
+        self.assertIn('set "LAST_ACTION_RC=%RC%"', failed_block)
+        self.assertIn("exit /b %LAST_ACTION_RC%", text)
         self.assertNotIn("git push", text.lower())
         self.assertNotIn("gh release", text.lower())
 

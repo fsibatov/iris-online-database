@@ -81,6 +81,10 @@ try {
 } catch {
     $FailureMessage = $_.Exception.Message
 }
+if ($FailureMessage) {
+    Write-Host ""
+    Write-Host ("FAILED: " + $FailureMessage) -ForegroundColor Red
+}
 if ($ElevatedSession) {
     Write-Host ""
     [void](Read-Host "Press Enter to close the administrator window")

@@ -9,14 +9,22 @@ set "PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 if not defined REPO (
   echo ERROR: iris-online-database repository was not found next to this launcher.
+  pause
   exit /b 1
 )
 if not exist "%PS%" (
   echo ERROR: Windows PowerShell 5.1 executable was not found.
+  pause
   exit /b 1
 )
 
-pushd "%REPO%" || exit /b 1
+pushd "%REPO%"
+if errorlevel 1 (
+  echo ERROR: Could not enter repository directory.
+  pause
+  exit /b 1
+)
+set "LAST_ACTION_RC=0"
 
 :menu
 cls
@@ -68,6 +76,7 @@ goto run_action
 :run_action
 "%PS%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%REPO%\IrisTools.ps1" -Action "%ACTION%"
 set "RC=%ERRORLEVEL%"
+set "LAST_ACTION_RC=%RC%"
 if not "%RC%"=="0" goto failed
 
 echo.
@@ -94,11 +103,15 @@ goto menu
 :failed
 if not defined RC set "RC=%ERRORLEVEL%"
 if "%RC%"=="0" set "RC=1"
+set "LAST_ACTION_RC=%RC%"
 echo.
 echo FAILED. Exit code: %RC%
-popd
-exit /b %RC%
+echo The window will remain open so the failure can be reviewed.
+echo No later release action has been started automatically.
+echo.
+pause
+goto menu
 
 :success_exit
 popd
-exit /b 0
+exit /b %LAST_ACTION_RC%
