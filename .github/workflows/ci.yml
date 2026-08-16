@@ -210,8 +210,6 @@ jobs:
     name: Native Windows Wails release matrix
     runs-on: windows-latest
     timeout-minutes: 40
-    env:
-      GOBIN: ${{ runner.temp }}\go-tools
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -231,6 +229,8 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
+          if (-not $env:RUNNER_TEMP) { throw "RUNNER_TEMP is unavailable." }
+          $env:GOBIN = Join-Path $env:RUNNER_TEMP "go-tools"
           New-Item -ItemType Directory -Force -Path $env:GOBIN | Out-Null
           go install github.com/wailsapp/wails/v2/cmd/wails@v2.14.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -239,6 +239,7 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "GOBIN=$env:GOBIN" + [Environment]::NewLine, $utf8NoBom)
           [IO.File]::AppendAllText($env:GITHUB_PATH, $env:GOBIN + [Environment]::NewLine, $utf8NoBom)
 
       - name: Parse and self-test Windows PowerShell 5.1 tooling

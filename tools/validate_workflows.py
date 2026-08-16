@@ -10,6 +10,28 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 ACTION_PIN = re.compile(r"^\s*uses:\s*[^@\s]+@([0-9a-f]{40})(?:\s|$)", re.MULTILINE)
 ACTION_REFERENCE = re.compile(r"^\s*uses:\s*[^@\s]+@([^\s#]+)", re.MULTILINE)
+EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
+JOB_ENV_DISALLOWED_CONTEXT = re.compile(r"\b(?:env|job|runner|steps)\.")
+
+
+def invalid_job_env_contexts(document: dict[object, object]) -> int:
+    jobs = document.get("jobs")
+    if not isinstance(jobs, dict):
+        return 0
+    failures = 0
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        job_env = job.get("env")
+        if not isinstance(job_env, dict):
+            continue
+        for value in job_env.values():
+            if not isinstance(value, str):
+                continue
+            for expression in EXPRESSION.findall(value):
+                if JOB_ENV_DISALLOWED_CONTEXT.search(expression):
+                    failures += 1
+    return failures
 
 
 def release_policy_failures() -> int:
@@ -82,6 +104,7 @@ def main() -> int:
         if not isinstance(document, dict) or not isinstance(document.get("jobs"), dict):
             failures += 1
             continue
+        failures += invalid_job_env_contexts(document)
         references = ACTION_REFERENCE.findall(text)
         pins = ACTION_PIN.findall(text)
         if len(references) != len(pins):

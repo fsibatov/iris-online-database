@@ -289,6 +289,28 @@ class ReleaseHelperTests(unittest.TestCase):
             self.assertNotRegex(text, r"bandit==[0-9]")
             self.assertNotRegex(text, r"pip-audit==[0-9]")
 
+    def test_workflow_validator_rejects_runner_context_in_job_env(self):
+        from validate_workflows import invalid_job_env_contexts
+
+        invalid = {
+            "jobs": {
+                "windows": {
+                    "env": {"GOBIN": "${{ runner.temp }}\\go-tools"},
+                    "steps": [],
+                }
+            }
+        }
+        valid = {
+            "jobs": {
+                "windows": {
+                    "env": {"GOBIN": "C:\\tools"},
+                    "steps": [],
+                }
+            }
+        }
+        self.assertEqual(invalid_job_env_contexts(invalid), 1)
+        self.assertEqual(invalid_job_env_contexts(valid), 0)
+
     def test_workflow_actions_are_pinned_to_full_commits(self):
         uses_pattern = re.compile(r"^\s*uses:\s*[^@\s]+@([^\s#]+)", re.MULTILINE)
         for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
@@ -555,8 +577,11 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("wails@v2.14.0", install_block)
         self.assertIn("staticcheck@2026.1", install_block)
         self.assertIn("govulncheck@v1.6.0", install_block)
-        self.assertIn("GOBIN: ${{ runner.temp }}\\go-tools", workflow)
-        self.assertNotIn("shell: pwsh", workflow[workflow.index("windows-build:") :])
+        windows_job = workflow[workflow.index("windows-build:") :]
+        self.assertNotIn("GOBIN: ${{ runner.temp }}\\go-tools", windows_job)
+        self.assertIn('$env:GOBIN = Join-Path $env:RUNNER_TEMP "go-tools"', windows_job)
+        self.assertIn('$env:GITHUB_ENV, "GOBIN=$env:GOBIN"', windows_job)
+        self.assertNotIn("shell: pwsh", windows_job)
 
     def test_windows_bat_has_cmd_safe_encoding_menu_and_fail_closed_actions(self):
         path = ROOT / "scripts" / "windows" / "00_RELEASE_WINDOWS.bat"
