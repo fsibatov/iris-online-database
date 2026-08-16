@@ -726,6 +726,9 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("[GNUPG:\\] VALIDSIG", script)
         self.assertIn("function Ensure-ReleaseTag", script)
         self.assertIn("Local and origin release tag objects differ.", script)
+        self.assertEqual(script.count('"refs/tags/${Tag}:refs/tags/${Tag}"'), 2)
+        self.assertNotIn('"refs/tags/$Tag:refs/tags/$Tag"', script)
+        self.assertIn("GIT_TAG_REFSPEC_INTERPOLATION", script)
         self.assertIn('"--verify-tag"', script)
         self.assertNotIn('"tag", "-a"', script)
 

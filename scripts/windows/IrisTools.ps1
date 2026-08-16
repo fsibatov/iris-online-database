@@ -639,6 +639,11 @@ function Test-WindowsTooling {
     if (Test-GitleaksHistoryProof "9:48AM INF 0 commits scanned.") {
         $FailedProbes.Add("GITLEAKS_HISTORY_ZERO_PROOF")
     }
+    $TagRefProbe = "v0.0.0-probe"
+    $TagRefSpecProbe = "refs/tags/${TagRefProbe}:refs/tags/${TagRefProbe}"
+    if ($TagRefSpecProbe -ne "refs/tags/v0.0.0-probe:refs/tags/v0.0.0-probe") {
+        $FailedProbes.Add("GIT_TAG_REFSPEC_INTERPOLATION")
+    }
     $SensitiveProbe = Join-Path $Root "private-project"
     $UnsafeProbe = $SensitiveProbe + " ghp_" + ("A" * 36)
     $SafeProbe = ConvertTo-SafeToolOutput $UnsafeProbe
@@ -1503,7 +1508,7 @@ function Ensure-ReleaseTag {
     $LocalTagExists = $LASTEXITCODE -eq 0
 
     if ($RemoteTagObject -and -not $LocalTagExists) {
-        Invoke-Checked "git" @("fetch", "origin", "refs/tags/$Tag:refs/tags/$Tag") 120
+        Invoke-Checked "git" @("fetch", "origin", "refs/tags/${Tag}:refs/tags/${Tag}") 120
         $LocalTagExists = $true
     }
 
@@ -1525,7 +1530,7 @@ function Ensure-ReleaseTag {
         return
     }
 
-    Invoke-Checked "git" @("push", "origin", "refs/tags/$Tag:refs/tags/$Tag") 300
+    Invoke-Checked "git" @("push", "origin", "refs/tags/${Tag}:refs/tags/${Tag}") 300
     $RemoteTagObject = Get-RemoteReleaseTagObjectId -Tag $Tag
     if (-not $RemoteTagObject -or $RemoteTagObject -ne $LocalTagObject) { throw "Pushed release tag could not be verified on origin." }
 }
