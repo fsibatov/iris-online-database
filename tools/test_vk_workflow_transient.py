@@ -11,7 +11,9 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("for attempt in 1 2 3", workflow)
-        self.assertIn('output="$(timeout 3m python -B tools/update_vk_news.py', workflow)
+        self.assertIn(
+            'output="$(timeout 3m python -B tools/update_vk_news.py', workflow
+        )
         self.assertIn('if [ "$exit_code" -eq 124 ]', workflow)
         self.assertIn('category="TIMEOUT"', workflow)
 
