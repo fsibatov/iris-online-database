@@ -390,20 +390,20 @@ class ReleaseHelperTests(unittest.TestCase):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
             encoding="utf-8"
         )
-        self.assertIn('$PinnedGoDirectory = Join-Path $ToolRoot', script)
+        self.assertIn("$PinnedGoDirectory = Join-Path $ToolRoot", script)
         self.assertIn(
             '$PinnedGoBinDirectory = Join-Path $PinnedGoDirectory "go\\bin"', script
         )
         self.assertIn('$env:GOTOOLCHAIN = "local"', script)
-        self.assertIn('function Test-ExactGoExecutable', script)
-        self.assertIn('function Install-PinnedGo', script)
-        self.assertIn('https://go.dev/dl/?mode=json&include=all', script)
+        self.assertIn("function Test-ExactGoExecutable", script)
+        self.assertIn("function Install-PinnedGo", script)
+        self.assertIn("https://go.dev/dl/?mode=json&include=all", script)
         self.assertIn('$ArchiveName = "go$GoPin.windows-amd64.zip"', script)
-        self.assertIn('Get-FileHash -LiteralPath $Archive -Algorithm SHA256', script)
-        self.assertIn('$ActualSize -ne $ExpectedSize', script)
-        self.assertIn('$ActualHash -ne $ExpectedHash', script)
-        self.assertIn('Test-ExactGoExecutable -Executable $StagedGo', script)
-        self.assertIn('Install-PinnedGo', script)
+        self.assertIn("Get-FileHash -LiteralPath $Archive -Algorithm SHA256", script)
+        self.assertIn("$ActualSize -ne $ExpectedSize", script)
+        self.assertIn("$ActualHash -ne $ExpectedHash", script)
+        self.assertIn("Test-ExactGoExecutable -Executable $StagedGo", script)
+        self.assertIn("Install-PinnedGo", script)
         self.assertNotIn('"GoLang.Go", "--version", $GoPin', script)
 
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
@@ -414,9 +414,7 @@ class ReleaseHelperTests(unittest.TestCase):
         )
         self.assertIn("go-version-file: .go-version", workflow)
         self.assertIn("go-version-file: .go-version", codeql)
-        self.assertIn(
-            'iris_run_govulncheck "$(command -v govulncheck)" 15m', workflow
-        )
+        self.assertIn('iris_run_govulncheck "$(command -v govulncheck)" 15m', workflow)
         release_tools = (ROOT / "scripts" / "release-tools.sh").read_text(
             encoding="utf-8"
         )
@@ -487,19 +485,19 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn(
             "$StaticcheckExecutable = Get-PinnedStaticcheckExecutable", script
         )
-        self.assertIn('$Output = & $StaticcheckExecutable @Arguments 2>&1', script)
+        self.assertIn("$Output = & $StaticcheckExecutable @Arguments 2>&1", script)
         self.assertIn('Invoke-Staticcheck @("-version")', script)
         self.assertIn('$FailedProbes.Add("STATICCHECK_DIRECT")', script)
         self.assertNotIn('$FailedProbes.Add("STATICCHECK_CAPTURE")', script)
         self.assertNotIn('Invoke-Checked "staticcheck" @("./...")', script)
         self.assertIn('Invoke-Staticcheck @("./...")', script)
-        self.assertNotRegex(script, r'(?m)^\s*& winget\s+install\b')
+        self.assertNotRegex(script, r"(?m)^\s*& winget\s+install\b")
         self.assertIn('Invoke-Checked "winget" @("install"', script)
         self.assertIn(
             '$GitleaksWindowsX64Sha256 = "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e"',
             script,
         )
-        self.assertIn('$Expected -ne $GitleaksWindowsX64Sha256', script)
+        self.assertIn("$Expected -ne $GitleaksWindowsX64Sha256", script)
         self.assertNotIn("function Read-NativeCaptureFile", script)
         self.assertIn("-Action SelfTest", workflow)
         self.assertIn("System.Management.Automation.Language.Parser", workflow)
@@ -543,8 +541,8 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("wails@v2.14.0", install_block)
         self.assertIn("staticcheck@2026.1", install_block)
         self.assertIn("govulncheck@v1.6.0", install_block)
-        self.assertIn('GOBIN: ${{ runner.temp }}\\go-tools', workflow)
-        self.assertNotIn("shell: pwsh", workflow[workflow.index("windows-build:"):])
+        self.assertIn("GOBIN: ${{ runner.temp }}\\go-tools", workflow)
+        self.assertNotIn("shell: pwsh", workflow[workflow.index("windows-build:") :])
 
     def test_windows_bat_has_cmd_safe_encoding_menu_and_fail_closed_actions(self):
         path = ROOT / "scripts" / "windows" / "00_RELEASE_WINDOWS.bat"
@@ -572,7 +570,7 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn('if not "%RC%"=="0" goto failed', text)
         self.assertIn('if "%CHOICE%"=="1" goto action_prepare', text)
         self.assertIn(':action_prepare\r\nset "ACTION=Prepare"', text)
-        self.assertNotRegex(text, r'(?im)^if .*&\s*goto ')
+        self.assertNotRegex(text, r"(?im)^if .*&\s*goto ")
         failed_block = text.split(":failed\r\n", 1)[1].split(":success_exit\r\n", 1)[0]
         self.assertIn("pause\r\ngoto menu", failed_block)
         self.assertNotIn("exit /b", failed_block)
@@ -611,7 +609,7 @@ class ReleaseHelperTests(unittest.TestCase):
             "data_presentation_audit.py",
             "frontend_smoke_test.py",
             'gitleaks.exe"',
-            "release_fingerprint.py\", \"--write",
+            'release_fingerprint.py", "--write',
         ):
             self.assertIn(marker, gate)
 
