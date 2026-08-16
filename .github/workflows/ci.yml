@@ -179,14 +179,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          output="$RUNNER_TEMP/gitleaks-history.log"
-          set +e
-          timeout 10m gitleaks git --no-banner --redact --log-level info . >"$output" 2>&1
-          exit_code=$?
-          set -e
-          cat "$output"
-          test "$exit_code" -eq 0
-          grep -Eq '[1-9][0-9]* commits scanned\.' "$output"
+          . ./scripts/release-tools.sh
+          iris_gitleaks_history_scan "$(command -v gitleaks)" "."
 
       - name: Source tree remains clean
         shell: bash

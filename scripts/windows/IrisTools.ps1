@@ -631,6 +631,14 @@ function Test-WindowsTooling {
     if (Test-GovulncheckNetworkFailure "Vulnerability #1: GO-TEST-0001; see https://vuln.go.dev/ID/GO-TEST-0001.json") {
         $FailedProbes.Add("VULNERABILITY_CLASSIFICATION")
     }
+    $AnsiEscape = [string][char]27
+    $GitleaksAnsiProbe = "9:48AM INF 48" + $AnsiEscape + "[0m commits scanned."
+    if (-not (Test-GitleaksHistoryProof $GitleaksAnsiProbe)) {
+        $FailedProbes.Add("GITLEAKS_HISTORY_ANSI_PROOF")
+    }
+    if (Test-GitleaksHistoryProof "9:48AM INF 0 commits scanned.") {
+        $FailedProbes.Add("GITLEAKS_HISTORY_ZERO_PROOF")
+    }
     $SensitiveProbe = Join-Path $Root "private-project"
     $UnsafeProbe = $SensitiveProbe + " ghp_" + ("A" * 36)
     $SafeProbe = ConvertTo-SafeToolOutput $UnsafeProbe
@@ -1109,6 +1117,20 @@ function Test-GitleaksDetection {
     Write-Host "Gitleaks detection self-test: PASS" -ForegroundColor Green
 }
 
+function ConvertFrom-AnsiToolOutput {
+    param([string]$Text)
+    if (-not $Text) { return "" }
+    $Escape = [string][char]27
+    $CsiPattern = [Regex]::Escape($Escape) + "\[[0-?]*[ -/]*[@-~]"
+    return [Regex]::Replace($Text, $CsiPattern, "")
+}
+
+function Test-GitleaksHistoryProof {
+    param([string]$Text)
+    $PlainText = ConvertFrom-AnsiToolOutput $Text
+    return $PlainText -match "(?im)(?:^|\s)[1-9][0-9]*\s+commits\s+scanned\."
+}
+
 function Invoke-GitleaksHistoryScan {
     param([int]$TimeoutSeconds = 600)
     $GitleaksExecutable = Join-Path $PinnedGitleaksDirectory "gitleaks.exe"
@@ -1128,7 +1150,7 @@ function Invoke-GitleaksHistoryScan {
     }
     if ($Result.TimedOut) { throw "Gitleaks Git-history scan timed out." }
     if ($Result.ExitCode -ne 0) { throw "Gitleaks Git-history scan failed with exit code $($Result.ExitCode)." }
-    if ($Combined -notmatch "(?im)\b[1-9][0-9]* commits scanned\.") {
+    if (-not (Test-GitleaksHistoryProof $Combined)) {
         throw "Gitleaks Git-history scan did not prove that any commits were scanned."
     }
 }

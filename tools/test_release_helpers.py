@@ -312,11 +312,25 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("iris_resolve_gitleaks", combined)
         self.assertIn("iris_test_gitleaks_detection", combined)
         self.assertIn("Invoke-GitleaksHistoryScan", combined)
+        self.assertIn("Test-GitleaksHistoryProof", combined)
+        self.assertIn("ConvertFrom-AnsiToolOutput", combined)
+        self.assertIn("GITLEAKS_HISTORY_ANSI_PROOF", combined)
+        self.assertIn("GITLEAKS_HISTORY_ZERO_PROOF", combined)
         self.assertIn("iris_gitleaks_history_scan", combined)
+        release_tools = (ROOT / "scripts" / "release-tools.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("iris_gitleaks_history_proof", release_tools)
         self.assertIn("commits scanned", combined)
         self.assertIn("--exit-code 37", combined)
         self.assertNotIn("python3 -B tools/raw_projection_audit.py\n", combined)
         self.assertNotIn("python3 -B tools/drop_table_audit.py\n", combined)
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'iris_gitleaks_history_scan "$(command -v gitleaks)" "."', workflow
+        )
 
     def test_release_requires_successful_ci_codeql_and_unchanged_artifact(self):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(

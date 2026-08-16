@@ -153,6 +153,18 @@ iris_test_gitleaks_detection() {
   fi
 }
 
+iris_gitleaks_history_proof() {
+  local output="$1" plain
+  plain="$(mktemp "${TMPDIR:-/tmp}/iris-gitleaks-history-plain.XXXXXXXX")"
+  LC_ALL=C sed $'s|\x1b\\[[0-?]*[ -/]*[@-~]||g' "$output" >"$plain"
+  if grep -Eq '(^|[[:space:]])[1-9][0-9]*[[:space:]]+commits[[:space:]]+scanned\.' "$plain"; then
+    rm -f -- "$plain"
+    return 0
+  fi
+  rm -f -- "$plain"
+  return 1
+}
+
 iris_gitleaks_history_scan() {
   local executable="$1" repository="$2" output exit_code
   output="$(mktemp "${TMPDIR:-/tmp}/iris-gitleaks-history.XXXXXXXX")"
@@ -166,7 +178,7 @@ iris_gitleaks_history_scan() {
     echo "Gitleaks Git-history scan failed." >&2
     return "$exit_code"
   fi
-  if ! grep -Eq '[1-9][0-9]* commits scanned\.' "$output"; then
+  if ! iris_gitleaks_history_proof "$output"; then
     rm -f -- "$output"
     echo "Gitleaks Git-history scan did not prove that any commits were scanned." >&2
     return 1
