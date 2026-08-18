@@ -7,6 +7,16 @@ UPDATER = ROOT / "tools" / "update_vk_news.py"
 
 
 class VKWorkflowTransientPolicyTests(unittest.TestCase):
+    def test_workflow_live_smoke_trigger_is_non_recursive(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("push:", workflow)
+        self.assertIn("branches: [main]", workflow)
+        self.assertIn("- '.github/workflows/update-vk-news.yml'", workflow)
+        self.assertIn("- 'tools/update_vk_news.py'", workflow)
+        self.assertNotIn("- 'data/latest-vk.json'", workflow)
+        self.assertIn("group: update-vk-news-v2", workflow)
+
     def test_scheduler_uses_one_scrape_path_per_attempt(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 

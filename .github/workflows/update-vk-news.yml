@@ -1,6 +1,11 @@
 name: Обновление последней записи VK
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/update-vk-news.yml'
+      - 'tools/update_vk_news.py'
   workflow_dispatch:
   schedule:
     - cron: '7,17,27,37,47,57 * * * *'
@@ -9,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: update-vk-news
+  group: update-vk-news-v2
   cancel-in-progress: false
 
 jobs:
