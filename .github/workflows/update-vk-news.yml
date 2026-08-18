@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   update:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
@@ -31,24 +31,44 @@ jobs:
           cache: pip
           cache-dependency-path: tools/requirements-audit.txt
 
-      - name: Установить Playwright
+      - name: Настроить Playwright и системный Chrome
+        shell: bash
         run: |
           set -euo pipefail
-          timeout 8m python -m pip install --disable-pip-version-check -r tools/requirements-audit.txt
-          python - <<'PY'
-          import importlib.metadata
+
+          playwright_version="$(python - <<'PY'
           from pathlib import Path
 
-          expected = next(
-              line.split("==", 1)[1]
-              for line in Path("tools/requirements-audit.txt").read_text().splitlines()
-              if line.startswith("playwright==")
+          print(
+              next(
+                  line.split("==", 1)[1]
+                  for line in Path("tools/requirements-audit.txt").read_text().splitlines()
+                  if line.startswith("playwright==")
+              )
           )
+          PY
+          )"
+
+          timeout 4m python -m pip install --disable-pip-version-check "playwright==${playwright_version}"
+
+          python - "$playwright_version" <<'PY'
+          import importlib.metadata
+          import sys
+
+          expected = sys.argv[1]
           actual = importlib.metadata.version("playwright")
           if actual != expected:
               raise SystemExit("Playwright version does not match requirements-audit.txt")
           PY
-          timeout 10m python -m playwright install --with-deps chromium
+
+          chrome="$(command -v google-chrome || command -v chromium || true)"
+          if [ -z "$chrome" ]; then
+            echo "::error::System Chrome/Chromium was not found on the GitHub runner."
+            exit 1
+          fi
+
+          "$chrome" --version
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE=$chrome" >> "$GITHUB_ENV"
 
       - name: Получить последнюю запись VK
         shell: bash
