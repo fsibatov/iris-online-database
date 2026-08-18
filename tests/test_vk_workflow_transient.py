@@ -80,7 +80,9 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
         self.assertIn("git fetch origin main", workflow)
         self.assertIn("git rebase origin/main", workflow)
         self.assertIn("git push origin HEAD:main", workflow)
-        self.assertIn("Failed to push VK update after 3 synchronized attempts", workflow)
+        self.assertIn(
+            "Failed to push VK update after 3 synchronized attempts", workflow
+        )
 
     def test_updater_keeps_safe_failure_categories_and_strict_exit(self):
         updater = UPDATER.read_text(encoding="utf-8")
