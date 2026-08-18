@@ -66,97 +66,144 @@ jobs:
           transient_failure=0
           stale_confirmations=0
           stale_candidate_id=""
-          stale_candidate_file=""
 
           for attempt in 1 2 3; do
             echo "VK update attempt ${attempt}/3"
+            candidate_file="$RUNNER_TEMP/vk-candidate-${attempt}.json"
+            rm -f -- "$candidate_file"
 
             set +e
-            output="$(timeout 3m python -B tools/update_vk_news.py --output data/latest-vk.json 2>&1)"
+            output="$(timeout 3m python -B tools/update_vk_news.py --output "$candidate_file" 2>&1)"
             exit_code=$?
             set -e
             printf '%s\n' "$output"
 
-            if [ "$exit_code" -eq 0 ]; then
-              exit 0
+            if [ "$exit_code" -ne 0 ]; then
+              category="$(printf '%s\n' "$output" | sed -n 's/.*Ошибка обновления VK \[\([^]]*\)\].*/\1/p' | tail -n 1)"
+              transient_failure=0
+
+              if [ "$exit_code" -eq 124 ]; then
+                category="TIMEOUT"
+                transient_failure=1
+              else
+                case "$category" in
+                  EMPTY_PREVIEW|VK_UNAVAILABLE|BROWSER_*)
+                    transient_failure=1
+                    ;;
+                  *)
+                    echo "::error::VK updater failed with non-transient category: ${category:-UNKNOWN} (exit ${exit_code})."
+                    exit "$exit_code"
+                    ;;
+                esac
+              fi
+
+              if [ "$attempt" -lt 3 ]; then
+                echo "VK transient failure [${category}], retrying."
+                sleep $((attempt * 10))
+              fi
+              continue
             fi
 
-            category="$(printf '%s\n' "$output" | sed -n 's/.*Ошибка обновления VK \[\([^]]*\)\].*/\1/p' | tail -n 1)"
-            transient_failure=0
+            if [ ! -f "$candidate_file" ]; then
+              echo "::error::VK updater succeeded without producing a candidate payload."
+              exit 1
+            fi
 
-            if [ "$exit_code" -eq 124 ]; then
-              category="TIMEOUT"
-              transient_failure=1
-            else
-              case "$category" in
-                STALE_POST)
-                  transient_failure=1
-                  candidate_file="$RUNNER_TEMP/vk-stale-candidate-${attempt}.json"
-                  rm -f -- "$candidate_file"
-
-                  set +e
-                  candidate_output="$(timeout 3m python -B tools/update_vk_news.py --output "$candidate_file" 2>&1)"
-                  candidate_exit=$?
-                  set -e
-                  printf '%s\n' "$candidate_output"
-
-                  if [ "$candidate_exit" -eq 0 ] && [ -f "$candidate_file" ]; then
-                    if candidate_id="$(python - "$candidate_file" <<'PY'
+            if ! candidate_state="$(python - data/latest-vk.json "$candidate_file" <<'PY'
           import json
           import sys
           from pathlib import Path
 
-          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          post_id = payload.get("post_id")
-          post_url = payload.get("post_url")
-          text = str(payload.get("text") or "").strip()
-          if not isinstance(post_id, int) or isinstance(post_id, bool) or post_id <= 0:
-              raise SystemExit(2)
-          if post_url != f"https://vk.ru/wall-59626511_{post_id}":
-              raise SystemExit(3)
-          if not text:
-              raise SystemExit(4)
-          print(post_id)
+          current_path = Path(sys.argv[1])
+          candidate_path = Path(sys.argv[2])
+          current = json.loads(current_path.read_text(encoding="utf-8"))
+          candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+
+          def validate(payload):
+              post_id = payload.get("post_id")
+              post_url = payload.get("post_url")
+              text = str(payload.get("text") or "").strip()
+              if not isinstance(post_id, int) or isinstance(post_id, bool) or post_id <= 0:
+                  raise SystemExit(2)
+              if post_url != f"https://vk.ru/wall-59626511_{post_id}":
+                  raise SystemExit(3)
+              if not text:
+                  raise SystemExit(4)
+              return post_id
+
+          current_id = validate(current)
+          candidate_id = validate(candidate)
+          comparable_keys = (
+              "schema",
+              "community_url",
+              "post_id",
+              "post_url",
+              "text",
+              "published_at",
+          )
+
+          if candidate_id < current_id:
+              action = "stale"
+          elif candidate_id > current_id:
+              action = "promote"
+          elif all(current.get(key, "") == candidate.get(key, "") for key in comparable_keys):
+              action = "same"
+          else:
+              action = "promote"
+
+          print(candidate_id, action)
           PY
           )"; then
-                      if [ -z "$stale_candidate_id" ]; then
-                        stale_candidate_id="$candidate_id"
-                        stale_confirmations=1
-                      elif [ "$candidate_id" = "$stale_candidate_id" ]; then
-                        stale_confirmations=$((stale_confirmations + 1))
-                      else
-                        echo "::warning::VK stale candidate changed from #${stale_candidate_id} to #${candidate_id}; confirmation counter reset."
-                        stale_candidate_id="$candidate_id"
-                        stale_confirmations=1
-                      fi
-                      stale_candidate_file="$candidate_file"
-                      echo "VK stale candidate #${candidate_id} confirmed ${stale_confirmations}/3."
-                    else
-                      echo "::warning::VK stale candidate JSON failed validation."
-                    fi
-                  else
-                    echo "::warning::VK stale candidate could not be collected (exit ${candidate_exit})."
-                  fi
-                  ;;
-                EMPTY_PREVIEW|VK_UNAVAILABLE|BROWSER_*)
-                  transient_failure=1
-                  ;;
-                *)
-                  echo "::error::VK updater failed with non-transient category: ${category:-UNKNOWN} (exit ${exit_code})."
-                  exit "$exit_code"
-                  ;;
-              esac
+              echo "::error::VK candidate/current JSON validation failed."
+              exit 1
             fi
 
+            candidate_id="${candidate_state%% *}"
+            candidate_action="${candidate_state#* }"
+            transient_failure=0
+
+            case "$candidate_action" in
+              same)
+                echo "VK: без изменений, последняя запись #${candidate_id}"
+                exit 0
+                ;;
+              promote)
+                cp -- "$candidate_file" data/latest-vk.json
+                echo "VK: подтверждена актуальная запись #${candidate_id}"
+                exit 0
+                ;;
+              stale)
+                if [ -z "$stale_candidate_id" ]; then
+                  stale_candidate_id="$candidate_id"
+                  stale_confirmations=1
+                elif [ "$candidate_id" = "$stale_candidate_id" ]; then
+                  stale_confirmations=$((stale_confirmations + 1))
+                else
+                  echo "::warning::VK lower-ID candidate changed from #${stale_candidate_id} to #${candidate_id}; confirmation counter reset."
+                  stale_candidate_id="$candidate_id"
+                  stale_confirmations=1
+                fi
+
+                echo "VK lower-ID candidate #${candidate_id} confirmed ${stale_confirmations}/3."
+                if [ "$stale_confirmations" -eq 3 ]; then
+                  cp -- "$candidate_file" data/latest-vk.json
+                  echo "::notice::VK previous last-known-good post is no longer current. Public post #${candidate_id} promoted after 3 independent confirmations."
+                  exit 0
+                fi
+                ;;
+              *)
+                echo "::error::Unexpected VK candidate action: ${candidate_action}."
+                exit 1
+                ;;
+            esac
+
             if [ "$attempt" -lt 3 ]; then
-              echo "VK transient failure [${category}], retrying."
               sleep $((attempt * 10))
             fi
           done
 
-          if [ "$stale_confirmations" -eq 3 ] && [ -n "$stale_candidate_file" ]; then
-            cp -- "$stale_candidate_file" data/latest-vk.json
-            echo "::notice::VK previous last-known-good post is stale. Consistently observed public post #${stale_candidate_id} promoted after 3 independent confirmations."
+          if [ "$stale_confirmations" -gt 0 ]; then
+            echo "::warning::Lower-ID VK candidate was not confirmed 3 times. Last-known-good data is preserved."
             exit 0
           fi
 
@@ -171,12 +218,26 @@ jobs:
       - name: Сохранить изменение
         shell: bash
         run: |
+          set -euo pipefail
           if git diff --quiet -- data/latest-vk.json; then
             echo "Новых записей нет."
             exit 0
           fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/latest-vk.json
           git commit -m "Обновлена последняя запись VK"
-          git push
+
+          for push_attempt in 1 2 3; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            if [ "$push_attempt" -eq 3 ]; then
+              echo "::error::Failed to push VK update after 3 synchronized attempts."
+              exit 1
+            fi
+            sleep $((push_attempt * 5))
+          done
