@@ -35,27 +35,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          playwright_version="$(python - <<'PY'
+          timeout 8m python -m pip install --disable-pip-version-check -r tools/requirements-audit.txt
+          python - <<'PY'
+          import importlib.metadata
           from pathlib import Path
 
-          print(
-              next(
-                  line.split("==", 1)[1]
-                  for line in Path("tools/requirements-audit.txt").read_text().splitlines()
-                  if line.startswith("playwright==")
-              )
+          expected = next(
+              line.split("==", 1)[1]
+              for line in Path("tools/requirements-audit.txt").read_text().splitlines()
+              if line.startswith("playwright==")
           )
-          PY
-          )"
-
-          timeout 4m python -m pip install --disable-pip-version-check "playwright==${playwright_version}"
-
-          python - "$playwright_version" <<'PY'
-          import importlib.metadata
-          import sys
-
-          expected = sys.argv[1]
           actual = importlib.metadata.version("playwright")
           if actual != expected:
               raise SystemExit("Playwright version does not match requirements-audit.txt")
