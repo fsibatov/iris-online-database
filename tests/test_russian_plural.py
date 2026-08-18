@@ -59,7 +59,7 @@ class RussianPluralTests(unittest.TestCase):
         self.assertEqual(actual, cases)
 
     def test_node_output_is_decoded_as_utf8(self):
-        source = (ROOT / "tools" / "test_russian_plural.py").read_text(encoding="utf-8")
+        source = Path(__file__).read_text(encoding="utf-8")
         self.assertIn('encoding="utf-8"', source)
 
     def test_all_visible_count_labels_use_shared_helper(self):
