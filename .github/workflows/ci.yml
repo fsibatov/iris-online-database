@@ -147,9 +147,15 @@ jobs:
         shell: bash
         env:
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
+          PYTHONPATH: ${{ github.workspace }}/tools
         run: |
-          python -m compileall -q tools
-          timeout 10m "$RUNNER_TEMP/python-audit/bin/python" -B -m unittest discover -s tools -p 'test_*.py'
+          set -euo pipefail
+          python -m compileall -q tools tests
+          if find tools -maxdepth 1 -type f -name 'test_*.py' -print -quit | grep -q .; then
+            echo "::error::Python regression tests must live in tests/, not tools/."
+            exit 1
+          fi
+          timeout 10m "$RUNNER_TEMP/python-audit/bin/python" -B -m unittest discover -s tests -p 'test_*.py'
 
       - name: Ruff lint and formatting
         shell: bash
@@ -159,7 +165,7 @@ jobs:
 
       - name: Bandit
         run: |
-          "$RUNNER_TEMP/python-audit/bin/bandit" -q -r tools -x 'tools/test_*.py'
+          "$RUNNER_TEMP/python-audit/bin/bandit" -q -r tools
 
       - name: Full installed-environment dependency audit
         run: timeout 10m "$RUNNER_TEMP/python-audit/bin/pip-audit" --local --cache-dir "$RUNNER_TEMP/pip-audit-cache"
