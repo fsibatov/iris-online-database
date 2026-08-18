@@ -22,6 +22,28 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
         self.assertIn("BROWSER_*", workflow)
         self.assertIn("VK transient failure", workflow)
 
+    def test_stale_post_requires_three_consistent_fresh_scrapes_before_promotion(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("stale_confirmations=0", workflow)
+        self.assertIn("vk-stale-candidate-${attempt}.json", workflow)
+        self.assertIn('--output "$candidate_file"', workflow)
+        self.assertIn('stale_confirmations=$((stale_confirmations + 1))', workflow)
+        self.assertIn('if [ "$stale_confirmations" -eq 3 ]', workflow)
+        self.assertIn('cp -- "$stale_candidate_file" data/latest-vk.json', workflow)
+        self.assertIn("after 3 independent confirmations", workflow)
+        self.assertIn("confirmation counter reset", workflow)
+
+    def test_stale_candidate_is_validated_before_promotion(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("json.loads", workflow)
+        self.assertIn('payload.get("post_id")', workflow)
+        self.assertIn('payload.get("post_url")', workflow)
+        self.assertIn('payload.get("text")', workflow)
+        self.assertIn("https://vk.ru/wall-59626511_{post_id}", workflow)
+        self.assertIn("stale candidate JSON failed validation", workflow)
+
     def test_exhausted_transient_failure_is_warning_not_failed_run(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
