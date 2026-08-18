@@ -64,6 +64,9 @@ jobs:
         run: |
           set -euo pipefail
           transient_failure=0
+          stale_confirmations=0
+          stale_candidate_id=""
+          stale_candidate_file=""
 
           for attempt in 1 2 3; do
             echo "VK update attempt ${attempt}/3"
@@ -86,7 +89,56 @@ jobs:
               transient_failure=1
             else
               case "$category" in
-                EMPTY_PREVIEW|VK_UNAVAILABLE|STALE_POST|BROWSER_*)
+                STALE_POST)
+                  transient_failure=1
+                  candidate_file="$RUNNER_TEMP/vk-stale-candidate-${attempt}.json"
+                  rm -f -- "$candidate_file"
+
+                  set +e
+                  candidate_output="$(timeout 3m python -B tools/update_vk_news.py --output "$candidate_file" 2>&1)"
+                  candidate_exit=$?
+                  set -e
+                  printf '%s\n' "$candidate_output"
+
+                  if [ "$candidate_exit" -eq 0 ] && [ -f "$candidate_file" ]; then
+                    if candidate_id="$(python - "$candidate_file" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          post_id = payload.get("post_id")
+          post_url = payload.get("post_url")
+          text = str(payload.get("text") or "").strip()
+          if not isinstance(post_id, int) or isinstance(post_id, bool) or post_id <= 0:
+              raise SystemExit(2)
+          if post_url != f"https://vk.ru/wall-59626511_{post_id}":
+              raise SystemExit(3)
+          if not text:
+              raise SystemExit(4)
+          print(post_id)
+          PY
+          )"; then
+                      if [ -z "$stale_candidate_id" ]; then
+                        stale_candidate_id="$candidate_id"
+                        stale_confirmations=1
+                      elif [ "$candidate_id" = "$stale_candidate_id" ]; then
+                        stale_confirmations=$((stale_confirmations + 1))
+                      else
+                        echo "::warning::VK stale candidate changed from #${stale_candidate_id} to #${candidate_id}; confirmation counter reset."
+                        stale_candidate_id="$candidate_id"
+                        stale_confirmations=1
+                      fi
+                      stale_candidate_file="$candidate_file"
+                      echo "VK stale candidate #${candidate_id} confirmed ${stale_confirmations}/3."
+                    else
+                      echo "::warning::VK stale candidate JSON failed validation."
+                    fi
+                  else
+                    echo "::warning::VK stale candidate could not be collected (exit ${candidate_exit})."
+                  fi
+                  ;;
+                EMPTY_PREVIEW|VK_UNAVAILABLE|BROWSER_*)
                   transient_failure=1
                   ;;
                 *)
@@ -101,6 +153,12 @@ jobs:
               sleep $((attempt * 10))
             fi
           done
+
+          if [ "$stale_confirmations" -eq 3 ] && [ -n "$stale_candidate_file" ]; then
+            cp -- "$stale_candidate_file" data/latest-vk.json
+            echo "::notice::VK previous last-known-good post is stale. Consistently observed public post #${stale_candidate_id} promoted after 3 independent confirmations."
+            exit 0
+          fi
 
           if [ "$transient_failure" -eq 1 ]; then
             echo "::warning::VK is temporarily unavailable or the newest public preview cannot be extracted. Last-known-good data is preserved."
