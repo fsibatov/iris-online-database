@@ -80,11 +80,16 @@ jobs:
         run: |
           "$RUNNER_TEMP/python-audit/bin/python" -B tools/validate_workflows.py
 
-      - name: Install Playwright Chromium outside source
+      - name: Verify system Chromium browser
         shell: bash
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright
-        run: timeout 12m "$RUNNER_TEMP/python-audit/bin/python" -m playwright install --with-deps chromium
+        run: |
+          set -euo pipefail
+          browser="$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"
+          if [ -z "$browser" ]; then
+            echo "::error::System Chrome/Chromium was not found on the GitHub runner."
+            exit 1
+          fi
+          "$browser" --version
 
       - name: Install official Gitleaks binary with SHA-256 verification
         shell: bash
@@ -166,8 +171,6 @@ jobs:
 
       - name: Frontend syntax and deterministic Chromium smoke
         shell: bash
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright
         run: |
           node --check web/app.js
           timeout 10m "$RUNNER_TEMP/python-audit/bin/python" -B tools/frontend_smoke_test.py
