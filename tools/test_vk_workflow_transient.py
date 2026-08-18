@@ -28,7 +28,7 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
         self.assertIn("stale_confirmations=0", workflow)
         self.assertIn("vk-stale-candidate-${attempt}.json", workflow)
         self.assertIn('--output "$candidate_file"', workflow)
-        self.assertIn('stale_confirmations=$((stale_confirmations + 1))', workflow)
+        self.assertIn("stale_confirmations=$((stale_confirmations + 1))", workflow)
         self.assertIn('if [ "$stale_confirmations" -eq 3 ]', workflow)
         self.assertIn('cp -- "$stale_candidate_file" data/latest-vk.json', workflow)
         self.assertIn("after 3 independent confirmations", workflow)
