@@ -36,6 +36,7 @@ WALL_URLS = (
 POST_PATTERN = re.compile(rf"wall-{re.escape(COMMUNITY_ID)}_(\d+)", re.IGNORECASE)
 MAX_TEXT_LENGTH = 700
 MIN_PREVIEW_LENGTH = 2
+MIN_VISIBLE_POSTS_FOR_ROLLBACK = 2
 NAVIGATION_TIMEOUT_MS = 30000
 DOM_CONTENT_TIMEOUT_MS = 8000
 DOM_SETTLE_MS = 1500
@@ -61,6 +62,15 @@ POST_META_SELECTORS = (
     'meta[property="og:description"]',
     'meta[name="twitter:description"]',
     'meta[name="description"]',
+)
+PERSISTED_PAYLOAD_KEYS = (
+    "schema",
+    "community_url",
+    "post_id",
+    "post_url",
+    "text",
+    "published_at",
+    "source_updated_at",
 )
 CHARSET_PATTERN = re.compile(r"charset\s*=\s*[\\'\"]?([A-Za-z0-9._-]+)", re.IGNORECASE)
 
@@ -220,17 +230,54 @@ def _navigate_page(page, url: str) -> str:
     return error
 
 
-def _post_id_from_page(page) -> int:
+def _visible_post_ids_from_page(page) -> list[int]:
+    """Return only public post links that are actually visible on the wall."""
     values: list[str] = []
     with contextlib.suppress(PlaywrightError):
         values.extend(
             page.locator("a[href]").evaluate_all(
-                "els => els.map(el => el.getAttribute('href') || '')"
+                """
+                els => els
+                    .filter(el => {
+                        const href = el.getAttribute('href') || '';
+                        if (!href.includes('wall-59626511_')) return false;
+
+                        if (el.closest('[hidden], [aria-hidden="true"]')) return false;
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        if (
+                            style.display === 'none' ||
+                            style.visibility === 'hidden' ||
+                            style.opacity === '0' ||
+                            rect.width <= 0 ||
+                            rect.height <= 0
+                        ) return false;
+
+                        let node = el;
+                        for (
+                            let depth = 0;
+                            node && depth < 8;
+                            depth += 1, node = node.parentElement
+                        ) {
+                            const text = (node.innerText || '').toLowerCase();
+                            if (
+                                text.includes('запись удалена') ||
+                                text.includes('post deleted') ||
+                                text.includes('post has been deleted')
+                            ) return false;
+                        }
+                        return true;
+                    })
+                    .map(el => el.getAttribute('href') || '')
+                """
             )
         )
-    with contextlib.suppress(PlaywrightError):
-        values.append(page.content())
-    return latest_post_id(values)
+    return post_ids(values)
+
+
+def _post_id_from_page(page) -> int:
+    ids = _visible_post_ids_from_page(page)
+    return ids[-1] if ids else 0
 
 
 def _decode_http_body(payload: bytes, headers: dict[str, str] | None = None) -> str:
@@ -345,35 +392,47 @@ def _post_text_from_wall(page, post_id: int) -> str:
     """Read the matching post text from the already loaded wall when possible."""
     needle = f"wall-{COMMUNITY_ID}_{post_id}"
     try:
-        link = page.locator(f'a[href*="{needle}"]').first
-        if link.count() == 0:
-            return ""
-        value = link.evaluate(
-            """
-            anchor => {
-                let node = anchor;
-                const selector = [
-                    '[data-testid="post_text"]',
-                    '[data-testid="wall_post_text"]',
-                    '.wall_post_text',
-                    '[class*="wall_post_text"]',
-                    '[class*="PostText"]',
-                    '[class*="post_text"]'
-                ].join(', ');
+        links = page.locator(f'a[href*="{needle}"]')
+        count = min(links.count(), 20)
+        for index in range(count):
+            link = links.nth(index)
+            if not link.is_visible(timeout=500):
+                continue
+            value = link.evaluate(
+                """
+                anchor => {
+                    let node = anchor;
+                    const selector = [
+                        '[data-testid="post_text"]',
+                        '[data-testid="wall_post_text"]',
+                        '.wall_post_text',
+                        '[class*="wall_post_text"]',
+                        '[class*="PostText"]',
+                        '[class*="post_text"]'
+                    ].join(', ');
 
-                for (let depth = 0; node && depth < 9; depth += 1, node = node.parentElement) {
-                    const candidate = node.matches?.(selector) ? node : node.querySelector?.(selector);
-                    if (!candidate) continue;
-                    const text = candidate.innerText || candidate.textContent || '';
-                    if (text.trim()) return text;
+                    for (
+                        let depth = 0;
+                        node && depth < 9;
+                        depth += 1, node = node.parentElement
+                    ) {
+                        const candidate = node.matches?.(selector)
+                            ? node
+                            : node.querySelector?.(selector);
+                        if (!candidate) continue;
+                        const text = candidate.innerText || candidate.textContent || '';
+                        if (text.trim()) return text;
+                    }
+                    return '';
                 }
-                return '';
-            }
-            """
-        )
+                """
+            )
+            text = useful_text(value or "")
+            if text:
+                return text
     except PlaywrightError:
         return ""
-    return useful_text(value or "")
+    return ""
 
 
 def _wait_for_post_text(page, fallback: str = "") -> str:
@@ -408,6 +467,8 @@ def scrape_latest_post() -> dict[str, object]:
         )
         found_id = 0
         wall_page = None
+        visible_wall_ids: list[int] = []
+        wall_snapshot_trusted = False
         diagnostics: list[str] = []
 
         try:
@@ -415,13 +476,19 @@ def scrape_latest_post() -> dict[str, object]:
                 page = context.new_page()
                 page.set_default_timeout(5000)
                 navigation_error = _navigate_page(page, wall_url)
-                found_id = _post_id_from_page(page)
+                page_ids = _visible_post_ids_from_page(page)
+                found_id = page_ids[-1] if page_ids else 0
                 if navigation_error:
                     diagnostics.append(
                         f"browser {wall_url.split('/')[2]}: {navigation_error}"
                     )
                 if found_id:
                     wall_page = page
+                    visible_wall_ids = page_ids
+                    wall_snapshot_trusted = (
+                        not navigation_error
+                        and len(page_ids) >= MIN_VISIBLE_POSTS_FOR_ROLLBACK
+                    )
                     break
 
                 page.close()
@@ -494,6 +561,8 @@ def scrape_latest_post() -> dict[str, object]:
                 .replace(microsecond=0)
                 .isoformat()
                 .replace("+00:00", "Z"),
+                "_visible_wall_ids": visible_wall_ids,
+                "_wall_snapshot_trusted": wall_snapshot_trusted,
             }
         finally:
             browser.close()
@@ -513,8 +582,35 @@ def comparable(payload: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _persisted_payload(payload: dict[str, object]) -> dict[str, object]:
+    return {key: payload.get(key, "") for key in PERSISTED_PAYLOAD_KEYS}
+
+
+def _trusted_deleted_post_rollback(
+    payload: dict[str, object], old_id: int, new_id: int
+) -> bool:
+    if payload.get("_wall_snapshot_trusted") is not True:
+        return False
+    raw_ids = payload.get("_visible_wall_ids")
+    if not isinstance(raw_ids, list):
+        return False
+    visible_ids = sorted(
+        {
+            value
+            for value in raw_ids
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        }
+    )
+    return (
+        len(visible_ids) >= MIN_VISIBLE_POSTS_FOR_ROLLBACK
+        and new_id == visible_ids[-1]
+        and old_id not in visible_ids
+    )
+
+
 def update_file(output: Path, payload: dict[str, object]) -> bool:
-    validate_payload(payload)
+    persisted = _persisted_payload(payload)
+    validate_payload(persisted)
     old: dict[str, object] = {}
     if output.exists():
         try:
@@ -522,22 +618,28 @@ def update_file(output: Path, payload: dict[str, object]) -> bool:
         except (OSError, json.JSONDecodeError):
             old = {}
     old_id = old.get("post_id")
-    new_id = payload.get("post_id")
+    new_id = persisted.get("post_id")
     if isinstance(old_id, int) and isinstance(new_id, int) and new_id < old_id:
-        raise RuntimeError(
-            f"VK returned older post #{new_id} while last-known-good is #{old_id}; "
-            "existing data was preserved"
-        )
-    if comparable(old) == comparable(payload):
-        print(f"VK: без изменений, последняя запись #{payload['post_id']}")
+        if _trusted_deleted_post_rollback(payload, old_id, new_id):
+            print(
+                f"VK: предыдущая запись #{old_id} отсутствует среди видимых "
+                f"записей стены; актуальная запись #{new_id} восстановлена"
+            )
+        else:
+            raise RuntimeError(
+                f"VK returned older post #{new_id} while last-known-good is #{old_id}; "
+                "existing data was preserved"
+            )
+    if comparable(old) == comparable(persisted):
+        print(f"VK: без изменений, последняя запись #{persisted['post_id']}")
         return False
     output.parent.mkdir(parents=True, exist_ok=True)
     temp = output.with_suffix(output.suffix + ".tmp")
     temp.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(persisted, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     temp.replace(output)
-    print(f"VK: обновлена запись #{payload['post_id']}")
+    print(f"VK: обновлена запись #{persisted['post_id']}")
     return True
 
 
