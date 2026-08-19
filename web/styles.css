@@ -45,7 +45,7 @@ html[data-theme="light"] {
 }
 
 * { box-sizing: border-box; }
-html { min-width: 320px; min-height: 100%; background: var(--bg); scroll-behavior: smooth; }
+html { min-width: 320px; min-height: 100%; background: var(--bg); }
 body {
   margin: 0;
   min-height: 100vh;

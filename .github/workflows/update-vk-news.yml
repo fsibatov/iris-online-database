@@ -115,7 +115,9 @@ jobs:
             fi
 
             if ! candidate_state="$(python - data/latest-vk.json "$candidate_file" <<'PY'
+          import html
           import json
+          import re
           import sys
           from pathlib import Path
 
@@ -123,6 +125,13 @@ jobs:
           candidate_path = Path(sys.argv[2])
           current = json.loads(current_path.read_text(encoding="utf-8"))
           candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+
+          BR_TAG = re.compile(r"<br\s*/?>", re.IGNORECASE)
+          HTML_TAG = re.compile(r"<[^>]+>")
+          DECORATIVE_SYMBOL = re.compile(
+              "[\u2600-\u27BF\U0001F300-\U0001FAFF\uFE0F\u200D]"
+          )
+          MARKUP = re.compile(r"[*_`~]+")
 
           def validate(payload):
               post_id = payload.get("post_id")
@@ -136,22 +145,35 @@ jobs:
                   raise SystemExit(4)
               return post_id
 
+          def semantic_text(value):
+              text = BR_TAG.sub("\n", str(value or ""))
+              text = HTML_TAG.sub(" ", html.unescape(text))
+              text = DECORATIVE_SYMBOL.sub("", text)
+              text = MARKUP.sub("", text)
+              return " ".join(text.split()).casefold()
+
           current_id = validate(current)
           candidate_id = validate(candidate)
-          comparable_keys = (
+          identity_keys = (
               "schema",
               "community_url",
               "post_id",
               "post_url",
-              "text",
               "published_at",
+          )
+
+          same_identity = all(
+              current.get(key, "") == candidate.get(key, "") for key in identity_keys
+          )
+          same_text = semantic_text(current.get("text")) == semantic_text(
+              candidate.get("text")
           )
 
           if candidate_id < current_id:
               action = "stale"
           elif candidate_id > current_id:
               action = "promote"
-          elif all(current.get(key, "") == candidate.get(key, "") for key in comparable_keys):
+          elif same_identity and same_text:
               action = "same"
           else:
               action = "promote"

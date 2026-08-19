@@ -96,6 +96,8 @@
   const infoDialogBody = document.getElementById('infoDialogBody');
   const toast = document.getElementById('toast');
   const numberFormatter = new Intl.NumberFormat('ru-RU');
+  const decimalFormatter = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
+  const dateFormatter = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
   const navItems = [
     { route: 'items', label: 'Предметы', icon: 'item' },
@@ -486,11 +488,8 @@
       ? `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="https://github.com/fsibatov/iris-online-database/releases/latest" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`
       : '';
     const serverDifference = `<section class="home-server-difference home-compact-section" aria-labelledby="serverDifferenceTitle">
-      <h2 id="serverDifferenceTitle">The Original и Iris Kiss Kiss: в чём разница?</h2>
-      <p>The Original и Iris Kiss Kiss — два сервера Iris Online. Выберите вверху тот сервер, на котором играете.</p>
-      <p>Предметы и их характеристики одинаковы. Могут отличаться монстры и способы получения предметов: выпадение с монстров, мировая добыча, награды за задания и содержимое сундуков.</p>
-      <p>После переключения база автоматически показывает монстров и источники получения для выбранного сервера.</p>
-      <p class="home-server-counts">Сейчас в базе: The Original — 609 монстров · Iris Kiss Kiss — 677 монстров.</p>
+      <h2 id="serverDifferenceTitle">Сервер</h2>
+      <p>Выберите The Original или Iris Kiss Kiss в верхней панели. Характеристики предметов одинаковы, а монстры и источники получения могут отличаться. База автоматически показывает данные выбранного сервера.</p>
     </section>`;
     const vkNews = `<section class="home-vk-news home-compact-section" aria-labelledby="vkNewsTitle">
       <div class="home-section-heading home-section-heading--news">
@@ -519,7 +518,7 @@
       <div class="home-primary">
         <p class="eyebrow">Iris Online</p>
         <h1>Поиск по Iris Online</h1>
-        <p>Предметы, монстры и ID. Рецепты доступны в отдельном разделе.</p>
+        <p>Предметы, монстры и ID. Рецепты — в отдельном разделе.</p>
         <div id="homeSearchHost" class="home-search-host"></div>
       </div>
       ${updateNotice}
@@ -1008,13 +1007,13 @@
     const milliseconds = Number(value);
     if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '';
     if (milliseconds % 1000 === 0) return formatDurationSeconds(milliseconds / 1000);
-    return `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(milliseconds / 1000)} с.`;
+    return `${decimalFormatter.format(milliseconds / 1000)} с.`;
   }
 
   function formatAttackRange(value) {
     const raw = Number(value);
     if (!Number.isFinite(raw) || raw <= 0) return '';
-    return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(raw * 0.01);
+    return decimalFormatter.format(raw * 0.01);
   }
 
   function itemPresentation(item, bonuses) {
@@ -1361,7 +1360,7 @@
       </header>
       ${gameProperties(presentation, recipeContext ? 'Характеристики рецепта' : 'Характеристики предмета', data.set ? setContent(item, data.set) : '')}
       ${recipeContext ? recipeProductHTML(data.recipeProduct, item) : ''}
-      ${recipeMaterialsHTML(data.recipe)}
+      ${recipeContext ? recipeMaterialsHTML(data.recipe) : ''}
       ${chestContentsHTML(data.chest)}
       ${recipeContext && drops.length === 1 ? `<section class="single-source-block" aria-labelledby="singleRecipeSourceTitle"><h2 id="singleRecipeSourceTitle">Источник получения</h2><div class="source-list">${sourceRow(drops[0])}</div></section>` : drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary)}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p></div><button class="secondary-button" type="button" data-open-details="item-sources">Показать все источники</button></section>` : ''}
       <section class="detail-accordions">
@@ -1722,7 +1721,7 @@
     }
     const data = await api('/api/favorites', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys, server: state.server, page: state.favoritePage, pageSize: FAVORITES_PAGE_SIZE }) });
     state.favoritePage = Math.max(1, Number(data.page || 1));
-    const rows = (data.rows || []).map(row => row.kind === 'monster' ? monsterRow(row) : itemRow(row));
+    const rows = (data.rows || []).map(row => row.kind === 'monster' ? monsterRow(row) : row.kind === 'recipe' ? recipeRow(row) : itemRow(row));
     const missing = Number(data.missing || 0);
     main.innerHTML = `<section class="page">${pageHeader('Избранное', `В избранном: ${formatNumber(data.total)}.`)}${missing ? `<p class="muted-copy">Не удалось показать ${formatCount(missing, 'запись', 'записи', 'записей')}. Эти записи остаются сохранёнными в профиле.</p>` : ''}<div class="result-list">${rows.join('')}</div>${pagination(data.page, data.pages, 'favorite-page')}</section>`;
     positionSearchWidget(false);
@@ -1735,11 +1734,13 @@
     const previousRoute = state.route;
     const raw = decodeRouteHash();
     const targetPath = raw.split('?')[0];
+    const visiblePage = main.querySelector('.page');
     const visibleDetail = main.querySelector('.detail-page');
     const visibleCatalog = main.querySelector('.catalog-page');
     const preserveItemDetail = Boolean(visibleDetail && ((visibleDetail.dataset.route?.startsWith('item/') && targetPath.startsWith('item/')) || (visibleDetail.dataset.route?.startsWith('recipe/') && targetPath.startsWith('recipe/'))));
     const preserveCatalogPage = Boolean(visibleCatalog && ['items', 'monsters', 'recipes'].includes(targetPath));
-    const preserveVisiblePage = preserveItemDetail || preserveCatalogPage;
+    const preservePageTransition = Boolean(visiblePage && !preserveItemDetail && !preserveCatalogPage && targetPath !== 'home');
+    const preserveVisiblePage = preserveItemDetail || preserveCatalogPage || preservePageTransition;
     const visibleRoute = visibleDetail?.dataset.route || visibleCatalog?.dataset.catalogKind || previousRoute;
 
     state.routeController?.abort();
@@ -1750,10 +1751,9 @@
       state.monsterDrops = null;
       state.monsterWorldDrops = null;
     }
-    if (preserveItemDetail) visibleDetail.setAttribute('aria-busy', 'true');
-    if (preserveCatalogPage) {
-      visibleCatalog.setAttribute('aria-busy', 'true');
-      visibleCatalog.setAttribute('inert', '');
+    if (preserveVisiblePage && visiblePage) {
+      visiblePage.setAttribute('aria-busy', 'true');
+      visiblePage.setAttribute('inert', '');
     }
     const controller = new AbortController();
     state.routeController = controller;
@@ -1788,7 +1788,13 @@
         const id = path.slice(5);
         const data = await api(`/api/items/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
         if (controller.signal.aborted || requestId !== state.requestId) return;
-        itemDetail(data);
+        if (Array.isArray(data.recipe) && data.recipe.length) {
+          const recipeRoute = `recipe/${Number(data.item?.id || id)}`;
+          state.route = recipeRoute;
+          replaceRouteHash(recipeRoute);
+          renderNavigation();
+          itemDetail(data, 'recipes');
+        } else itemDetail(data);
       } else if (path.startsWith('recipe/')) {
         const id = path.slice(7);
         const data = await api(`/api/items/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
@@ -1807,13 +1813,17 @@
       if (error?.name === 'AbortError') return;
       if (requestId !== state.requestId) return;
       if (preserveVisiblePage) {
-        visibleDetail?.removeAttribute('aria-busy');
-        visibleCatalog?.removeAttribute('aria-busy');
-        visibleCatalog?.removeAttribute('inert');
+        visiblePage?.removeAttribute('aria-busy');
+        visiblePage?.removeAttribute('inert');
         state.route = visibleRoute;
         replaceRouteHash(visibleRoute);
         renderNavigation();
-        showToast(preserveItemDetail ? 'Не удалось открыть предмет. Повторите переход.' : 'Не удалось открыть каталог. Повторите переход.');
+        const failureMessage = preserveItemDetail
+          ? 'Не удалось открыть предмет. Попробуйте ещё раз.'
+          : preserveCatalogPage
+            ? 'Не удалось открыть каталог. Попробуйте ещё раз.'
+            : 'Не удалось открыть страницу. Попробуйте ещё раз.';
+        showToast(failureMessage);
         return;
       }
       errorPage(error);
@@ -1958,7 +1968,7 @@
   function formatVkNewsDate(value) {
     const parsed = new Date(String(value || ''));
     if (Number.isNaN(parsed.getTime())) return '';
-    return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(parsed);
+    return dateFormatter.format(parsed);
   }
 
   function renderVkNews() {
@@ -2238,7 +2248,7 @@
     const openDetails = event.target.closest('[data-open-details]');
     if (openDetails) {
       const target = main.querySelector(`.${openDetails.dataset.openDetails}`);
-      if (target) { target.open = true; target.scrollIntoView({ block: 'start', behavior: 'smooth' }); target.querySelector('summary')?.focus(); }
+      if (target) { target.open = true; target.scrollIntoView({ block: 'start' }); target.querySelector('summary')?.focus(); }
       return;
     }
     const sourceMore = event.target.closest('[data-source-more]');
