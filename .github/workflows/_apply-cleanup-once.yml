@@ -1,0 +1,47 @@
+name: One-shot UI performance cleanup
+
+on:
+  push:
+    branches: [agent/ui-performance-cleanup]
+    paths:
+      - '.github/workflows/_apply-cleanup-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Apply focused cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -B tools/_apply_cleanup_once.py
+          python -m py_compile tools/update_vk_news.py tests/test_cleanup_contract.py
+          PYTHONPATH="$GITHUB_WORKSPACE/tools" python -m unittest discover -s tests -p 'test_cleanup_contract.py'
+          node --check web/app.js
+          git diff --check
+
+      - name: Commit focused result
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/app.js web/styles.css tools/update_vk_news.py tests/test_cleanup_contract.py CONTRIBUTING.md
+          git rm tools/_apply_cleanup_once.py
+          git diff --cached --check
+          git commit -m "perf: убрать флик, дублирование и косметический шум"
+          git push origin HEAD:agent/ui-performance-cleanup
