@@ -36,6 +36,13 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
         self.assertIn("BROWSER_*", workflow)
         self.assertIn("VK transient failure", workflow)
 
+    def test_scheduler_parses_ascii_category_from_stderr(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("[string]$Result.Stderr", workflow)
+        self.assertIn("[A-Z0-9_:.-]*", workflow)
+        self.assertNotIn('"Ошибка обновления VK \\[([^\\]]*)\\]"', workflow)
+
     def test_lower_id_requires_three_consistent_fresh_scrapes_before_promotion(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
