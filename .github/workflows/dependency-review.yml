@@ -30,14 +30,12 @@ jobs:
 
           path = Path('tools/_apply_product_patch.py')
           text = path.read_text(encoding='utf-8')
+          start = text.index('workflow_path = ROOT / ".github" / "workflows" / "update-vk-news.yml"')
+          end = text.index('# Temporary transport files must never survive in the product diff.', start)
+          text = text[:start] + text[end:]
           text = text.replace(
-              'old = """import json\nimport sys\nfrom pathlib import Path\n"""',
-              'old = """          import json\n          import sys\n          from pathlib import Path\n"""',
-              1,
-          )
-          text = text.replace(
-              'new = """import html\nimport json\nimport re\nimport sys\nfrom pathlib import Path\n"""',
-              'new = """          import html\n          import json\n          import re\n          import sys\n          from pathlib import Path\n"""',
+              'run("git", "checkout", "origin/main", "--", ".github/workflows/dependency-review.yml")\n',
+              '',
               1,
           )
           path.write_text(text, encoding='utf-8')
