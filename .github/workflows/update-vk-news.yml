@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   update:
-    runs-on: ubuntu-24.04
+    runs-on: windows-2025
     timeout-minutes: 15
     permissions:
       contents: write
@@ -37,84 +37,62 @@ jobs:
           cache-dependency-path: tools/requirements-audit.txt
 
       - name: Настроить Playwright и системный Chrome
-        shell: bash
+        shell: powershell
         run: |
-          set -euo pipefail
-          timeout 8m python -m pip install --disable-pip-version-check -r tools/requirements-audit.txt
-          python - <<'PY'
-          import importlib.metadata
-          from pathlib import Path
+          $ErrorActionPreference = "Stop"
 
-          expected = next(
-              line.split("==", 1)[1]
-              for line in Path("tools/requirements-audit.txt").read_text().splitlines()
-              if line.startswith("playwright==")
+          python -m pip install --disable-pip-version-check --timeout 60 --retries 3 -r tools\requirements-audit.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          python -B tools\verify_python_environment.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          python -m pip check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $ChromeCandidates = New-Object System.Collections.Generic.List[string]
+          if ($env:ProgramFiles) {
+            $ChromeCandidates.Add((Join-Path $env:ProgramFiles "Google\Chrome\Application\chrome.exe"))
+          }
+          if (${env:ProgramFiles(x86)}) {
+            $ChromeCandidates.Add((Join-Path ${env:ProgramFiles(x86)} "Google\Chrome\Application\chrome.exe"))
+          }
+
+          $Chrome = $ChromeCandidates |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+            Select-Object -First 1
+
+          if (-not $Chrome) {
+            $ChromeCommand = Get-Command chrome.exe -CommandType Application -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if ($ChromeCommand) { $Chrome = $ChromeCommand.Source }
+          }
+
+          if (-not $Chrome) {
+            throw "System Chrome was not found on the Windows runner."
+          }
+
+          & $Chrome --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [IO.File]::AppendAllText(
+            $env:GITHUB_ENV,
+            "PLAYWRIGHT_CHROMIUM_EXECUTABLE=$Chrome" + [Environment]::NewLine,
+            $Utf8NoBom
           )
-          actual = importlib.metadata.version("playwright")
-          if actual != expected:
-              raise SystemExit("Playwright version does not match requirements-audit.txt")
-          PY
-
-          chrome="$(command -v google-chrome || command -v chromium || true)"
-          if [ -z "$chrome" ]; then
-            echo "::error::System Chrome/Chromium was not found on the GitHub runner."
-            exit 1
-          fi
-
-          "$chrome" --version
-          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE=$chrome" >> "$GITHUB_ENV"
 
       - name: Получить последнюю запись VK
-        shell: bash
+        shell: powershell
         run: |
-          set -euo pipefail
-          transient_failure=0
-          stale_confirmations=0
-          stale_candidate_id=""
+          $ErrorActionPreference = "Stop"
+          $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          $TransientFailure = $false
+          $StaleConfirmations = 0
+          $StaleCandidateId = $null
 
-          for attempt in 1 2 3; do
-            echo "VK update attempt ${attempt}/3"
-            candidate_file="$RUNNER_TEMP/vk-candidate-${attempt}.json"
-            rm -f -- "$candidate_file"
-
-            set +e
-            output="$(timeout 3m python -B tools/update_vk_news.py --output "$candidate_file" 2>&1)"
-            exit_code=$?
-            set -e
-            printf '%s\n' "$output"
-
-            if [ "$exit_code" -ne 0 ]; then
-              category="$(printf '%s\n' "$output" | sed -n 's/.*Ошибка обновления VK \[\([^]]*\)\].*/\1/p' | tail -n 1)"
-              transient_failure=0
-
-              if [ "$exit_code" -eq 124 ]; then
-                category="TIMEOUT"
-                transient_failure=1
-              else
-                case "$category" in
-                  EMPTY_PREVIEW|VK_UNAVAILABLE|BROWSER_*)
-                    transient_failure=1
-                    ;;
-                  *)
-                    echo "::error::VK updater failed with non-transient category: ${category:-UNKNOWN} (exit ${exit_code})."
-                    exit "$exit_code"
-                    ;;
-                esac
-              fi
-
-              if [ "$attempt" -lt 3 ]; then
-                echo "VK transient failure [${category}], retrying."
-                sleep $((attempt * 10))
-              fi
-              continue
-            fi
-
-            if [ ! -f "$candidate_file" ]; then
-              echo "::error::VK updater succeeded without producing a candidate payload."
-              exit 1
-            fi
-
-            if ! candidate_state="$(python - data/latest-vk.json "$candidate_file" <<'PY'
+          $ValidatorPath = Join-Path $env:RUNNER_TEMP "vk-candidate-state.py"
+          $ValidatorSource = @'
           import html
           import json
           import re
@@ -179,92 +157,222 @@ jobs:
               action = "promote"
 
           print(candidate_id, action)
-          PY
-          )"; then
-              echo "::error::VK candidate/current JSON validation failed."
+          '@
+          [IO.File]::WriteAllText($ValidatorPath, $ValidatorSource, $Utf8NoBom)
+
+          function Invoke-VkUpdater {
+            param(
+              [Parameter(Mandatory = $true)][string]$CandidateFile,
+              [int]$TimeoutSeconds = 180
+            )
+
+            $PythonCommand = Get-Command python.exe -CommandType Application -ErrorAction Stop |
+              Select-Object -First 1
+            $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $StartInfo.FileName = $PythonCommand.Source
+            $StartInfo.Arguments = '-B tools\update_vk_news.py --output "' + $CandidateFile + '"'
+            $StartInfo.WorkingDirectory = $env:GITHUB_WORKSPACE
+            $StartInfo.UseShellExecute = $false
+            $StartInfo.CreateNoWindow = $true
+            $StartInfo.RedirectStandardOutput = $true
+            $StartInfo.RedirectStandardError = $true
+            $StartInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
+            $StartInfo.StandardErrorEncoding = [Text.Encoding]::UTF8
+            $StartInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8"
+            $StartInfo.EnvironmentVariables["PYTHONUTF8"] = "1"
+
+            $Process = New-Object System.Diagnostics.Process
+            $Process.StartInfo = $StartInfo
+            try {
+              if (-not $Process.Start()) {
+                throw "VK updater process did not start."
+              }
+              $StdoutTask = $Process.StandardOutput.ReadToEndAsync()
+              $StderrTask = $Process.StandardError.ReadToEndAsync()
+              $TimedOut = -not $Process.WaitForExit($TimeoutSeconds * 1000)
+              if ($TimedOut) {
+                $Taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
+                if (Test-Path -LiteralPath $Taskkill -PathType Leaf) {
+                  & $Taskkill /PID $Process.Id /T /F *> $null
+                }
+                if (-not $Process.HasExited) { $Process.Kill() }
+              }
+              [void]$Process.WaitForExit()
+              $ExitCode = if ($TimedOut) { -1 } else { $Process.ExitCode }
+              return [pscustomobject]@{
+                TimedOut = $TimedOut
+                ExitCode = $ExitCode
+                Stdout = [string]$StdoutTask.GetAwaiter().GetResult()
+                Stderr = [string]$StderrTask.GetAwaiter().GetResult()
+              }
+            } finally {
+              $Process.Dispose()
+            }
+          }
+
+          for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
+            Write-Host "VK update attempt $Attempt/3"
+            $CandidateFile = Join-Path $env:RUNNER_TEMP "vk-candidate-$Attempt.json"
+            Remove-Item -LiteralPath $CandidateFile -Force -ErrorAction SilentlyContinue
+
+            $Result = Invoke-VkUpdater -CandidateFile $CandidateFile
+            $Output = (([string]$Result.Stdout) + [Environment]::NewLine + ([string]$Result.Stderr)).Trim()
+            if ($Output) { Write-Host $Output }
+
+            if ($Result.TimedOut -or $Result.ExitCode -ne 0) {
+              $Category = ""
+              $TransientFailure = $false
+
+              if ($Result.TimedOut) {
+                $Category = "TIMEOUT"
+                $TransientFailure = $true
+              } else {
+                $CategoryMatch = [Regex]::Match(
+                  $Output,
+                  "Ошибка обновления VK \[([^\]]*)\]",
+                  [Text.RegularExpressions.RegexOptions]::IgnoreCase
+                )
+                if ($CategoryMatch.Success) {
+                  $Category = $CategoryMatch.Groups[1].Value
+                }
+
+                if (
+                  $Category -eq "EMPTY_PREVIEW" -or
+                  $Category -eq "VK_UNAVAILABLE" -or
+                  $Category -like "BROWSER_*"
+                ) {
+                  $TransientFailure = $true
+                } else {
+                  $CategoryLabel = if ($Category) { $Category } else { "UNKNOWN" }
+                  Write-Host "::error::VK updater failed with non-transient category: $CategoryLabel (exit $($Result.ExitCode))."
+                  exit $Result.ExitCode
+                }
+              }
+
+              if ($Attempt -lt 3) {
+                Write-Host "VK transient failure [$Category], retrying."
+                Start-Sleep -Seconds ($Attempt * 10)
+              }
+              continue
+            }
+
+            if (-not (Test-Path -LiteralPath $CandidateFile -PathType Leaf)) {
+              throw "VK updater succeeded without producing a candidate payload."
+            }
+
+            $CandidateStateOutput = & python $ValidatorPath "data\latest-vk.json" $CandidateFile 2>&1
+            $CandidateStateExit = $LASTEXITCODE
+            $CandidateState = (($CandidateStateOutput | Out-String).Trim())
+            if ($CandidateStateExit -ne 0) {
+              Write-Host "::error::VK candidate/current JSON validation failed."
               exit 1
-            fi
+            }
 
-            candidate_id="${candidate_state%% *}"
-            candidate_action="${candidate_state#* }"
-            transient_failure=0
+            if ($CandidateState -notmatch '^([0-9]+)\s+(same|promote|stale)$') {
+              throw "Unexpected VK candidate state: $CandidateState"
+            }
 
-            case "$candidate_action" in
-              same)
-                echo "VK: без изменений, последняя запись #${candidate_id}"
+            $CandidateId = [int64]$Matches[1]
+            $CandidateAction = $Matches[2]
+            $TransientFailure = $false
+
+            switch ($CandidateAction) {
+              "same" {
+                Write-Host "VK: без изменений, последняя запись #$CandidateId"
                 exit 0
-                ;;
-              promote)
-                cp -- "$candidate_file" data/latest-vk.json
-                echo "VK: подтверждена актуальная запись #${candidate_id}"
+              }
+              "promote" {
+                Copy-Item -LiteralPath $CandidateFile -Destination "data\latest-vk.json" -Force
+                Write-Host "VK: подтверждена актуальная запись #$CandidateId"
                 exit 0
-                ;;
-              stale)
-                if [ -z "$stale_candidate_id" ]; then
-                  stale_candidate_id="$candidate_id"
-                  stale_confirmations=1
-                elif [ "$candidate_id" = "$stale_candidate_id" ]; then
-                  stale_confirmations=$((stale_confirmations + 1))
-                else
-                  echo "::warning::VK lower-ID candidate changed from #${stale_candidate_id} to #${candidate_id}; confirmation counter reset."
-                  stale_candidate_id="$candidate_id"
-                  stale_confirmations=1
-                fi
+              }
+              "stale" {
+                if ($null -eq $StaleCandidateId) {
+                  $StaleCandidateId = $CandidateId
+                  $StaleConfirmations = 1
+                } elseif ($CandidateId -eq $StaleCandidateId) {
+                  $StaleConfirmations++
+                } else {
+                  Write-Host "::warning::VK lower-ID candidate changed from #$StaleCandidateId to #$CandidateId; confirmation counter reset."
+                  $StaleCandidateId = $CandidateId
+                  $StaleConfirmations = 1
+                }
 
-                echo "VK lower-ID candidate #${candidate_id} confirmed ${stale_confirmations}/3."
-                if [ "$stale_confirmations" -eq 3 ]; then
-                  cp -- "$candidate_file" data/latest-vk.json
-                  echo "::notice::VK previous last-known-good post is no longer current. Public post #${candidate_id} promoted after 3 independent confirmations."
+                Write-Host "VK lower-ID candidate #$CandidateId confirmed $StaleConfirmations/3."
+                if ($StaleConfirmations -eq 3) {
+                  Copy-Item -LiteralPath $CandidateFile -Destination "data\latest-vk.json" -Force
+                  Write-Host "::notice::VK previous last-known-good post is no longer current. Public post #$CandidateId promoted after 3 independent confirmations."
                   exit 0
-                fi
-                ;;
-              *)
-                echo "::error::Unexpected VK candidate action: ${candidate_action}."
-                exit 1
-                ;;
-            esac
+                }
+              }
+              default {
+                throw "Unexpected VK candidate action: $CandidateAction"
+              }
+            }
 
-            if [ "$attempt" -lt 3 ]; then
-              sleep $((attempt * 10))
-            fi
-          done
+            if ($Attempt -lt 3) {
+              Start-Sleep -Seconds ($Attempt * 10)
+            }
+          }
 
-          if [ "$stale_confirmations" -gt 0 ]; then
-            echo "::warning::Lower-ID VK candidate was not confirmed 3 times. Last-known-good data is preserved."
+          if ($StaleConfirmations -gt 0) {
+            Write-Host "::warning::Lower-ID VK candidate was not confirmed 3 times. Last-known-good data is preserved."
             exit 0
-          fi
+          }
 
-          if [ "$transient_failure" -eq 1 ]; then
-            echo "::warning::VK is temporarily unavailable or the newest public preview cannot be extracted. Last-known-good data is preserved."
+          if ($TransientFailure) {
+            Write-Host "::warning::VK is temporarily unavailable or the newest public preview cannot be extracted. Last-known-good data is preserved."
             exit 0
-          fi
+          }
 
-          echo "::error::VK updater ended in an unexpected state."
-          exit 1
+          throw "VK updater ended in an unexpected state."
 
       - name: Сохранить изменение
-        shell: bash
+        shell: powershell
         run: |
-          set -euo pipefail
-          if git diff --quiet -- data/latest-vk.json; then
-            echo "Новых записей нет."
+          $ErrorActionPreference = "Stop"
+
+          & git diff --quiet -- data/latest-vk.json
+          $DiffExit = $LASTEXITCODE
+          if ($DiffExit -eq 0) {
+            Write-Host "Новых записей нет."
             exit 0
-          fi
+          }
+          if ($DiffExit -ne 1) {
+            throw "git diff failed with exit code $DiffExit."
+          }
 
           git config user.name "github-actions[bot]"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/latest-vk.json
-          git commit -m "Обновлена последняя запись VK"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          for push_attempt in 1 2 3; do
+          git add -- data/latest-vk.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          git -c commit.gpgSign=false commit -m "Обновлена последняя запись VK"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          for ($PushAttempt = 1; $PushAttempt -le 3; $PushAttempt++) {
             git fetch origin main
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to fetch origin/main."
+            }
+
             git rebase origin/main
-            if git push origin HEAD:main; then
+            if ($LASTEXITCODE -ne 0) {
+              git rebase --abort 2>$null
+              throw "Failed to rebase VK update onto origin/main."
+            }
+
+            git push origin HEAD:main
+            if ($LASTEXITCODE -eq 0) {
               exit 0
-            fi
-            if [ "$push_attempt" -eq 3 ]; then
-              echo "::error::Failed to push VK update after 3 synchronized attempts."
-              exit 1
-            fi
-            sleep $((push_attempt * 5))
-          done
+            }
+
+            if ($PushAttempt -eq 3) {
+              throw "Failed to push VK update after 3 synchronized attempts."
+            }
+
+            Start-Sleep -Seconds ($PushAttempt * 5)
+          }
