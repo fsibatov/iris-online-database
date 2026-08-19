@@ -15,6 +15,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
+CURRENT_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 WEB_ROOT = ROOT / "web"
 
 
@@ -163,8 +164,8 @@ class FixtureHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/update-check":
             self.send_json(
                 {
-                    "currentVersion": "2.0.0",
-                    "latestVersion": "2.0.0",
+                    "currentVersion": CURRENT_VERSION,
+                    "latestVersion": CURRENT_VERSION,
                     "updateAvailable": False,
                     "checked": True,
                 }
@@ -304,7 +305,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 page.wait_for_selector(".vk-news-card")
                 require(
                     page.locator(".version-status-number").inner_text()
-                    == "Версия 2.0.0",
+                    == f"Версия {CURRENT_VERSION}",
                     "version label regression",
                 )
                 require(
