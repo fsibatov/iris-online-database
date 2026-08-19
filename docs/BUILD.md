@@ -25,7 +25,7 @@ Iris Online Database — Windows desktop-приложение. Канониче�
 powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Check
 powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Install
 powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Test
-powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Build -OutputDirectory C:\IrisRelease\2.0.1
+powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Build -OutputDirectory C:\IrisRelease\X.Y.Z
 ```
 
 Для отдельного запуска строгого теста в прежнем формате используйте поставляемый отдельно `01_TEST.bat`: храните его рядом с папкой `iris-online-database`, а не внутри source. Это только launcher: он находит корневой `IrisTools.ps1`, вызывает `-Action Test`, возвращает тот же exit code и делает `pause`, но не содержит второй копии release-проверок.
