@@ -17,8 +17,14 @@ class QualityContractTests(unittest.TestCase):
         cls.server = (ROOT / "server.go").read_text(encoding="utf-8")
         cls.wails = (ROOT / "wails.json").read_text(encoding="utf-8")
         cls.windows_info = (ROOT / "build/windows/info.json").read_text(encoding="utf-8")
-        cls.release_gate = (ROOT / "scripts/release-gate.sh").read_text(encoding="utf-8")
-        cls.windows_release_tools = (ROOT / "scripts/windows/IrisTools.ps1").read_text(encoding="utf-8")
+        cls.build_docs = (ROOT / "docs/BUILD.md").read_text(encoding="utf-8")
+        cls.release_docs = (ROOT / "docs/RELEASE.md").read_text(encoding="utf-8")
+        cls.release_gate = (ROOT / "scripts/release-gate.sh").read_text(
+            encoding="utf-8"
+        )
+        cls.windows_release_tools = (ROOT / "scripts/windows/IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
         cls.contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
         cls.vk_workflow = (ROOT / ".github/workflows/update-vk-news.yml").read_text(
             encoding="utf-8"
@@ -37,12 +43,23 @@ class QualityContractTests(unittest.TestCase):
         self.assertIn(f'"product_version": "{version}.0"', self.windows_info)
         self.assertIn(f'"FileVersion": "{version}"', self.windows_info)
         self.assertIn(f'"ProductVersion": "{version}"', self.windows_info)
+        self.assertIn(f"C:\\IrisRelease\\{version}", self.build_docs)
+        self.assertIn(f"IrisOnlineDB-{version}-Windows-x64.exe", self.release_docs)
+        self.assertIn(f"IrisOnlineDB-{version}-Windows-x86.exe", self.release_docs)
+        self.assertIn(f"IrisOnlineDB-{version}-Windows-arm64.exe", self.release_docs)
+        self.assertIn(f"`v{version}` tag", self.release_docs)
 
     def test_release_gates_run_current_python_regression_suite(self):
         self.assertIn("unittest discover -s tests -p 'test_*.py'", self.release_gate)
         self.assertNotIn("unittest discover -s tools", self.release_gate)
-        self.assertIn('"discover", "-s", "tests", "-p", "test_*.py"', self.windows_release_tools)
-        self.assertNotIn('"discover", "-s", "tools", "-p", "test_*.py"', self.windows_release_tools)
+        self.assertIn(
+            '"discover", "-s", "tests", "-p", "test_*.py"',
+            self.windows_release_tools,
+        )
+        self.assertNotIn(
+            '"discover", "-s", "tools", "-p", "test_*.py"',
+            self.windows_release_tools,
+        )
         self.assertIn('bandit" -q -r tools', self.release_gate)
         self.assertIn('@("-q", "-r", "tools")', self.windows_release_tools)
 
