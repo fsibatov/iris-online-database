@@ -12,6 +12,7 @@ ACTION_PIN = re.compile(r"^\s*uses:\s*[^@\s]+@([0-9a-f]{40})(?:\s|$)", re.MULTIL
 ACTION_REFERENCE = re.compile(r"^\s*uses:\s*[^@\s]+@([^\s#]+)", re.MULTILINE)
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 JOB_ENV_DISALLOWED_CONTEXT = re.compile(r"\b(?:env|job|runner|steps)\.")
+POSIX_SHELL = re.compile(r"^\s*shell:\s*(?:bash|sh)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 def invalid_job_env_contexts(document: dict[object, object]) -> int:
@@ -31,6 +32,26 @@ def invalid_job_env_contexts(document: dict[object, object]) -> int:
             for expression in EXPRESSION.findall(value):
                 if JOB_ENV_DISALLOWED_CONTEXT.search(expression):
                     failures += 1
+    return failures
+
+
+def windows_only_workflow_failures(
+    document: dict[object, object], text: str
+) -> int:
+    jobs = document.get("jobs")
+    if not isinstance(jobs, dict):
+        return 1
+
+    failures = 0
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            failures += 1
+            continue
+        runs_on = job.get("runs-on")
+        if not isinstance(runs_on, str) or not runs_on.startswith("windows-"):
+            failures += 1
+
+    failures += len(POSIX_SHELL.findall(text))
     return failures
 
 
@@ -128,6 +149,7 @@ def main() -> int:
             failures += 1
             continue
         failures += invalid_job_env_contexts(document)
+        failures += windows_only_workflow_failures(document, text)
         references = ACTION_REFERENCE.findall(text)
         pins = ACTION_PIN.findall(text)
         if len(references) != len(pins):
