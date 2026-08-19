@@ -38,7 +38,9 @@ def replace_exact(path: str, old: str, new: str) -> None:
     new = new.replace(chr(92) + "n", chr(10))
     count = text.count(old)
 '@
-    if (($Source.Split($Old).Count - 1) -ne 1) {
+    $FirstAnchor = $Source.IndexOf($Old, [StringComparison]::Ordinal)
+    $LastAnchor = $Source.LastIndexOf($Old, [StringComparison]::Ordinal)
+    if ($FirstAnchor -lt 0 -or $FirstAnchor -ne $LastAnchor) {
         throw "Migration bootstrap anchor mismatch."
     }
     $Source = $Source.Replace($Old, $New)
@@ -178,7 +180,7 @@ def replace_exact(path: str, old: str, new: str) -> None:
     git status --short
 
     Write-Host "`n=== COMMIT ==="
-    git commit -m "refactor: make release pipeline Windows-only"
+    git -c commit.gpgSign=false commit -m "refactor: make release pipeline Windows-only"
     if ($LASTEXITCODE -ne 0) { throw "Migration commit failed." }
 
     Write-Host "`n=== PUSH ==="
