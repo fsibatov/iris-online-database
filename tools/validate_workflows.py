@@ -52,9 +52,7 @@ def invalid_job_env_contexts(document: dict[object, object]) -> int:
     return failures
 
 
-def windows_only_workflow_failures(
-    document: dict[object, object], text: str
-) -> int:
+def windows_only_workflow_failures(document: dict[object, object], text: str) -> int:
     jobs = document.get("jobs")
     if not isinstance(jobs, dict):
         return 1
