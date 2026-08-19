@@ -24,6 +24,9 @@ class QualityContractTests(unittest.TestCase):
         cls.windows_release_tools = (ROOT / "scripts/windows/IrisTools.ps1").read_text(
             encoding="utf-8"
         )
+        cls.workflow_validator = (ROOT / "tools/validate_workflows.py").read_text(
+            encoding="utf-8"
+        )
         cls.contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
         cls.vk_workflow = (ROOT / ".github/workflows/update-vk-news.yml").read_text(
             encoding="utf-8"
@@ -128,6 +131,16 @@ class QualityContractTests(unittest.TestCase):
             ),
             1,
         )
+
+    def test_vk_workflow_runs_on_windows_only(self):
+        self.assertIn("runs-on: windows-2025", self.vk_workflow)
+        self.assertIn("shell: powershell", self.vk_workflow)
+        self.assertNotIn("ubuntu-", self.vk_workflow)
+        self.assertNotIn("shell: bash", self.vk_workflow)
+        self.assertNotIn("set -euo pipefail", self.vk_workflow)
+        self.assertIn("windows_only_workflow_failures", self.workflow_validator)
+        self.assertIn('runs_on.startswith("windows-")', self.workflow_validator)
+        self.assertIn("POSIX_SHELL", self.workflow_validator)
 
     def test_vk_workflow_ignores_cosmetic_variants_of_same_post(self):
         for marker in (
