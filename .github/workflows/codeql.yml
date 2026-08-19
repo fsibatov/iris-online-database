@@ -18,8 +18,8 @@ env:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: windows-2025
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -37,12 +37,36 @@ jobs:
         uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           languages: ${{ matrix.language }}
-      - name: Build Linux and Windows Go sources
+      - name: Build Windows Go sources
         if: matrix.language == 'go'
-        shell: bash
+        shell: powershell
         run: |
-          set -euo pipefail
-          go test -count=1 ./...
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/iris-codeql.exe" .
+          $ErrorActionPreference = "Stop"
+          $driveRoot = [IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)
+          $testTemp = Join-Path $driveRoot ("iris-codeql-go-temp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")
+          New-Item -ItemType Directory -Force -Path $testTemp | Out-Null
+          $oldTemp = $env:TEMP
+          $oldTmp = $env:TMP
+          $oldTmpDir = $env:TMPDIR
+          $goTestExitCode = 0
+          $goBuildExitCode = 0
+          try {
+            $env:TEMP = $testTemp
+            $env:TMP = $testTemp
+            $env:TMPDIR = $testTemp
+            go test -count=1 ./...
+            $goTestExitCode = $LASTEXITCODE
+            if ($goTestExitCode -eq 0) {
+              go build -trimpath -o (Join-Path $env:RUNNER_TEMP "iris-codeql.exe") .
+              $goBuildExitCode = $LASTEXITCODE
+            }
+          } finally {
+            $env:TEMP = $oldTemp
+            $env:TMP = $oldTmp
+            $env:TMPDIR = $oldTmpDir
+            Remove-Item -LiteralPath $testTemp -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if ($goTestExitCode -ne 0) { exit $goTestExitCode }
+          if ($goBuildExitCode -ne 0) { exit $goBuildExitCode }
       - name: Analyze
         uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6

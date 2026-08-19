@@ -17,24 +17,18 @@ concurrency:
 env:
   GOTOOLCHAIN: local
   GITLEAKS_VERSION: 8.30.1
-  GITLEAKS_LINUX_X64_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  GITLEAKS_WINDOWS_X64_SHA256: d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e
 
 jobs:
-  quality:
-    name: Linux quality and security
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+  windows-quality:
+    name: Windows quality and security
+    runs-on: windows-2025
+    timeout-minutes: 55
     steps:
       - name: Checkout canonical source and history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-
-      - name: Setup pinned Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version-file: .go-version
-          cache: true
 
       - name: Setup Python 3.13
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -43,167 +37,115 @@ jobs:
           cache: pip
           cache-dependency-path: tools/requirements-audit.txt
 
+      - name: Setup pinned Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: .go-version
+          cache: true
+
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
 
-      - name: Install pinned Go quality tools
-        shell: bash
+      - name: Prepare pinned Windows quality tools
+        shell: powershell
         run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/go-tools"
-          echo "$RUNNER_TEMP/go-tools" >> "$GITHUB_PATH"
-          GOBIN="$RUNNER_TEMP/go-tools" timeout 8m go install honnef.co/go/tools/cmd/staticcheck@2026.1
-          GOBIN="$RUNNER_TEMP/go-tools" timeout 8m go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          $ErrorActionPreference = "Stop"
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
-      - name: Create cached Python audit environment
-        shell: bash
+          $env:GOBIN = Join-Path $env:RUNNER_TEMP "go-tools"
+          New-Item -ItemType Directory -Force -Path $env:GOBIN | Out-Null
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.14.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go install honnef.co/go/tools/cmd/staticcheck@2026.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "GOBIN=$env:GOBIN" + [Environment]::NewLine, $utf8NoBom)
+          [IO.File]::AppendAllText($env:GITHUB_PATH, $env:GOBIN + [Environment]::NewLine, $utf8NoBom)
+
+          $toolRoot = Join-Path $env:LOCALAPPDATA "IrisOnlineDatabase\BuildTools"
+          New-Item -ItemType Directory -Force -Path $toolRoot | Out-Null
+          $auditEnv = Join-Path $toolRoot "python-audit"
+          Remove-Item -LiteralPath $auditEnv -Recurse -Force -ErrorAction SilentlyContinue
+          python -m venv $auditEnv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $auditPython = Join-Path $auditEnv "Scripts\python.exe"
+          & $auditPython -m pip install --disable-pip-version-check --requirement tools\requirements-audit.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $auditPython -B tools\verify_python_environment.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $auditPython -m pip check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Set-Content -LiteralPath (Join-Path $toolRoot "python-audit-active.txt") -Value $auditEnv -Encoding UTF8
+          [IO.File]::AppendAllText($env:GITHUB_PATH, (Join-Path $auditEnv "Scripts") + [Environment]::NewLine, $utf8NoBom)
+
+          $playwrightPath = Join-Path $toolRoot "playwright"
+          New-Item -ItemType Directory -Force -Path $playwrightPath | Out-Null
+          $env:PLAYWRIGHT_BROWSERS_PATH = $playwrightPath
+          & $auditPython -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "PLAYWRIGHT_BROWSERS_PATH=$playwrightPath" + [Environment]::NewLine, $utf8NoBom)
+
+          $archiveName = "gitleaks_$env:GITLEAKS_VERSION`_windows_x64.zip"
+          $checksumsName = "gitleaks_$env:GITLEAKS_VERSION`_checksums.txt"
+          $base = "https://github.com/gitleaks/gitleaks/releases/download/v$env:GITLEAKS_VERSION"
+          $archive = Join-Path $env:RUNNER_TEMP $archiveName
+          $checksums = Join-Path $env:RUNNER_TEMP $checksumsName
+          Invoke-WebRequest -UseBasicParsing -Uri "$base/$archiveName" -OutFile $archive
+          Invoke-WebRequest -UseBasicParsing -Uri "$base/$checksumsName" -OutFile $checksums
+          $expectedLine = Get-Content -LiteralPath $checksums | Where-Object { $_ -match [Regex]::Escape($archiveName) } | Select-Object -First 1
+          if (-not $expectedLine) { throw "Official Gitleaks checksum is missing." }
+          $expected = ($expectedLine -split "\s+")[0].ToLowerInvariant()
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $env:GITLEAKS_WINDOWS_X64_SHA256 -or $actual -ne $expected) {
+            throw "Pinned Gitleaks checksum verification failed."
+          }
+          $gitleaksDir = Join-Path $toolRoot "gitleaks-$env:GITLEAKS_VERSION"
+          Remove-Item -LiteralPath $gitleaksDir -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $archive -DestinationPath $gitleaksDir -Force
+          $gitleaks = Join-Path $gitleaksDir "gitleaks.exe"
+          if ((& $gitleaks version | Out-String).Trim() -ne $env:GITLEAKS_VERSION) {
+            throw "Pinned Gitleaks executable version mismatch."
+          }
+
+      - name: Run canonical Windows release gate
+        shell: powershell
         run: |
-          set -euo pipefail
-          python -m venv "$RUNNER_TEMP/python-audit"
-          for attempt in 1 2 3; do
-            if timeout 8m "$RUNNER_TEMP/python-audit/bin/python" -m pip install --disable-pip-version-check -r tools/requirements-audit.txt; then
-              exit 0
-            fi
-            if [ "$attempt" -eq 3 ]; then exit 1; fi
-            sleep $((attempt * 5))
-          done
+          $ErrorActionPreference = "Stop"
+          git config --local core.filemode false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # GitHub pull-request checkouts may be detached. The local ref name is
+          # normalized only inside this disposable runner; the commit is unchanged.
+          git checkout -B main HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Validate exact Python audit environment
-        shell: bash
-        run: |
-          "$RUNNER_TEMP/python-audit/bin/python" -B tools/verify_python_environment.py
-          "$RUNNER_TEMP/python-audit/bin/python" -m pip check
+          $driveRoot = [IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)
+          $gateTemp = Join-Path $driveRoot ("iris-release-gate-temp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")
+          New-Item -ItemType Directory -Force -Path $gateTemp | Out-Null
+          $oldTemp = $env:TEMP
+          $oldTmp = $env:TMP
+          $oldTmpDir = $env:TMPDIR
+          $gateExitCode = 0
+          try {
+            $env:TEMP = $gateTemp
+            $env:TMP = $gateTemp
+            $env:TMPDIR = $gateTemp
+            powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Test
+            $gateExitCode = $LASTEXITCODE
+          } finally {
+            $env:TEMP = $oldTemp
+            $env:TMP = $oldTmp
+            $env:TMPDIR = $oldTmpDir
+            Remove-Item -LiteralPath $gateTemp -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if ($gateExitCode -ne 0) { exit $gateExitCode }
 
-      - name: Validate GitHub workflow syntax and action pins
-        run: |
-          "$RUNNER_TEMP/python-audit/bin/python" -B tools/validate_workflows.py
-
-      - name: Verify system Chromium browser
-        shell: bash
-        run: |
-          set -euo pipefail
-          browser="$(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"
-          if [ -z "$browser" ]; then
-            echo "::error::System Chrome/Chromium was not found on the GitHub runner."
-            exit 1
-          fi
-          "$browser" --version
-
-      - name: Install official Gitleaks binary with SHA-256 verification
-        shell: bash
-        run: |
-          set -euo pipefail
-          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
-          curl --fail --location --retry 3 --retry-all-errors --connect-timeout 20 --max-time 180 "$url" --output "$RUNNER_TEMP/$asset"
-          printf '%s  %s\n' "$GITLEAKS_LINUX_X64_SHA256" "$RUNNER_TEMP/$asset" | sha256sum --check --strict
-          mkdir -p "$RUNNER_TEMP/gitleaks"
-          tar -xzf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/gitleaks" gitleaks
-          test "$("$RUNNER_TEMP/gitleaks/gitleaks" version)" = "$GITLEAKS_VERSION"
-          probe_dir="$(mktemp -d "$RUNNER_TEMP/gitleaks-probe.XXXXXXXX")"
-          printf 'token=%s%s\n' 'ghp_' 'wA9mK2pLxN4vRtQzY6bC8dEfGhJlM0oPq1rS' > "$probe_dir/probe.txt"
-          set +e
-          "$RUNNER_TEMP/gitleaks/gitleaks" dir --no-banner --redact --exit-code 37 "$probe_dir" >/dev/null 2>&1
-          probe_exit=$?
-          set -e
-          rm -rf -- "$probe_dir"
-          test "$probe_exit" -eq 37
-          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
-
-      - name: Repository audit before checks
-        run: python -B tools/repository_audit.py
-
-      - name: Go format and module integrity
-        shell: bash
-        run: |
-          set -euo pipefail
-          unformatted="$(gofmt -l -- *.go)"
-          test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
-          go mod verify
-          go mod tidy -diff
-          go list -deps ./... > "$RUNNER_TEMP/go-dependencies.txt"
-
-      - name: Go build, unit tests and vet
-        shell: bash
-        run: |
-          set -euo pipefail
-          timeout 10m go build -trimpath -o "$RUNNER_TEMP/iris-build-probe" .
-          timeout 15m go test -count=1 ./...
-          timeout 10m go vet ./...
-
-      - name: Staticcheck
-        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 timeout 15m staticcheck ./...
-
-      - name: Govulncheck
-        shell: bash
-        run: |
-          set -euo pipefail
-          . ./scripts/release-tools.sh
-          iris_run_govulncheck "$(command -v govulncheck)" 15m
-
-      - name: Python compile and regression tests
-        shell: bash
-        env:
-          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/pycache
-          PYTHONPATH: ${{ github.workspace }}/tools
-        run: |
-          set -euo pipefail
-          python -m compileall -q tools tests
-          if find tools -maxdepth 1 -type f -name 'test_*.py' -print -quit | grep -q .; then
-            echo "::error::Python regression tests must live in tests/, not tools/."
-            exit 1
-          fi
-          timeout 10m "$RUNNER_TEMP/python-audit/bin/python" -B -m unittest discover -s tests -p 'test_*.py'
-
-      - name: Ruff lint and formatting
-        shell: bash
-        run: |
-          "$RUNNER_TEMP/python-audit/bin/ruff" check --no-cache .
-          "$RUNNER_TEMP/python-audit/bin/ruff" format --check --no-cache .
-
-      - name: Bandit
-        run: |
-          "$RUNNER_TEMP/python-audit/bin/bandit" -q -r tools
-
-      - name: Full installed-environment dependency audit
-        run: timeout 10m "$RUNNER_TEMP/python-audit/bin/pip-audit" --local --cache-dir "$RUNNER_TEMP/pip-audit-cache"
-
-      - name: Embedded data integrity audit
-        shell: bash
-        run: |
-          python -B tools/data_presentation_audit.py
-
-      - name: Frontend syntax and deterministic Chromium smoke
-        shell: bash
-        run: |
-          node --check web/app.js
-          timeout 10m "$RUNNER_TEMP/python-audit/bin/python" -B tools/frontend_smoke_test.py
-
-      - name: Gitleaks current source
-        run: timeout 10m gitleaks dir --no-banner --redact .
-
-      - name: Gitleaks complete Git history
-        shell: bash
-        run: |
-          set -euo pipefail
-          . ./scripts/release-tools.sh
-          iris_gitleaks_history_scan "$(command -v gitleaks)" "."
-
-      - name: Source tree remains clean
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -B tools/repository_audit.py
-          git diff --exit-code
-          status="$(git status --porcelain=v1 --untracked-files=all)"
-          test -z "$status"
-
-  race:
-    name: Go race detector
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+  windows-race:
+    name: Windows race detector
+    runs-on: windows-2025
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -212,12 +154,94 @@ jobs:
         with:
           go-version-file: .go-version
           cache: true
-      - name: Race detector
-        run: timeout 20m go test -race -count=1 ./...
+      - name: Windows amd64 race detector
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $CompilerCandidates = New-Object System.Collections.Generic.List[string]
+          foreach ($Candidate in @(
+            "C:\msys64\ucrt64\bin\gcc.exe",
+            "C:\msys64\mingw64\bin\gcc.exe"
+          )) {
+            if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+              $CompilerCandidates.Add($Candidate)
+            }
+          }
+
+          $PathGcc = Get-Command gcc.exe -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($PathGcc -and -not $CompilerCandidates.Contains([string]$PathGcc.Source)) {
+            $CompilerCandidates.Add([string]$PathGcc.Source)
+          }
+
+          if ($CompilerCandidates.Count -eq 0) {
+            throw "Windows race detector requires a MinGW-w64 C compiler."
+          }
+
+          $Compiler = $null
+          foreach ($Candidate in $CompilerCandidates) {
+            Write-Host "Testing race C compiler: $Candidate"
+            & $Candidate --version
+            if ($LASTEXITCODE -ne 0) { continue }
+
+            $SyncArchive = (& $Candidate --print-file-name libsynchronization.a 2>&1 | Out-String).Trim()
+            Write-Host "libsynchronization.a probe: $SyncArchive"
+            if (
+              $LASTEXITCODE -eq 0 -and
+              $SyncArchive -and
+              $SyncArchive -ne "libsynchronization.a" -and
+              (Test-Path -LiteralPath $SyncArchive -PathType Leaf)
+            ) {
+              $Compiler = $Candidate
+              break
+            }
+          }
+
+          if (-not $Compiler) {
+            throw "No installed Windows MinGW-w64 compiler provides libsynchronization.a required by the Go race detector."
+          }
+
+          $CompilerDirectory = Split-Path $Compiler -Parent
+          $Cxx = Join-Path $CompilerDirectory "g++.exe"
+          if (-not (Test-Path -LiteralPath $Cxx -PathType Leaf)) {
+            throw "The selected MinGW-w64 compiler has no matching g++.exe."
+          }
+
+          $env:PATH = $CompilerDirectory + ";" + $env:PATH
+          $env:CC = $Compiler
+          $env:CXX = $Cxx
+          $env:CGO_ENABLED = "1"
+
+          Write-Host "Selected race C compiler: $env:CC"
+          go env GOOS GOARCH GOVERSION CC CXX CGO_ENABLED
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $driveRoot = [IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)
+          $raceTemp = Join-Path $driveRoot ("iris-go-race-temp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")
+          New-Item -ItemType Directory -Force -Path $raceTemp | Out-Null
+          $oldTemp = $env:TEMP
+          $oldTmp = $env:TMP
+          $oldTmpDir = $env:TMPDIR
+          $raceExitCode = 0
+          try {
+            $env:TEMP = $raceTemp
+            $env:TMP = $raceTemp
+            $env:TMPDIR = $raceTemp
+            go test -race -count=1 ./...
+            $raceExitCode = $LASTEXITCODE
+          } finally {
+            $env:TEMP = $oldTemp
+            $env:TMP = $oldTmp
+            $env:TMPDIR = $oldTmpDir
+            Remove-Item -LiteralPath $raceTemp -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if ($raceExitCode -ne 0) { exit $raceExitCode }
 
   windows-build:
     name: Native Windows Wails release matrix
-    runs-on: windows-latest
+    runs-on: windows-2025
+    needs: [windows-quality, windows-race]
     timeout-minutes: 40
     steps:
       - name: Checkout

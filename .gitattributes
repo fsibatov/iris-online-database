@@ -1,3 +1,9 @@
 *.go text eol=lf
-scripts/windows/00_RELEASE_WINDOWS.bat text eol=crlf
-scripts/*.sh text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+.go-version text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf

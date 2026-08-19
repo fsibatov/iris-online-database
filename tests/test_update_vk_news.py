@@ -228,15 +228,19 @@ class VKNewsUpdaterTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("cron: '7,17,27,37,47,57 * * * *'", workflow)
         self.assertIn("contents: write", workflow)
-        self.assertIn("-r tools/requirements-audit.txt", workflow)
+        self.assertIn("runs-on: windows-2025", workflow)
+        self.assertIn("shell: powershell", workflow)
+        self.assertIn("-r tools\\requirements-audit.txt", workflow)
         self.assertNotRegex(workflow, r"pip install[^\n]*playwright==")
-        self.assertIn('importlib.metadata.version("playwright")', workflow)
+        self.assertIn("tools\\verify_python_environment.py", workflow)
         self.assertIn("git diff --quiet -- data/latest-vk.json", workflow)
-        self.assertIn("for attempt in 1 2 3", workflow)
+        self.assertIn("for ($Attempt = 1; $Attempt -le 3; $Attempt++)", workflow)
         self.assertIn("VK transient failure", workflow)
         self.assertIn("::warning::VK is temporarily unavailable", workflow)
         self.assertIn("VK updater failed with non-transient category", workflow)
         self.assertNotIn("VK_ACCESS_TOKEN", workflow)
+        self.assertNotIn("ubuntu-", workflow)
+        self.assertNotIn("shell: bash", workflow)
 
     def test_seed_news_file_is_valid(self):
         payload = json.loads(

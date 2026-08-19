@@ -20,17 +20,17 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
     def test_scheduler_uses_one_scrape_path_per_attempt(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn("for attempt in 1 2 3", workflow)
-        self.assertIn("vk-candidate-${attempt}.json", workflow)
-        self.assertEqual(workflow.count("tools/update_vk_news.py --output"), 1)
-        self.assertNotIn("vk-stale-candidate-${attempt}.json", workflow)
+        self.assertIn("for ($Attempt = 1; $Attempt -le 3; $Attempt++)", workflow)
+        self.assertIn('"vk-candidate-$Attempt.json"', workflow)
+        self.assertEqual(workflow.count("tools\\update_vk_news.py --output"), 1)
+        self.assertNotIn("vk-stale-candidate-", workflow)
         self.assertNotIn("STALE_POST)", workflow)
 
     def test_scheduler_retries_only_known_transient_vk_failures(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn('if [ "$exit_code" -eq 124 ]', workflow)
-        self.assertIn('category="TIMEOUT"', workflow)
+        self.assertIn("if ($Result.TimedOut)", workflow)
+        self.assertIn('$Category = "TIMEOUT"', workflow)
         for category in ("EMPTY_PREVIEW", "VK_UNAVAILABLE"):
             self.assertIn(category, workflow)
         self.assertIn("BROWSER_*", workflow)
@@ -39,12 +39,15 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
     def test_lower_id_requires_three_consistent_fresh_scrapes_before_promotion(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn("stale_confirmations=0", workflow)
-        self.assertIn('candidate_action="${candidate_state#* }"', workflow)
-        self.assertIn("stale)", workflow)
-        self.assertIn("stale_confirmations=$((stale_confirmations + 1))", workflow)
-        self.assertIn('if [ "$stale_confirmations" -eq 3 ]', workflow)
-        self.assertIn('cp -- "$candidate_file" data/latest-vk.json', workflow)
+        self.assertIn("$StaleConfirmations = 0", workflow)
+        self.assertIn("$CandidateAction = $Matches[2]", workflow)
+        self.assertIn('"stale" {', workflow)
+        self.assertIn("$StaleConfirmations++", workflow)
+        self.assertIn("if ($StaleConfirmations -eq 3)", workflow)
+        self.assertIn(
+            'Copy-Item -LiteralPath $CandidateFile -Destination "data\\latest-vk.json" -Force',
+            workflow,
+        )
         self.assertIn("after 3 independent confirmations", workflow)
         self.assertIn("confirmation counter reset", workflow)
 
@@ -53,8 +56,8 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
 
         self.assertIn('action = "same"', workflow)
         self.assertIn('action = "promote"', workflow)
-        self.assertIn("same)", workflow)
-        self.assertIn("promote)", workflow)
+        self.assertIn('"same" {', workflow)
+        self.assertIn('"promote" {', workflow)
         self.assertIn("VK: без изменений", workflow)
         self.assertIn("VK: подтверждена актуальная запись", workflow)
 
@@ -79,14 +82,16 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("VK updater failed with non-transient category", workflow)
-        self.assertIn('exit "$exit_code"', workflow)
+        self.assertIn("exit $Result.ExitCode", workflow)
         self.assertIn("VK updater ended in an unexpected state", workflow)
         self.assertNotIn("continue-on-error", workflow)
 
     def test_push_rebases_and_retries_against_current_main(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn("for push_attempt in 1 2 3", workflow)
+        self.assertIn(
+            "for ($PushAttempt = 1; $PushAttempt -le 3; $PushAttempt++)", workflow
+        )
         self.assertIn("git fetch origin main", workflow)
         self.assertIn("git rebase origin/main", workflow)
         self.assertIn("git push origin HEAD:main", workflow)
