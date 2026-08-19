@@ -45,11 +45,14 @@ class QualityContractTests(unittest.TestCase):
         self.assertIn(f'"product_version": "{version}.0"', self.windows_info)
         self.assertIn(f'"FileVersion": "{version}"', self.windows_info)
         self.assertIn(f'"ProductVersion": "{version}"', self.windows_info)
-        self.assertIn(f"C:\\IrisRelease\\{version}", self.build_docs)
-        self.assertIn(f"IrisOnlineDB-{version}-Windows-x64.exe", self.release_docs)
-        self.assertIn(f"IrisOnlineDB-{version}-Windows-x86.exe", self.release_docs)
-        self.assertIn(f"IrisOnlineDB-{version}-Windows-arm64.exe", self.release_docs)
-        self.assertIn(f"`v{version}` tag", self.release_docs)
+        self.assertIn("C:\\IrisRelease\\X.Y.Z", self.build_docs)
+        self.assertIn("IrisOnlineDB-X.Y.Z-Windows-x64.exe", self.release_docs)
+        self.assertIn("IrisOnlineDB-X.Y.Z-Windows-x86.exe", self.release_docs)
+        self.assertIn("IrisOnlineDB-X.Y.Z-Windows-arm64.exe", self.release_docs)
+        self.assertIn("`vX.Y.Z` tag", self.release_docs)
+        self.assertNotIn(f"C:\\IrisRelease\\{version}", self.build_docs)
+        self.assertNotIn(f"IrisOnlineDB-{version}-Windows-x64.exe", self.release_docs)
+        self.assertNotIn(f"`v{version}` tag", self.release_docs)
 
     def test_windows_release_gate_runs_current_python_regression_suite(self):
         self.assertIn(
