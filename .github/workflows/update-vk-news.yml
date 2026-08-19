@@ -228,9 +228,9 @@ jobs:
                 $TransientFailure = $true
               } else {
                 $CategoryMatch = [Regex]::Match(
-                  $Output,
-                  "Ошибка обновления VK \[([^\]]*)\]",
-                  [Text.RegularExpressions.RegexOptions]::IgnoreCase
+                  [string]$Result.Stderr,
+                  '\[([A-Z][A-Z0-9_:.-]*)\]',
+                  [Text.RegularExpressions.RegexOptions]::CultureInvariant
                 )
                 if ($CategoryMatch.Success) {
                   $Category = $CategoryMatch.Groups[1].Value
