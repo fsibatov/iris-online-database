@@ -42,9 +42,31 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          go test -count=1 ./...
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go build -trimpath -o (Join-Path $env:RUNNER_TEMP "iris-codeql.exe") .
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $driveRoot = [IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)
+          $testTemp = Join-Path $driveRoot ("iris-codeql-go-temp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")
+          New-Item -ItemType Directory -Force -Path $testTemp | Out-Null
+          $oldTemp = $env:TEMP
+          $oldTmp = $env:TMP
+          $oldTmpDir = $env:TMPDIR
+          $goTestExitCode = 0
+          $goBuildExitCode = 0
+          try {
+            $env:TEMP = $testTemp
+            $env:TMP = $testTemp
+            $env:TMPDIR = $testTemp
+            go test -count=1 ./...
+            $goTestExitCode = $LASTEXITCODE
+            if ($goTestExitCode -eq 0) {
+              go build -trimpath -o (Join-Path $env:RUNNER_TEMP "iris-codeql.exe") .
+              $goBuildExitCode = $LASTEXITCODE
+            }
+          } finally {
+            $env:TEMP = $oldTemp
+            $env:TMP = $oldTmp
+            $env:TMPDIR = $oldTmpDir
+            Remove-Item -LiteralPath $testTemp -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if ($goTestExitCode -ne 0) { exit $goTestExitCode }
+          if ($goBuildExitCode -ne 0) { exit $goBuildExitCode }
       - name: Analyze
         uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
