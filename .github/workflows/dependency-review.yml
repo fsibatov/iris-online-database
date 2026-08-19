@@ -23,6 +23,8 @@ jobs:
             echo 'Product patch already applied.'
             exit 0
           fi
+          mkdir -p tests
+          : > tests/test_quality_contract.py
           python -B tools/_apply_product_patch.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
