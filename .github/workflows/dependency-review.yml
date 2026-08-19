@@ -4,7 +4,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   dependency-review:
@@ -12,25 +12,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-      - name: Apply version-neutral release tests
-        if: github.event.pull_request.head.ref == 'agent/release-v2.0.1'
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -f tools/_make_release_tests_version_neutral.py ]; then
-            echo 'Version-neutral release tests already applied.'
-            exit 0
-          fi
-          python -B tools/_make_release_tests_version_neutral.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --check
-          git commit -m "test: отвязать release-проверки от номера версии"
-          git push origin HEAD:agent/release-v2.0.1
       - name: Dependency review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
