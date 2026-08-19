@@ -1,18 +1,18 @@
 {
   "fixed": {
-    "file_version": "2.0.0.0",
-    "product_version": "2.0.0.0"
+    "file_version": "2.0.1.0",
+    "product_version": "2.0.1.0"
   },
   "info": {
     "0419": {
       "CompanyName": "Iris Online Database",
       "FileDescription": "Iris Online Database",
-      "FileVersion": "2.0.0",
+      "FileVersion": "2.0.1",
       "InternalName": "IrisOnlineDatabase",
       "LegalCopyright": "Copyright © 2026 Iris Online Database",
       "OriginalFilename": "IrisOnlineDatabase.exe",
       "ProductName": "Iris Online Database",
-      "ProductVersion": "2.0.0"
+      "ProductVersion": "2.0.1"
     }
   }
 }
