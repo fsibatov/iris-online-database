@@ -76,7 +76,7 @@ def powershell_step_failures(document: dict[object, object]) -> int:
     if not isinstance(jobs, dict):
         return 1
 
-    system_root = os.environ.get("SystemRoot")
+    system_root = os.environ.get("SYSTEMROOT")
     if not system_root:
         return 1
     powershell_executable = (
