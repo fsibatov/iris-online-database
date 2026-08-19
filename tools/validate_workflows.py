@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -13,6 +15,21 @@ ACTION_REFERENCE = re.compile(r"^\s*uses:\s*[^@\s]+@([^\s#]+)", re.MULTILINE)
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 JOB_ENV_DISALLOWED_CONTEXT = re.compile(r"\b(?:env|job|runner|steps)\.")
 POSIX_SHELL = re.compile(r"^\s*shell:\s*(?:bash|sh)\s*$", re.IGNORECASE | re.MULTILINE)
+POWERSHELL_PARSER = r"""param([Parameter(Mandatory = $true)][string]$ScriptPath)
+$Tokens = $null
+$Errors = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+    $ScriptPath,
+    [ref]$Tokens,
+    [ref]$Errors
+) | Out-Null
+if ($Errors.Count -ne 0) {
+    foreach ($ErrorRecord in $Errors) {
+        Write-Output $ErrorRecord.Message
+    }
+    exit 1
+}
+"""
 
 
 def invalid_job_env_contexts(document: dict[object, object]) -> int:
@@ -52,6 +69,73 @@ def windows_only_workflow_failures(
             failures += 1
 
     failures += len(POSIX_SHELL.findall(text))
+    return failures
+
+
+def powershell_step_failures(document: dict[object, object]) -> int:
+    jobs = document.get("jobs")
+    if not isinstance(jobs, dict):
+        return 1
+
+    scripts: list[str] = []
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        steps = job.get("steps")
+        if not isinstance(steps, list):
+            continue
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            shell = str(step.get("shell") or "").strip().lower()
+            run = step.get("run")
+            if shell not in {"powershell", "pwsh"} or not isinstance(run, str):
+                continue
+            scripts.append(EXPRESSION.sub("GITHUB_EXPRESSION", run))
+
+    if not scripts:
+        return 0
+
+    failures = 0
+    with tempfile.TemporaryDirectory(prefix="iris-workflow-powershell-") as temp_dir:
+        temp = Path(temp_dir)
+        parser_path = temp / "parse-workflow.ps1"
+        parser_path.write_text(POWERSHELL_PARSER, encoding="utf-8-sig")
+
+        for index, script in enumerate(scripts, start=1):
+            script_path = temp / f"workflow-step-{index}.ps1"
+            script_path.write_text(script, encoding="utf-8-sig")
+            try:
+                result = subprocess.run(
+                    [
+                        "powershell.exe",
+                        "-NoLogo",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(parser_path),
+                        str(script_path),
+                    ],
+                    cwd=ROOT,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=30,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                failures += 1
+                continue
+            if result.returncode != 0:
+                failures += 1
+                output = result.stdout.strip()
+                if output:
+                    print(f"PowerShell workflow syntax failure #{index}: {output}")
+
     return failures
 
 
@@ -150,6 +234,7 @@ def main() -> int:
             continue
         failures += invalid_job_env_contexts(document)
         failures += windows_only_workflow_failures(document, text)
+        failures += powershell_step_failures(document)
         references = ACTION_REFERENCE.findall(text)
         pins = ACTION_PIN.findall(text)
         if len(references) != len(pins):
