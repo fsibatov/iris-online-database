@@ -1,22 +1,25 @@
 name: One-shot UI performance cleanup
 
 on:
-  push:
-    branches: [agent/ui-performance-cleanup]
+  pull_request:
+    branches: [main]
     paths:
       - '.github/workflows/_apply-cleanup-once.yml'
+      - 'tools/_apply_cleanup_once.py'
 
 permissions:
   contents: write
 
 jobs:
   apply:
+    if: github.event.pull_request.head.ref == 'agent/ui-performance-cleanup'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Checkout branch
+      - name: Checkout source branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: agent/ui-performance-cleanup
           fetch-depth: 0
 
       - name: Setup Python
@@ -28,6 +31,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ ! -f tools/_apply_cleanup_once.py ]; then
+            echo 'One-shot patch already applied.'
+            exit 0
+          fi
           python -B tools/_apply_cleanup_once.py
           python -m py_compile tools/update_vk_news.py tests/test_cleanup_contract.py
           PYTHONPATH="$GITHUB_WORKSPACE/tools" python -m unittest discover -s tests -p 'test_cleanup_contract.py'
@@ -38,6 +45,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ ! -f tools/_apply_cleanup_once.py ]; then
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add web/app.js web/styles.css tools/update_vk_news.py tests/test_cleanup_contract.py CONTRIBUTING.md
