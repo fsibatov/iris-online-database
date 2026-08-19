@@ -33,7 +33,9 @@ class QualityContractTests(unittest.TestCase):
                 "function effectLabel"
             )
         ]
-        self.assertIn("${recipeContext ? recipeMaterialsHTML(data.recipe) : ''}", detail)
+        self.assertIn(
+            "${recipeContext ? recipeMaterialsHTML(data.recipe) : ''}", detail
+        )
         self.assertNotIn("\n      ${recipeMaterialsHTML(data.recipe)}", detail)
 
     def test_recipe_item_routes_are_canonicalized_to_recipe_view(self):
@@ -43,7 +45,9 @@ class QualityContractTests(unittest.TestCase):
             )
         ]
         self.assertIn("Array.isArray(data.recipe) && data.recipe.length", route)
-        self.assertIn("const recipeRoute = `recipe/${Number(data.item?.id || id)}`", route)
+        self.assertIn(
+            "const recipeRoute = `recipe/${Number(data.item?.id || id)}`", route
+        )
         self.assertIn("itemDetail(data, 'recipes')", route)
 
     def test_async_navigation_keeps_current_page_until_target_is_ready(self):
@@ -66,7 +70,9 @@ class QualityContractTests(unittest.TestCase):
 
     def test_home_copy_is_concise_and_has_no_hard_coded_monster_counts(self):
         home = self.script[
-            self.script.index("function homePage") : self.script.index("function addHistory")
+            self.script.index("function homePage") : self.script.index(
+                "function addHistory"
+            )
         ]
         self.assertIn("Рецепты — в отдельном разделе.", home)
         self.assertIn('<h2 id="serverDifferenceTitle">Сервер</h2>', home)
@@ -80,7 +86,9 @@ class QualityContractTests(unittest.TestCase):
         self.assertIn("const dateFormatter = new Intl.DateTimeFormat", self.script)
         self.assertEqual(self.script.count("new Intl.DateTimeFormat('ru-RU'"), 1)
         self.assertEqual(
-            self.script.count("new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 })"),
+            self.script.count(
+                "new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 })"
+            ),
             1,
         )
 
@@ -104,7 +112,9 @@ class QualityContractTests(unittest.TestCase):
         exec(code, namespace)
         plain = "Новый экспериментальный режим (Vulkan)\n* **Важно:** режим тестовый."
         rich = "⚡ Новый экспериментальный режим (Vulkan)<br><br>* ⚠ **Важно:** режим тестовый."
-        self.assertEqual(namespace["semantic_text"](plain), namespace["semantic_text"](rich))
+        self.assertEqual(
+            namespace["semantic_text"](plain), namespace["semantic_text"](rich)
+        )
 
     def test_project_rules_require_language_and_noise_review(self):
         self.assertIn("## Постоянные правила качества", self.contributing)
