@@ -1,2 +1,3 @@
+*.go text eol=lf
 scripts/windows/00_RELEASE_WINDOWS.bat text eol=crlf
 scripts/*.sh text eol=lf
