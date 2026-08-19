@@ -194,8 +194,9 @@ func TestDependentItemFiltersAreIgnoredWithoutCategory(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Total != len(store.data.Items) {
-		t.Fatalf("dependent filters were applied without a category: got %d want %d", response.Total, len(store.data.Items))
+	expected := len(store.data.Items) - len(store.itemRecipes)
+	if response.Total != expected {
+		t.Fatalf("dependent filters were applied without a category: got %d want %d", response.Total, expected)
 	}
 }
 
@@ -1838,7 +1839,7 @@ func TestSearchStartsEmptyAndRecentlyViewedCanBeCleared(t *testing.T) {
 		"function clearRecentlyViewed()",
 		"knownSource: ''",
 		"Известно, где получить",
-		"The Original и Iris Kiss Kiss: в чём разница?",
+		"<h2 id=\"serverDifferenceTitle\">Сервер</h2>",
 	} {
 		if !strings.Contains(script, marker) {
 			t.Fatalf("startup-search/recent-view marker is missing: %s", marker)

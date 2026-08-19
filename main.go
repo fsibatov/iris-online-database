@@ -1966,8 +1966,12 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	rt := activeRuntime(qv.Get("server"))
 	items := make([]map[string]any, 0, 6)
 	for i := range store.data.Items {
+		item := &store.data.Items[i]
+		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe {
+			continue
+		}
 		if matchesSearch(store.itemSearch[i], query) {
-			items = append(items, itemSummary(&store.data.Items[i]))
+			items = append(items, itemSummary(item))
 			if len(items) == 6 {
 				break
 			}
@@ -2037,6 +2041,9 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 	qualities := map[string]int{}
 	for i := range store.data.Items {
 		item := &store.data.Items[i]
+		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe {
+			continue
+		}
 		if scope == "weapons" && item.Category != "Оружие/щит" {
 			continue
 		}
@@ -2853,7 +2860,11 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 		switch parts[0] {
 		case "item":
 			if store.itemsByID[id] != nil {
-				references = append(references, favoriteReference{kind: "item", id: id})
+				kind := "item"
+				if _, isRecipe := store.itemRecipes[id]; isRecipe {
+					kind = "recipe"
+				}
+				references = append(references, favoriteReference{kind: kind, id: id})
 			} else {
 				missing++
 			}
@@ -2899,6 +2910,10 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 			row := itemSummary(store.itemsByID[reference.id])
 			row["kind"] = "item"
 			pageRows = append(pageRows, row)
+		case "recipe":
+			row := recipeSummary(store.itemsByID[reference.id], rt)
+			row["kind"] = "recipe"
+			pageRows = append(pageRows, row)
 		case "monster":
 			row := monsterSummary(store.monstersByID[reference.id])
 			row["kind"] = "monster"
@@ -2906,11 +2921,14 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	items := make([]map[string]any, 0, len(pageRows))
+	recipes := make([]map[string]any, 0, len(pageRows))
 	monsters := make([]map[string]any, 0, len(pageRows))
 	for _, row := range pageRows {
 		switch row["kind"] {
 		case "item":
 			items = append(items, row)
+		case "recipe":
+			recipes = append(recipes, row)
 		case "monster":
 			monsters = append(monsters, row)
 		}
@@ -2918,6 +2936,7 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"rows":      pageRows,
 		"items":     items,
+		"recipes":   recipes,
 		"monsters":  monsters,
 		"total":     len(references),
 		"page":      page,

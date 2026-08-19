@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -319,5 +321,113 @@ func TestItemsFilterHidesAdditionalSkillsCategory(t *testing.T) {
 		if category == "Доп. умения" {
 			t.Fatalf("Доп. умения must be hidden from item filters: %v", payload.Filters.Categories)
 		}
+	}
+}
+
+func TestItemsCatalogAndGlobalSearchExcludeRecipes(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+
+	itemsReq := httptest.NewRequest(http.MethodGet, "/api/items?page=1&pageSize=48&sort=name", nil)
+	itemsRec := httptest.NewRecorder()
+	handleItems(itemsRec, itemsReq)
+	if itemsRec.Code != http.StatusOK {
+		t.Fatalf("items status=%d body=%s", itemsRec.Code, itemsRec.Body.String())
+	}
+	var itemsPayload struct {
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(itemsRec.Body.Bytes(), &itemsPayload); err != nil {
+		t.Fatal(err)
+	}
+	if itemsPayload.Total != len(store.data.Items)-len(store.itemRecipes) {
+		t.Fatalf("items total=%d expected=%d", itemsPayload.Total, len(store.data.Items)-len(store.itemRecipes))
+	}
+
+	var recipe *Item
+	for recipeID := range store.itemRecipes {
+		candidate := store.itemsByID[recipeID]
+		if candidate != nil && strings.TrimSpace(candidate.Name) != "" {
+			recipe = candidate
+			break
+		}
+	}
+	if recipe == nil {
+		t.Fatal("no recipe item found")
+	}
+
+	searchReq := httptest.NewRequest(http.MethodGet, "/api/search?q="+url.QueryEscape(recipe.Name)+"&server=original", nil)
+	searchRec := httptest.NewRecorder()
+	handleSearch(searchRec, searchReq)
+	if searchRec.Code != http.StatusOK {
+		t.Fatalf("search status=%d body=%s", searchRec.Code, searchRec.Body.String())
+	}
+	var searchPayload struct {
+		Items []struct {
+			ID int `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(searchRec.Body.Bytes(), &searchPayload); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range searchPayload.Items {
+		if item.ID == recipe.ID {
+			t.Fatalf("recipe %d leaked into item search results", recipe.ID)
+		}
+	}
+}
+
+func TestFavoriteRecipeKeepsRecipePresentation(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+
+	var recipeID int
+	for id := range store.itemRecipes {
+		if store.itemsByID[id] != nil {
+			recipeID = id
+			break
+		}
+	}
+	if recipeID == 0 {
+		t.Fatal("no recipe item found")
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"keys":     []string{fmt.Sprintf("item:%d", recipeID)},
+		"server":   "original",
+		"page":     1,
+		"pageSize": 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/favorites", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handleFavorites(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Rows []struct {
+			Kind      string `json:"kind"`
+			ID        int    `json:"id"`
+			Materials []any  `json:"materials"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Rows) != 1 {
+		t.Fatalf("rows=%d want=1", len(payload.Rows))
+	}
+	if payload.Rows[0].Kind != "recipe" || payload.Rows[0].ID != recipeID {
+		t.Fatalf("favorite recipe presentation=%#v", payload.Rows[0])
+	}
+	if payload.Rows[0].Materials == nil {
+		t.Fatal("recipe favorite lost recipe materials")
 	}
 }
