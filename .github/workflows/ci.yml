@@ -120,8 +120,27 @@ jobs:
           # normalized only inside this disposable runner; the commit is unchanged.
           git checkout -B main HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Test
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $driveRoot = [IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)
+          $gateTemp = Join-Path $driveRoot ("iris-release-gate-temp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")
+          New-Item -ItemType Directory -Force -Path $gateTemp | Out-Null
+          $oldTemp = $env:TEMP
+          $oldTmp = $env:TMP
+          $oldTmpDir = $env:TMPDIR
+          $gateExitCode = 0
+          try {
+            $env:TEMP = $gateTemp
+            $env:TMP = $gateTemp
+            $env:TMPDIR = $gateTemp
+            powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Test
+            $gateExitCode = $LASTEXITCODE
+          } finally {
+            $env:TEMP = $oldTemp
+            $env:TMP = $oldTmp
+            $env:TMPDIR = $oldTmpDir
+            Remove-Item -LiteralPath $gateTemp -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if ($gateExitCode -ne 0) { exit $gateExitCode }
 
   windows-race:
     name: Windows race detector
@@ -198,8 +217,26 @@ jobs:
           go env GOOS GOARCH GOVERSION CC CXX CGO_ENABLED
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          go test -race -count=1 ./...
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $driveRoot = [IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)
+          $raceTemp = Join-Path $driveRoot ("iris-go-race-temp-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT")
+          New-Item -ItemType Directory -Force -Path $raceTemp | Out-Null
+          $oldTemp = $env:TEMP
+          $oldTmp = $env:TMP
+          $oldTmpDir = $env:TMPDIR
+          $raceExitCode = 0
+          try {
+            $env:TEMP = $raceTemp
+            $env:TMP = $raceTemp
+            $env:TMPDIR = $raceTemp
+            go test -race -count=1 ./...
+            $raceExitCode = $LASTEXITCODE
+          } finally {
+            $env:TEMP = $oldTemp
+            $env:TMP = $oldTmp
+            $env:TMPDIR = $oldTmpDir
+            Remove-Item -LiteralPath $raceTemp -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if ($raceExitCode -ne 0) { exit $raceExitCode }
 
   windows-build:
     name: Native Windows Wails release matrix
