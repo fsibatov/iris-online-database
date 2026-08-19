@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess  # nosec B404 - fixed Windows system executable, no shell
+import subprocess  # nosec B404
 import tempfile
 from pathlib import Path
 
@@ -114,7 +114,8 @@ def powershell_step_failures(document: dict[object, object]) -> int:
             script_path = temp / f"workflow-step-{index}.ps1"
             script_path.write_text(script, encoding="utf-8-sig")
             try:
-                result = subprocess.run(  # nosec B603 - fixed executable and arguments
+                # Fixed executable and controlled argument list; shell execution is disabled.
+                result = subprocess.run(  # nosec B603
                     [
                         str(powershell_executable),
                         "-NoLogo",
