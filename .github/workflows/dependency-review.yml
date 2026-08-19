@@ -25,6 +25,23 @@ jobs:
           fi
           mkdir -p tests
           : > tests/test_quality_contract.py
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tools/_apply_product_patch.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              'old = """import json\nimport sys\nfrom pathlib import Path\n"""',
+              'old = """          import json\n          import sys\n          from pathlib import Path\n"""',
+              1,
+          )
+          text = text.replace(
+              'new = """import html\nimport json\nimport re\nimport sys\nfrom pathlib import Path\n"""',
+              'new = """          import html\n          import json\n          import re\n          import sys\n          from pathlib import Path\n"""',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
           python -B tools/_apply_product_patch.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
