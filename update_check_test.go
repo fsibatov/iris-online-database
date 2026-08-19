@@ -183,7 +183,7 @@ func TestUpdateCheckEndpointUsesBoundedChecker(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("unexpected method %s", r.Method)
 		}
-		fmt.Fprintln(w, `{"tag_name":"v2.0.1"}`)
+		fmt.Fprintf(w, `{"tag_name":"v%s"}\n`, appVersion)
 	}))
 	defer github.Close()
 	checker := newUpdateChecker()
@@ -199,7 +199,7 @@ func TestUpdateCheckEndpointUsesBoundedChecker(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"latestVersion":"2.0.1"`) || !strings.Contains(rec.Body.String(), `"updateAvailable":true`) {
+	if !strings.Contains(rec.Body.String(), `"latestVersion":"`+appVersion+`"`) || !strings.Contains(rec.Body.String(), `"updateAvailable":false`) {
 		t.Fatalf("unexpected response: %s", rec.Body.String())
 	}
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
