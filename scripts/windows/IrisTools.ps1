@@ -1311,10 +1311,13 @@ function Test-Release {
         Invoke-Checked "go" @("vet", "./...") 600
         Invoke-Staticcheck @("./...")
         Invoke-Govulncheck
-        Invoke-Checked $AuditPython @("-B", "-m", "unittest", "discover", "-s", "tools", "-p", "test_*.py") 600
+        Invoke-Checked $AuditPython @("-m", "compileall", "-q", "tools", "tests") 120
+        $LegacyTests = @(Get-ChildItem -LiteralPath (Join-Path $Root "tools") -Filter "test_*.py" -File -ErrorAction SilentlyContinue)
+        if ($LegacyTests.Count -ne 0) { throw "Python regression tests must live in tests/, not tools/." }
+        Invoke-Checked $AuditPython @("-B", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py") 600
         Invoke-Checked (Join-Path $AuditEnv "Scripts\ruff.exe") @("check", "--no-cache", ".") 300
         Invoke-Checked (Join-Path $AuditEnv "Scripts\ruff.exe") @("format", "--check", "--no-cache", ".") 300
-        Invoke-Checked (Join-Path $AuditEnv "Scripts\bandit.exe") @("-q", "-r", "tools", "-x", "tools/test_*.py") 300
+        Invoke-Checked (Join-Path $AuditEnv "Scripts\bandit.exe") @("-q", "-r", "tools") 300
         Invoke-Checked (Join-Path $AuditEnv "Scripts\pip-audit.exe") @("--local", "--cache-dir", (Join-Path $AuditEnv "pip-audit-cache")) 600
         Invoke-Checked $AuditPython @("-B", "tools/validate_workflows.py") 120
         Invoke-Checked "node" @("--check", "web/app.js") 120

@@ -42,9 +42,8 @@ class ReleaseHelperTests(unittest.TestCase):
         )
 
     def test_version_is_coherent_across_runtime_and_release_metadata(self):
-        self.assertEqual(
-            (ROOT / "VERSION").read_text(encoding="utf-8").strip(), "2.0.0"
-        )
+        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
         server = (ROOT / "server.go").read_text(encoding="utf-8")
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
@@ -52,12 +51,12 @@ class ReleaseHelperTests(unittest.TestCase):
         resources = json.loads(
             (ROOT / "build" / "windows" / "info.json").read_text(encoding="utf-8")
         )
-        self.assertIn('var appVersion = "2.0.0"', server)
-        self.assertIn("Версия 2.0.0", html)
-        self.assertIn("const APP_VERSION = '2.0.0'", script)
-        self.assertEqual(wails["info"]["productVersion"], "2.0.0")
-        self.assertEqual(resources["fixed"]["product_version"], "2.0.0.0")
-        self.assertEqual(resources["info"]["0419"]["ProductVersion"], "2.0.0")
+        self.assertIn(f'var appVersion = "{version}"', server)
+        self.assertIn(f"Версия {version}", html)
+        self.assertIn(f"const APP_VERSION = '{version}'", script)
+        self.assertEqual(wails["info"]["productVersion"], version)
+        self.assertEqual(resources["fixed"]["product_version"], f"{version}.0")
+        self.assertEqual(resources["info"]["0419"]["ProductVersion"], version)
 
     def test_desktop_build_contract_has_no_production_listener(self):
         windows_main = (ROOT / "main_windows.go").read_text(encoding="utf-8")

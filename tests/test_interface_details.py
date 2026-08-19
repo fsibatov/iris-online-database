@@ -13,6 +13,7 @@ class InterfaceDetailTests(unittest.TestCase):
         cls.html = (ROOT / "web/index.html").read_text(encoding="utf-8")
         cls.styles = (ROOT / "web/styles.css").read_text(encoding="utf-8")
         cls.server = (ROOT / "server.go").read_text(encoding="utf-8")
+        cls.version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
     def test_item_presentation_has_separate_groups(self):
         block = self.script[
@@ -214,7 +215,7 @@ class InterfaceDetailTests(unittest.TestCase):
     def test_version_status_and_vk_news_controls_are_visible(self):
         self.assertIn('id="versionStatus"', self.html)
         self.assertIn('id="checkUpdatesButton"', self.html)
-        self.assertIn("Версия 2.0.0", self.html)
+        self.assertIn(f"Версия {self.version}", self.html)
         self.assertIn("renderVersionStatus()", self.script)
         self.assertIn("?refresh=1", self.script)
         self.assertIn("/api/community-status", self.script)
@@ -368,8 +369,8 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         for stale in ("IrisOnline" + "Preview", "audited", *legacy_versions):
             self.assertNotIn(stale, combined)
         self.assertNotIn(" preview", self.html.lower())
-        self.assertIn("const APP_VERSION = '2.0.0'", self.script)
-        self.assertIn("Версия 2.0.0", self.html)
+        self.assertIn(f"const APP_VERSION = '{self.version}'", self.script)
+        self.assertIn(f"Версия {self.version}", self.html)
 
     def test_selects_share_control_class(self):
         self.assertIn('class="control-select control-select--server"', self.html)

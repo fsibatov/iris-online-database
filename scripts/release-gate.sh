@@ -107,10 +107,15 @@ fi
 "$AUDIT_ENV/bin/python" -m pip check
 "$AUDIT_ENV/bin/python" -B tools/validate_workflows.py
 
-"$AUDIT_ENV/bin/python" -B -m unittest discover -s tools -p 'test_*.py'
+"$AUDIT_ENV/bin/python" -m compileall -q tools tests
+if find tools -maxdepth 1 -type f -name 'test_*.py' -print -quit | grep -q .; then
+  echo "Python regression tests must live in tests/, not tools/."
+  exit 1
+fi
+"$AUDIT_ENV/bin/python" -B -m unittest discover -s tests -p 'test_*.py'
 "$AUDIT_ENV/bin/ruff" check --no-cache .
 "$AUDIT_ENV/bin/ruff" format --check --no-cache .
-"$AUDIT_ENV/bin/bandit" -q -r tools -x 'tools/test_*.py'
+"$AUDIT_ENV/bin/bandit" -q -r tools
 timeout 10m "$AUDIT_ENV/bin/pip-audit" --local --cache-dir "$AUDIT_ENV/pip-audit-cache"
 node --check web/app.js
 
