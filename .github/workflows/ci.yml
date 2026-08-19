@@ -139,15 +139,65 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          $gcc = Get-Command gcc.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $gcc) { throw "Windows race detector requires gcc.exe on the GitHub runner." }
-          & $gcc.Source --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $syncArchive = (& $gcc.Source -print-file-name=libsynchronization.a | Out-String).Trim()
-          if (-not $syncArchive -or $syncArchive -eq "libsynchronization.a" -or -not (Test-Path -LiteralPath $syncArchive -PathType Leaf)) {
-            throw "Windows MinGW runtime is too old for the Go race detector."
+
+          $CompilerCandidates = New-Object System.Collections.Generic.List[string]
+          foreach ($Candidate in @(
+            "C:\msys64\ucrt64\bin\gcc.exe",
+            "C:\msys64\mingw64\bin\gcc.exe"
+          )) {
+            if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+              $CompilerCandidates.Add($Candidate)
+            }
           }
+
+          $PathGcc = Get-Command gcc.exe -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($PathGcc -and -not $CompilerCandidates.Contains([string]$PathGcc.Source)) {
+            $CompilerCandidates.Add([string]$PathGcc.Source)
+          }
+
+          if ($CompilerCandidates.Count -eq 0) {
+            throw "Windows race detector requires a MinGW-w64 C compiler."
+          }
+
+          $Compiler = $null
+          foreach ($Candidate in $CompilerCandidates) {
+            Write-Host "Testing race C compiler: $Candidate"
+            & $Candidate --version
+            if ($LASTEXITCODE -ne 0) { continue }
+
+            $SyncArchive = (& $Candidate --print-file-name libsynchronization.a 2>&1 | Out-String).Trim()
+            Write-Host "libsynchronization.a probe: $SyncArchive"
+            if (
+              $LASTEXITCODE -eq 0 -and
+              $SyncArchive -and
+              $SyncArchive -ne "libsynchronization.a" -and
+              (Test-Path -LiteralPath $SyncArchive -PathType Leaf)
+            ) {
+              $Compiler = $Candidate
+              break
+            }
+          }
+
+          if (-not $Compiler) {
+            throw "No installed Windows MinGW-w64 compiler provides libsynchronization.a required by the Go race detector."
+          }
+
+          $CompilerDirectory = Split-Path $Compiler -Parent
+          $Cxx = Join-Path $CompilerDirectory "g++.exe"
+          if (-not (Test-Path -LiteralPath $Cxx -PathType Leaf)) {
+            throw "The selected MinGW-w64 compiler has no matching g++.exe."
+          }
+
+          $env:PATH = $CompilerDirectory + ";" + $env:PATH
+          $env:CC = $Compiler
+          $env:CXX = $Cxx
           $env:CGO_ENABLED = "1"
+
+          Write-Host "Selected race C compiler: $env:CC"
+          go env GOOS GOARCH GOVERSION CC CXX CGO_ENABLED
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           go test -race -count=1 ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
