@@ -80,11 +80,7 @@ def powershell_step_failures(document: dict[object, object]) -> int:
     if not system_root:
         return 1
     powershell_executable = (
-        Path(system_root)
-        / "System32"
-        / "WindowsPowerShell"
-        / "v1.0"
-        / "powershell.exe"
+        Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
     )
     if not powershell_executable.is_file():
         return 1
