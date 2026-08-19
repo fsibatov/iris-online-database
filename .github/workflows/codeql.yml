@@ -18,8 +18,8 @@ env:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: windows-2025
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -37,12 +37,14 @@ jobs:
         uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           languages: ${{ matrix.language }}
-      - name: Build Linux and Windows Go sources
+      - name: Build Windows Go sources
         if: matrix.language == 'go'
-        shell: bash
+        shell: powershell
         run: |
-          set -euo pipefail
+          $ErrorActionPreference = "Stop"
           go test -count=1 ./...
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/iris-codeql.exe" .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -trimpath -o (Join-Path $env:RUNNER_TEMP "iris-codeql.exe") .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Analyze
         uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6

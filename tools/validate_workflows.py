@@ -38,22 +38,34 @@ def release_policy_failures() -> int:
     failures = 0
     ci_path = ROOT / ".github" / "workflows" / "ci.yml"
     codeql_path = ROOT / ".github" / "workflows" / "codeql.yml"
+    dependency_path = ROOT / ".github" / "workflows" / "dependency-review.yml"
     try:
         ci = ci_path.read_text(encoding="utf-8")
         codeql = codeql_path.read_text(encoding="utf-8")
+        dependency = dependency_path.read_text(encoding="utf-8")
     except OSError:
         return 1
 
     required_checks = (
-        "name: Linux quality and security",
-        "name: Go race detector",
+        "name: Windows quality and security",
+        "name: Windows race detector",
         "name: Native Windows Wails release matrix",
     )
     if any(marker not in ci for marker in required_checks):
         failures += 1
+    if "ubuntu-" in ci or "ubuntu-" in codeql or "ubuntu-" in dependency:
+        failures += 1
+    if ci.count("runs-on: windows-2025") < 3:
+        failures += 1
+    if (
+        "runs-on: windows-2025" not in codeql
+        or "runs-on: windows-2025" not in dependency
+    ):
+        failures += 1
     if (
         "name: Analyze (${{ matrix.language }})" not in codeql
         or "language: [go, python]" not in codeql
+        or "Build Windows Go sources" not in codeql
     ):
         failures += 1
 
@@ -83,6 +95,17 @@ def release_policy_failures() -> int:
         "verify_windows_resources.py",
     ):
         if marker not in windows:
+            failures += 1
+    for marker in (
+        "Run canonical Windows release gate",
+        "IrisTools.ps1 -Action Test",
+        "GITLEAKS_WINDOWS_X64_SHA256",
+        "playwright install chromium",
+        "Windows amd64 race detector",
+        "go test -race -count=1 ./...",
+        "libsynchronization.a",
+    ):
+        if marker not in ci:
             failures += 1
     return failures
 

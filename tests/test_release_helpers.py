@@ -124,33 +124,26 @@ class ReleaseHelperTests(unittest.TestCase):
             verify_version_resource([bytes(broken)], "2.0.0", "amd64")
 
     def test_release_build_is_external_and_fingerprint_gated(self):
-        build = (ROOT / "scripts" / "build-release.sh").read_text(encoding="utf-8")
-        gate = (ROOT / "scripts" / "release-gate.sh").read_text(encoding="utf-8")
         launcher = (ROOT / "IrisTools.ps1").read_text(encoding="utf-8")
         windows = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
             encoding="utf-8"
         )
-        for marker in (
-            "release_fingerprint.py --verify",
-            "windows/amd64",
-            "windows/386",
-            "windows/arm64",
-            "IrisOnlineDB-$VERSION-Windows-x64.exe",
-            "IrisOnlineDB-$VERSION-Windows-x86.exe",
-            "IrisOnlineDB-$VERSION-Windows-arm64.exe",
-            "-webview2 embed",
-            "IrisOnlineDatabase.exe",
-            "SHA256SUMS.txt",
-        ):
-            self.assertIn(marker, build)
         self.assertEqual(
             [(target.goarch, target.asset_suffix) for target in RELEASE_TARGETS],
             [("amd64", "x64"), ("386", "x86"), ("arm64", "arm64")],
         )
-        self.assertIn("release_fingerprint.py --write", gate)
-        self.assertIn("git status --porcelain", gate)
         self.assertIn("scripts\\windows\\IrisTools.ps1", launcher)
-        self.assertIn("CGO_ENABLED=0", build)
+        for marker in (
+            "release_fingerprint.py",
+            "windows/amd64",
+            "windows/386",
+            "windows/arm64",
+            "IrisOnlineDB-$Version-Windows-$($Target.Suffix).exe",
+            "webview2",
+            "IrisOnlineDatabase.exe",
+            "SHA256SUMS.txt",
+        ):
+            self.assertIn(marker, windows)
         self.assertIn('$env:CGO_ENABLED = "0"', windows)
         self.assertIn(
             '$EnvironmentNames = @("CGO_ENABLED", "GOAMD64", "GO386", "GOARM64")',
@@ -322,7 +315,6 @@ class ReleaseHelperTests(unittest.TestCase):
     def test_release_gate_uses_current_gitleaks_cli_and_embedded_data_audit(self):
         paths = (
             ROOT / ".github" / "workflows" / "ci.yml",
-            ROOT / "scripts" / "release-gate.sh",
             ROOT / "scripts" / "windows" / "IrisTools.ps1",
         )
         combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
@@ -330,36 +322,21 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("data_presentation_audit.py", combined)
         self.assertIn("function Test-GitleaksDetection", combined)
         self.assertIn("Gitleaks functional detection self-test failed.", combined)
-        self.assertIn("iris_resolve_gitleaks", combined)
-        self.assertIn("iris_test_gitleaks_detection", combined)
         self.assertIn("Invoke-GitleaksHistoryScan", combined)
         self.assertIn("Test-GitleaksHistoryProof", combined)
         self.assertIn("ConvertFrom-AnsiToolOutput", combined)
-        self.assertIn("GITLEAKS_HISTORY_ANSI_PROOF", combined)
-        self.assertIn("GITLEAKS_HISTORY_ZERO_PROOF", combined)
-        self.assertIn("iris_gitleaks_history_scan", combined)
-        release_tools = (ROOT / "scripts" / "release-tools.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("iris_gitleaks_history_proof", release_tools)
         self.assertIn("commits scanned", combined)
-        self.assertIn("--exit-code 37", combined)
+        self.assertIn("--exit-code", combined)
         self.assertNotIn("python3 -B tools/raw_projection_audit.py\n", combined)
         self.assertNotIn("python3 -B tools/drop_table_audit.py\n", combined)
-        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn(
-            'iris_gitleaks_history_scan "$(command -v gitleaks)" "."', workflow
-        )
 
     def test_release_requires_successful_ci_codeql_and_unchanged_artifact(self):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
             encoding="utf-8"
         )
         for check in (
-            "Linux quality and security",
-            "Go race detector",
+            "Windows quality and security",
+            "Windows race detector",
             "Native Windows Wails release matrix",
             "Analyze (go)",
             "Analyze (python)",
@@ -449,11 +426,9 @@ class ReleaseHelperTests(unittest.TestCase):
         )
         self.assertIn("go-version-file: .go-version", workflow)
         self.assertIn("go-version-file: .go-version", codeql)
-        self.assertIn('iris_run_govulncheck "$(command -v govulncheck)" 15m', workflow)
-        release_tools = (ROOT / "scripts" / "release-tools.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("export GOTOOLCHAIN=local", release_tools)
+        self.assertIn("govulncheck@v1.6.0", workflow)
+        self.assertNotIn("ubuntu-", workflow)
+        self.assertNotIn("ubuntu-", codeql)
 
     def test_windows_wails_pin_uses_go_module_metadata_and_exact_binary(self):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
@@ -651,30 +626,21 @@ class ReleaseHelperTests(unittest.TestCase):
         ):
             self.assertIn(marker, gate)
 
-    def test_shell_release_tools_do_not_trust_wails_path_or_version_text(self):
-        helper = (ROOT / "scripts" / "release-tools.sh").read_text(encoding="utf-8")
-        build = (ROOT / "scripts" / "build-release.sh").read_text(encoding="utf-8")
-        gate = (ROOT / "scripts" / "release-gate.sh").read_text(encoding="utf-8")
-        self.assertIn("go version -m", helper)
-        self.assertIn("github.com/wailsapp/wails/v2/cmd/wails", helper)
-        self.assertIn("iris_resolve_staticcheck", helper)
-        self.assertIn("iris_resolve_govulncheck", helper)
-        self.assertIn("iris_run_govulncheck", helper)
-        self.assertIn("iris_govuln_network_failure", helper)
-        self.assertLess(
-            helper.index('"https://storage.googleapis.com/go-vulndb"'),
-            helper.index('"https://vuln.go.dev"'),
+    def test_release_tooling_is_windows_only_and_uses_verified_resolvers(self):
+        for name in ("release-tools.sh", "release-gate.sh", "build-release.sh"):
+            self.assertFalse((ROOT / "scripts" / name).exists(), name)
+        windows = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
         )
-        self.assertIn('iris_run_govulncheck "$GOVULNCHECK_BIN" 15m', gate)
-        self.assertNotIn('timeout 15m "$GOVULNCHECK_BIN" ./...', gate)
-        self.assertIn("iris_resolve_gitleaks", helper)
-        self.assertIn("iris_test_gitleaks_detection", helper)
-        self.assertIn('GITLEAKS_BIN="$(iris_resolve_gitleaks 8.30.1', gate)
-        self.assertIn('WAILS_BIN="$(iris_resolve_wails v2.14.0', build)
-        self.assertIn('"$WAILS_BIN" build', build)
-        self.assertIn('STATICCHECK_BIN="$(iris_resolve_staticcheck 2026.1', gate)
-        self.assertNotIn("wails version", build + gate)
-        self.assertNotRegex(build + gate, r"(?m)^\s*wails build")
+        self.assertIn("& $GoExecutable.Source version -m $Executable 2>&1", windows)
+        self.assertIn("github.com/wailsapp/wails/v2/cmd/wails", windows)
+        self.assertIn("Get-PinnedWailsExecutable", windows)
+        self.assertIn("Get-PinnedStaticcheckExecutable", windows)
+        self.assertIn("Get-PinnedGovulncheckExecutable", windows)
+        self.assertIn("Invoke-Govulncheck", windows)
+        self.assertIn("Test-GitleaksDetection", windows)
+        self.assertIn("Invoke-GitleaksHistoryScan", windows)
+        self.assertNotIn('Invoke-Checked "wails" @(', windows)
 
     def test_release_assets_are_exact_and_checksum_verified(self):
         self.assertEqual(
@@ -907,8 +873,8 @@ class ReleaseHelperTests(unittest.TestCase):
             except OSError as exc:
                 # Creating symlinks on Windows can require Developer Mode or the
                 # SeCreateSymbolicLinkPrivilege. The release gate must remain
-                # runnable by a normal non-elevated user; Linux CI still exercises
-                # the symlink-specific branch when Windows cannot create one.
+                # runnable by a normal non-elevated user. Manifest rejection is
+                # still tested even when this optional Windows privilege is absent.
                 if os.name != "nt" or getattr(exc, "winerror", None) != 1314:
                     raise
             result = self.run_audit(root)
@@ -951,12 +917,13 @@ class ReleaseHelperTests(unittest.TestCase):
                 self.assertNotIn(path.name, forbidden_names, path)
                 self.assertNotIn(path.suffix.lower(), forbidden_suffixes, path)
 
-    def test_release_shell_scripts_are_real_executables(self):
-        for name in ("release-gate.sh", "build-release.sh"):
-            path = ROOT / "scripts" / name
-            self.assertTrue(path.read_bytes().startswith(b"#!/usr/bin/env bash\n"))
-            if os.name != "nt":
-                self.assertTrue(path.stat().st_mode & stat.S_IXUSR, name)
+    def test_release_tooling_has_no_posix_release_scripts(self):
+        self.assertFalse(any((ROOT / "scripts").glob("*.sh")))
+        self.assertTrue((ROOT / "IrisTools.ps1").is_file())
+        self.assertTrue((ROOT / "scripts" / "windows" / "IrisTools.ps1").is_file())
+        self.assertTrue(
+            (ROOT / "scripts" / "windows" / "00_RELEASE_WINDOWS.bat").is_file()
+        )
 
     def test_frontend_smoke_redacts_missing_browser_details(self):
         sensitive = "/" + "home/private-user/playwright/chrome"

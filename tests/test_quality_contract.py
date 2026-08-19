@@ -21,9 +21,6 @@ class QualityContractTests(unittest.TestCase):
         )
         cls.build_docs = (ROOT / "docs/BUILD.md").read_text(encoding="utf-8")
         cls.release_docs = (ROOT / "docs/RELEASE.md").read_text(encoding="utf-8")
-        cls.release_gate = (ROOT / "scripts/release-gate.sh").read_text(
-            encoding="utf-8"
-        )
         cls.windows_release_tools = (ROOT / "scripts/windows/IrisTools.ps1").read_text(
             encoding="utf-8"
         )
@@ -51,9 +48,7 @@ class QualityContractTests(unittest.TestCase):
         self.assertIn(f"IrisOnlineDB-{version}-Windows-arm64.exe", self.release_docs)
         self.assertIn(f"`v{version}` tag", self.release_docs)
 
-    def test_release_gates_run_current_python_regression_suite(self):
-        self.assertIn("unittest discover -s tests -p 'test_*.py'", self.release_gate)
-        self.assertNotIn("unittest discover -s tools", self.release_gate)
+    def test_windows_release_gate_runs_current_python_regression_suite(self):
         self.assertIn(
             '"discover", "-s", "tests", "-p", "test_*.py"',
             self.windows_release_tools,
@@ -62,8 +57,12 @@ class QualityContractTests(unittest.TestCase):
             '"discover", "-s", "tools", "-p", "test_*.py"',
             self.windows_release_tools,
         )
-        self.assertIn('bandit" -q -r tools', self.release_gate)
         self.assertIn('@("-q", "-r", "tools")', self.windows_release_tools)
+        self.assertIn("$env:PYTHONPATH = $ToolsPath", self.windows_release_tools)
+        self.assertIn(
+            "$env:PYTHONPYCACHEPREFIX = $ExternalPyCache", self.windows_release_tools
+        )
+        self.assertIn("Clear-PythonGenerated", self.windows_release_tools)
 
     def test_item_page_does_not_duplicate_recipe_materials(self):
         detail = self.script[
