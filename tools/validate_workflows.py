@@ -171,6 +171,7 @@ def release_policy_failures() -> int:
         "name: Analyze (${{ matrix.language }})" not in codeql
         or "language: [go, python]" not in codeql
         or "Build Windows Go sources" not in codeql
+        or "iris-codeql-go-temp-" not in codeql
     ):
         failures += 1
 
@@ -204,10 +205,13 @@ def release_policy_failures() -> int:
     for marker in (
         "Run canonical Windows release gate",
         "IrisTools.ps1 -Action Test",
+        "iris-release-gate-temp-",
         "GITLEAKS_WINDOWS_X64_SHA256",
         "playwright install chromium",
         "Windows amd64 race detector",
         "go test -race -count=1 ./...",
+        "iris-go-race-temp-",
+        "--print-file-name libsynchronization.a",
         "libsynchronization.a",
     ):
         if marker not in ci:
