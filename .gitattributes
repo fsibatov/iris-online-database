@@ -1,4 +1,7 @@
 *.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+.go-version text eol=lf
 *.py text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
