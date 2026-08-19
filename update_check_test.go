@@ -183,7 +183,7 @@ func TestUpdateCheckEndpointUsesBoundedChecker(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Fatalf("unexpected method %s", r.Method)
 		}
-		fmt.Fprintf(w, `{"tag_name":"v%s"}\n`, appVersion)
+		fmt.Fprintf(w, `{"tag_name":"v%s"}`+"\n", appVersion)
 	}))
 	defer github.Close()
 	checker := newUpdateChecker()
