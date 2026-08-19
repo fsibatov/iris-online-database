@@ -81,7 +81,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check web\app.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          gofmtOutput = $null
 
       - name: Validate Go and PowerShell
         shell: powershell
