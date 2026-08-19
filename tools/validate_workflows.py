@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
-import subprocess
+import subprocess  # nosec B404 - fixed Windows system executable, no shell
 import tempfile
 from pathlib import Path
 
@@ -75,6 +76,19 @@ def powershell_step_failures(document: dict[object, object]) -> int:
     if not isinstance(jobs, dict):
         return 1
 
+    system_root = os.environ.get("SystemRoot")
+    if not system_root:
+        return 1
+    powershell_executable = (
+        Path(system_root)
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    if not powershell_executable.is_file():
+        return 1
+
     scripts: list[str] = []
     for job in jobs.values():
         if not isinstance(job, dict):
@@ -104,9 +118,9 @@ def powershell_step_failures(document: dict[object, object]) -> int:
             script_path = temp / f"workflow-step-{index}.ps1"
             script_path.write_text(script, encoding="utf-8-sig")
             try:
-                result = subprocess.run(
+                result = subprocess.run(  # nosec B603 - fixed executable and arguments
                     [
-                        "powershell.exe",
+                        str(powershell_executable),
                         "-NoLogo",
                         "-NoProfile",
                         "-NonInteractive",
