@@ -38,7 +38,7 @@ Windows gate сам задаёт `PYTHONPATH` для `tools` и выносит `
 
 `IrisTools.ps1 -Action Test` выполняет fail-closed gate: repository hygiene, gofmt, module verify/tidy-diff, Windows build probe, Go tests и vet, Staticcheck, govulncheck, Python unittest, Ruff lint/format, Bandit, full installed-environment pip-audit, YAML/action-pin validation, audit встроенной проекции данных, JS syntax, deterministic Playwright smoke, Gitleaks current/history и повторную Git cleanliness проверку. Fingerprint записывается только после полного PASS.
 
-GitHub CI использует Windows Server 2025. Отдельно выполняются тот же Windows quality/security gate, Windows `amd64` race detector и Wails-сборка x64/x86/ARM64. CodeQL и dependency review для release-контуров также выполняются на Windows runners. Linux не является поддерживаемой платформой приложения и не входит в release gate.
+Все GitHub Actions workflows проекта выполняются на Windows runners; validator запрещает non-Windows `runs-on` и POSIX `shell: bash/sh`. GitHub CI использует Windows Server 2025: отдельно выполняются тот же Windows quality/security gate, Windows `amd64` race detector и Wails-сборка x64/x86/ARM64. CodeQL, dependency review и плановое обновление VK также выполняются на Windows. Linux не является поддерживаемой платформой проекта и не используется в автоматизации.
 
 Release build последовательно собирает Windows x64 (`windows/amd64`, `GOAMD64=v1`), x86 (`windows/386`, `GO386=sse2`) и ARM64 (`windows/arm64`, `GOARM64=v8.0`). Для каждой цели явно устанавливается `CGO_ENABLED=0`, а исходное process environment восстанавливается после сборки. Каждый EXE проходит проверку Go/Wails metadata, PE architecture, Windows resources и hardening flags.
 
