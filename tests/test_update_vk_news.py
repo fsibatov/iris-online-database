@@ -234,9 +234,7 @@ class VKNewsUpdaterTests(unittest.TestCase):
         self.assertNotRegex(workflow, r"pip install[^\n]*playwright==")
         self.assertIn("tools\\verify_python_environment.py", workflow)
         self.assertIn("git diff --quiet -- data/latest-vk.json", workflow)
-        self.assertIn(
-            "for ($Attempt = 1; $Attempt -le 3; $Attempt++)", workflow
-        )
+        self.assertIn("for ($Attempt = 1; $Attempt -le 3; $Attempt++)", workflow)
         self.assertIn("VK transient failure", workflow)
         self.assertIn("::warning::VK is temporarily unavailable", workflow)
         self.assertIn("VK updater failed with non-transient category", workflow)
