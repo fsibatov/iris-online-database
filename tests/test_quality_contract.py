@@ -16,7 +16,9 @@ class QualityContractTests(unittest.TestCase):
         cls.readme = (ROOT / "README.md").read_text(encoding="utf-8")
         cls.server = (ROOT / "server.go").read_text(encoding="utf-8")
         cls.wails = (ROOT / "wails.json").read_text(encoding="utf-8")
-        cls.windows_info = (ROOT / "build/windows/info.json").read_text(encoding="utf-8")
+        cls.windows_info = (ROOT / "build/windows/info.json").read_text(
+            encoding="utf-8"
+        )
         cls.build_docs = (ROOT / "docs/BUILD.md").read_text(encoding="utf-8")
         cls.release_docs = (ROOT / "docs/RELEASE.md").read_text(encoding="utf-8")
         cls.release_gate = (ROOT / "scripts/release-gate.sh").read_text(
