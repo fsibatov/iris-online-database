@@ -22,7 +22,19 @@ jobs:
           sed -n '/^          from pathlib import Path$/,/^          PY$/p' .github/workflows/agent-v202.yml | sed '$d; s/^          //' > /tmp/agent_v202_patch.py
           python /tmp/agent_v202_patch.py
           node --check web/app.js
-          PYTHONPATH=tools python -m unittest discover -s tests -p 'test_release_helpers.py'
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          version = Path('VERSION').read_text(encoding='utf-8').strip()
+          assert version == '2.0.2'
+          assert 'var appVersion = "2.0.2"' in Path('server.go').read_text(encoding='utf-8')
+          assert "const APP_VERSION = '2.0.2'" in Path('web/app.js').read_text(encoding='utf-8')
+          assert Path('web/index.html').read_text(encoding='utf-8').count('Версия 2.0.2') >= 2
+          assert json.loads(Path('wails.json').read_text(encoding='utf-8'))['info']['productVersion'] == '2.0.2'
+          info = json.loads(Path('build/windows/info.json').read_text(encoding='utf-8'))
+          assert info['fixed']['product_version'] == '2.0.2.0'
+          assert info['info']['0419']['ProductVersion'] == '2.0.2'
+          PY
           go test ./...
           git config user.name "OpenAI"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
