@@ -123,6 +123,12 @@ RUNE_ITEM = {
     "drops": [],
 }
 
+TITLE = {
+    "title": {"index": 991, "name": "Антагонист I", "level": 1},
+    "effect": "+1 к тестовой характеристике",
+    "drops": [],
+}
+
 
 class FixtureState:
     def __init__(self) -> None:
@@ -208,6 +214,9 @@ class FixtureHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/items/2002":
             self.send_json(RUNE_ITEM)
+            return
+        if parsed.path == "/api/titles/991":
+            self.send_json(TITLE)
             return
         self.serve_asset(parsed.path)
 
@@ -372,6 +381,41 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 page.get_by_role("heading", name="Тестовая шкатулка").count() == 1,
                 "back from a contained item did not restore its chest",
             )
+
+            page.evaluate("location.hash = 'title/991'")
+            page.wait_for_selector('.detail-page[data-route="title/991"]')
+            title_heading = page.get_by_role("heading", name="Антагонист I")
+            title_box = title_heading.bounding_box()
+            require(
+                title_box is not None and title_box["width"] >= 300,
+                "title detail heading collapsed on desktop",
+            )
+            require(
+                title_box["height"] <= 80,
+                "title detail heading wrapped vertically on desktop",
+            )
+            require(
+                page.locator(".detail-summary--title").count() == 1,
+                "title detail does not use the dedicated two-column layout",
+            )
+            page.set_viewport_size({"width": 360, "height": 780})
+            page.wait_for_timeout(50)
+            title_box = title_heading.bounding_box()
+            require(
+                title_box is not None and title_box["width"] >= 160,
+                "title detail heading collapsed on a narrow viewport",
+            )
+            require(
+                title_box["height"] <= 96,
+                "title detail heading became a vertical word stack",
+            )
+            require(
+                not page.evaluate(
+                    "document.documentElement.scrollWidth > document.documentElement.clientWidth"
+                ),
+                "title detail introduced horizontal overflow",
+            )
+            page.set_viewport_size({"width": 1280, "height": 900})
 
             page.evaluate("location.hash = 'monster/42'")
             page.wait_for_selector('.detail-page[data-route="monster/42"]')

@@ -316,6 +316,15 @@ class InterfaceDetailTests(unittest.TestCase):
         )
         self.assertIn("kind === 'titles'", self.script)
         self.assertNotIn("Индекс ${escapeHTML(title.index)}", self.script)
+        self.assertIn('class="detail-summary detail-summary--title"', self.script)
+        self.assertIn(
+            ".detail-summary--item, .detail-summary--title { grid-template-columns: minmax(0, 1fr) 52px; }",
+            self.styles,
+        )
+        self.assertIn(
+            ".detail-summary--title .detail-heading h1 { overflow-wrap: break-word; word-break: normal; }",
+            self.styles,
+        )
 
     def test_items_have_known_source_filter(self):
         self.assertIn("knownSource: ''", self.script)

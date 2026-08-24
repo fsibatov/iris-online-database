@@ -515,7 +515,8 @@ html[data-theme="light"] .control-select { color-scheme: light; }
 .detail-heading p { margin: 7px 0 0; color: var(--muted); overflow-wrap: anywhere; }
 .detail-labels { margin-top: 10px; display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 7px; }
 .detail-heading--item { text-align: left; }
-.detail-summary--item { grid-template-columns: minmax(0, 1fr) 52px; }
+.detail-summary--item, .detail-summary--title { grid-template-columns: minmax(0, 1fr) 52px; }
+.detail-summary--title .detail-heading h1 { overflow-wrap: break-word; word-break: normal; }
 .class-label {
   max-width: 100%;
   border-color: var(--border-strong);
@@ -845,7 +846,7 @@ a.link-row:hover { background: var(--surface-2); }
   .result-copy > strong { font-size: 15px; }
   .result-list.card-view { grid-template-columns: 1fr; }
   .detail-summary { grid-template-columns: 50px minmax(0, 1fr) 46px; gap: 11px; }
-  .detail-summary--item { grid-template-columns: minmax(0, 1fr) 46px; }
+  .detail-summary--item, .detail-summary--title { grid-template-columns: minmax(0, 1fr) 46px; }
   .detail-icon { width: 48px; height: 48px; }
   .detail-icon svg { width: 25px; height: 25px; }
   .detail-heading h1 { font-size: 28px; }
@@ -883,7 +884,7 @@ a.link-row:hover { background: var(--surface-2); }
   .server-select-wrap { max-width: 132px; grid-template-columns: 16px minmax(78px, 108px); }
   .control-select--server { max-width: 108px; padding-inline: 9px 28px; background-position: right 8px center; }
   .detail-summary { grid-template-columns: 44px minmax(0, 1fr) 44px; }
-  .detail-summary--item { grid-template-columns: minmax(0, 1fr) 44px; }
+  .detail-summary--item, .detail-summary--title { grid-template-columns: minmax(0, 1fr) 44px; }
   .detail-icon { width: 42px; height: 42px; }
   .favorite-button.large { width: 42px; height: 42px; }
 }

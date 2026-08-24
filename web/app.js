@@ -1469,7 +1469,7 @@
 
     main.innerHTML = `<section class="page detail-page" data-route="title/${index}">
       ${breadcrumb('titles', 'Титулы', name)}
-      <header class="detail-summary">
+      <header class="detail-summary detail-summary--title">
         <div class="detail-heading"><h1>${escapeHTML(name)}</h1><p>${escapeHTML(levelLabel)}</p></div>
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
       </header>
