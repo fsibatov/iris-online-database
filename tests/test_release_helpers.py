@@ -626,6 +626,9 @@ class ReleaseHelperTests(unittest.TestCase):
         gate = script.split("function Test-Release {", 1)[1].split(
             "function Clear-BuildGenerated {", 1
         )[0]
+        self.assertLess(
+            gate.index("Clear-BuildGenerated"), gate.index("repository_audit.py")
+        )
         for marker in (
             "repository_audit.py",
             'Invoke-Checked "go" @("mod", "verify")',

@@ -308,7 +308,7 @@ class InterfaceDetailTests(unittest.TestCase):
             )
         ]
         self.assertIn("function breadcrumb(parentRoute, parentLabel)", breadcrumb)
-        self.assertNotIn("aria-current=\"page\"", breadcrumb)
+        self.assertNotIn('aria-current="page"', breadcrumb)
         self.assertNotIn("current", breadcrumb)
         self.assertIn("font-size: 16px", self.styles)
         self.assertIn("font-weight: 700", self.styles)
