@@ -792,7 +792,7 @@ a.link-row:hover { background: var(--surface-2); }
     z-index: 45;
     min-height: calc(64px + env(safe-area-inset-bottom));
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     padding: 5px 6px env(safe-area-inset-bottom);
     border-top: 1px solid var(--border);
     background: var(--surface);
@@ -1223,3 +1223,6 @@ a.link-row:hover { background: var(--surface-2); }
   .version-status-number { font-size: 11px; }
   .section-tabs-row { padding-bottom: 6px; }
 }
+
+.title-result-row { grid-template-columns: minmax(0, 1fr); }
+.title-result-row .result-main { cursor: default; }

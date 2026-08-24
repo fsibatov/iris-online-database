@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.1';
+  const APP_VERSION = '2.0.2';
   const PAGE_SIZE = 24;
   const FAVORITES_PAGE_SIZE = 24;
   const SOURCE_BATCH = 20;
@@ -33,10 +33,15 @@
     return { q: '', type: '', quality: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'name', page: 1 };
   }
 
+  function defaultTitleFilters() {
+    return { q: '', sort: 'index', page: 1 };
+  }
+
   function resetTransientCatalogFilters() {
     state.itemFilters = defaultItemFilters();
     state.monsterFilters = defaultMonsterFilters();
     state.recipeFilters = defaultRecipeFilters();
+    state.titleFilters = defaultTitleFilters();
     localStorage.removeItem('iris-item-filters');
     localStorage.removeItem('iris-monster-filters');
   }
@@ -56,6 +61,8 @@
     itemFilters: defaultItemFilters(),
     monsterFilters: defaultMonsterFilters(),
     recipeFilters: defaultRecipeFilters(),
+    titleFilters: defaultTitleFilters(),
+    titlesData: null,
     routeController: null,
     catalogController: null,
     suggestionController: null,
@@ -103,6 +110,7 @@
     { route: 'items', label: 'Предметы', icon: 'item' },
     { route: 'monsters', label: 'Монстры', icon: 'monster' },
     { route: 'recipes', label: 'Рецепты', icon: 'recipe' },
+    { route: 'titles', label: 'Титулы', icon: 'title' },
     { route: 'favorites', label: 'Избранное', icon: 'star' },
   ];
   const mobileItems = [
@@ -115,6 +123,7 @@
     item: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 8v8l-8 5-8-5V8l8-5Z"/><path d="m4 8 8 5 8-5M12 13v8"/></svg>',
     monster: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8 4 4M17 8l3-4M6 10c0-3 2.7-5 6-5s6 2 6 5v5c0 3-2.7 5-6 5s-6-2-6-5v-5Z"/><path d="M9 12h.01M15 12h.01M9 16h6"/></svg>',
     recipe: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h10a2 2 0 0 1 2 2v16H8a2 2 0 0 1-2-2V3Z"/><path d="M6 17h12M10 8h4M10 12h5"/></svg>',
+    title: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="5"/><path d="m8.5 12-1 9 4.5-2.5 4.5 2.5-1-9"/></svg>',
     star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3Z"/></svg>',
     search: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>',
     filter: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>',
@@ -179,7 +188,7 @@
 
   function isInternalAppRoute(route) {
     const path = String(route || '').split('?')[0];
-    return ['home', 'items', 'monsters', 'recipes', 'favorites', 'search'].includes(path)
+    return ['home', 'items', 'monsters', 'recipes', 'titles', 'favorites', 'search'].includes(path)
       || /^(?:item|monster|recipe)\/\d+$/.test(path);
   }
 
@@ -505,13 +514,13 @@
         <a href="https://wiki.irisonline.ru/" target="_blank" rel="noopener noreferrer external"><strong>Wiki</strong><small>wiki.irisonline.ru</small></a>
         <a href="https://vk.ru/wall-59626511" target="_blank" rel="noopener noreferrer external"><strong>ВКонтакте</strong><small>vk.ru/wall-59626511</small></a>
         <a href="https://vk.ru/board59626511" target="_blank" rel="noopener noreferrer external"><strong>Обсуждения</strong><small>vk.ru</small></a>
+        <a href="https://t.me/irisonline_ru" target="_blank" rel="noopener noreferrer external"><strong>Telegram</strong><small>t.me/irisonline_ru</small></a>
         <a href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external"><strong>GitHub проекта</strong><small>github.com/fsibatov/iris-online-database</small></a>
       </div>
       <div class="community-links" aria-labelledby="communitiesTitle"><h3 id="communitiesTitle">Сообщества</h3><p>Официальный статус этих площадок не подтверждён.</p><div>
         <a href="https://aminoapps.com/c/IrisONru/home/" target="_blank" rel="noopener noreferrer external">Amino</a>
         <a href="https://coub.com/irison.ru" target="_blank" rel="noopener noreferrer external">Coub</a>
         <a href="https://discord.com/invite/m2EPNvV" target="_blank" rel="noopener noreferrer external">Discord</a>
-        <a href="https://t.me/joinchat/IZdJ2hPIDvgj-ythC-NvTQ" target="_blank" rel="noopener noreferrer external">Telegram</a>
       </div></div>
     </section>`;
     main.innerHTML = `<section class="page home-page">
@@ -639,24 +648,27 @@
   function catalogFilters(kind) {
     if (kind === 'items') return state.itemFilters;
     if (kind === 'recipes') return state.recipeFilters;
+    if (kind === 'titles') return state.titleFilters;
     return state.monsterFilters;
   }
 
   function catalogTitle(kind) {
     if (kind === 'items') return 'Предметы';
     if (kind === 'recipes') return 'Рецепты';
+    if (kind === 'titles') return 'Титулы';
     return 'Монстры';
   }
 
   function catalogRecords(kind, data) {
     if (kind === 'items') return data.items || [];
     if (kind === 'recipes') return data.recipes || [];
+    if (kind === 'titles') return data.titles || [];
     return data.monsters || [];
   }
 
   function normalizeDependentFilters(kind) {
     const filters = catalogFilters(kind);
-    if (kind === 'recipes') return;
+    if (kind === 'recipes' || kind === 'titles') return;
     if (!filters.category) {
       if (kind === 'items') {
         filters.subcategory = '';
@@ -674,7 +686,43 @@
     return params;
   }
 
+  function catalogRoute(kind) {
+    const filters = catalogFilters(kind);
+    const params = new URLSearchParams();
+    if (filters.q) params.set('q', filters.q);
+    if (filters.page > 1) params.set('page', String(filters.page));
+    const query = params.toString();
+    return query ? `${kind}?${query}` : kind;
+  }
+
+  async function fetchTitleCatalog(signal) {
+    if (!Array.isArray(state.titlesData)) {
+      const payload = await api('/titles.json', { signal });
+      state.titlesData = Array.isArray(payload?.titles) ? payload.titles : [];
+    }
+    const filters = state.titleFilters;
+    const query = String(filters.q || '').trim().toLocaleLowerCase('ru-RU');
+    let rows = state.titlesData.filter(record => {
+      if (!query) return true;
+      const searchable = `${formatTitleIndex(record.index)} ${record.index} ${record.name}`.toLocaleLowerCase('ru-RU');
+      return searchable.includes(query);
+    });
+    rows = [...rows].sort((left, right) => {
+      if (filters.sort === 'name') {
+        return String(left.name || '').localeCompare(String(right.name || ''), 'ru-RU', { sensitivity: 'base' }) || Number(left.index) - Number(right.index);
+      }
+      return Number(left.index) - Number(right.index) || String(left.name || '').localeCompare(String(right.name || ''), 'ru-RU', { sensitivity: 'base' });
+    });
+    const total = rows.length;
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const page = Math.min(Math.max(1, Number(filters.page) || 1), pages);
+    filters.page = page;
+    const start = (page - 1) * PAGE_SIZE;
+    return { titles: rows.slice(start, start + PAGE_SIZE), total, page, pages, filters: {} };
+  }
+
   async function fetchCatalog(kind, signal) {
+    if (kind === 'titles') return fetchTitleCatalog(signal);
     return api(`/api/${kind}?${buildCatalogParams(kind)}`, { signal });
   }
 
@@ -682,10 +730,10 @@
     const filters = catalogFilters(kind);
     state.catalog = { kind, data };
     main.innerHTML = `<section class="page catalog-page" data-catalog-kind="${kind}">
-      ${pageHeader(catalogTitle(kind), kind === 'items' ? 'Каталог предметов Iris Online.' : kind === 'recipes' ? 'Рецепты Iris Online и материалы для изготовления.' : 'Каталог монстров Iris Online.')}
+      ${pageHeader(catalogTitle(kind), kind === 'items' ? 'Каталог предметов Iris Online.' : kind === 'recipes' ? 'Рецепты Iris Online и материалы для изготовления.' : kind === 'titles' ? 'Каталог титулов Iris Online.' : 'Каталог монстров Iris Online.')}
       <section class="catalog-controls" aria-label="Управление каталогом">
         <label class="catalog-search"><span class="visually-hidden">Поиск в каталоге</span>${icons.search}<input type="search" data-catalog-search value="${escapeHTML(filters.q)}" placeholder="Поиск в каталоге"></label>
-        <button class="secondary-button filter-button" type="button" data-action="open-filters">${icons.filter}<span>Фильтры</span><strong data-filter-count>${activeFilterCount(kind) || ''}</strong></button>
+        ${kind === 'titles' ? '' : `<button class="secondary-button filter-button" type="button" data-action="open-filters">${icons.filter}<span>Фильтры</span><strong data-filter-count>${activeFilterCount(kind) || ''}</strong></button>`}
         <label class="sort-control"><span class="visually-hidden">Сортировка</span><select class="control-select" data-catalog-sort aria-label="Сортировка">${sortOptions(kind, filters.sort)}</select></label>
         <div class="view-switch" role="group" aria-label="Вид каталога"><button type="button" data-view="list" class="${state.view === 'list' ? 'active' : ''}" aria-label="Компактный список">${icons.list}</button><button type="button" data-view="cards" class="${state.view === 'cards' ? 'active' : ''}" aria-label="Плитка">${icons.grid}</button></div>
       </section>
@@ -695,10 +743,14 @@
       <div data-catalog-pagination>${pagination(data.page, data.pages)}</div>
     </section>`;
     positionSearchWidget(false);
-    renderFilterDrawer(kind, data.filters || {});
+    if (kind !== 'titles') renderFilterDrawer(kind, data.filters || {});
   }
 
   function sortOptions(kind, selected) {
+    if (kind === 'titles') {
+      const options = [['index', 'По индексу'], ['name', 'По названию']];
+      return options.map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('');
+    }
     const options = [
       ['name', 'По названию'],
       ...(kind === 'recipes' ? [['mastery', 'По уровню мастерства']] : [['level', kind === 'monsters' ? 'По уровню' : 'По рангу']]),
@@ -710,7 +762,18 @@
   function catalogResultsHTML(kind, data) {
     const records = catalogRecords(kind, data);
     if (!records.length) return `<div class="state-message compact"><span class="state-symbol">0</span><h2>Ничего не найдено</h2><p>Измените поисковый запрос или сбросьте фильтры.</p><button class="secondary-button" type="button" data-action="reset-filters">Сбросить фильтры</button></div>`;
-    return `<div class="result-list ${state.view === 'cards' ? 'card-view' : ''}">${records.map(record => kind === 'items' ? itemRow(record, catalogFilters(kind).q) : kind === 'recipes' ? recipeRow(record, catalogFilters(kind).q) : monsterRow(record, catalogFilters(kind).q)).join('')}</div>`;
+    return `<div class="result-list ${state.view === 'cards' ? 'card-view' : ''}">${records.map(record => kind === 'items' ? itemRow(record, catalogFilters(kind).q) : kind === 'recipes' ? recipeRow(record, catalogFilters(kind).q) : kind === 'titles' ? titleRow(record, catalogFilters(kind).q) : monsterRow(record, catalogFilters(kind).q)).join('')}</div>`;
+  }
+
+  function formatTitleIndex(value) {
+    const index = Number(value);
+    if (!Number.isInteger(index) || index < 0) return '';
+    return String(index).padStart(3, '0');
+  }
+
+  function titleRow(title, query = '') {
+    const label = `${formatTitleIndex(title.index)}. ${String(title.name || '').trim()}`;
+    return `<article class="result-row title-result-row"><div class="result-main"><span class="result-icon">${icons.title}</span><span class="result-copy"><strong>${highlight(label, query)}</strong><span class="result-secondary">Индекс ${escapeHTML(title.index)}</span></span></div></article>`;
   }
 
   function itemRow(item, query = '') {
@@ -783,12 +846,14 @@
   }
 
   function activeFilterCount(kind) {
+    if (kind === 'titles') return 0;
     const filters = catalogFilters(kind);
     const keys = kind === 'items' ? ['category', 'subcategory', 'quality', 'knownSource', 'minLevel', 'maxLevel'] : kind === 'recipes' ? ['type', 'quality', 'knownSource', 'minLevel', 'maxLevel'] : ['category', 'type', 'minLevel', 'maxLevel'];
     return keys.reduce((count, key) => count + (String(filters[key] || '').trim() ? 1 : 0), 0);
   }
 
   function activeFilterChips(kind) {
+    if (kind === 'titles') return '';
     const filters = catalogFilters(kind);
     const labels = kind === 'items'
       ? { category: 'Категория', subcategory: 'Подкатегория', quality: 'Редкость', knownSource: 'Известно, где получить', minLevel: 'Ранг от', maxLevel: 'Ранг до' }
@@ -808,6 +873,7 @@
   }
 
   function renderFilterDrawer(kind, filterData) {
+    if (kind === 'titles') return;
     const filters = catalogFilters(kind);
     const dependentLocked = kind !== 'recipes' && !filters.category;
     filterDrawer.dataset.kind = kind;
@@ -859,6 +925,11 @@
   async function refreshCatalog({ refreshFilters = false, announce = true } = {}) {
     const catalog = state.catalog;
     if (!catalog) return;
+    const route = catalogRoute(catalog.kind);
+    if (state.route !== route) {
+      state.route = route;
+      replaceRouteHash(route);
+    }
     state.catalogController?.abort();
     const controller = new AbortController();
     state.catalogController = controller;
@@ -894,6 +965,7 @@
   function resetFilters(kind = state.catalog?.kind || routeBase()) {
     if (kind === 'monsters') state.monsterFilters = defaultMonsterFilters();
     else if (kind === 'recipes') state.recipeFilters = defaultRecipeFilters();
+    else if (kind === 'titles') state.titleFilters = defaultTitleFilters();
     else state.itemFilters = defaultItemFilters();
     const search = main.querySelector('[data-catalog-search]');
     if (search) search.value = '';
@@ -1738,7 +1810,7 @@
     const visibleDetail = main.querySelector('.detail-page');
     const visibleCatalog = main.querySelector('.catalog-page');
     const preserveItemDetail = Boolean(visibleDetail && ((visibleDetail.dataset.route?.startsWith('item/') && targetPath.startsWith('item/')) || (visibleDetail.dataset.route?.startsWith('recipe/') && targetPath.startsWith('recipe/'))));
-    const preserveCatalogPage = Boolean(visibleCatalog && ['items', 'monsters', 'recipes'].includes(targetPath));
+    const preserveCatalogPage = Boolean(visibleCatalog && ['items', 'monsters', 'recipes', 'titles'].includes(targetPath));
     const preservePageTransition = Boolean(visiblePage && !preserveItemDetail && !preserveCatalogPage && targetPath !== 'home');
     const preserveVisiblePage = preserveItemDetail || preserveCatalogPage || preservePageTransition;
     const visibleRoute = visibleDetail?.dataset.route || visibleCatalog?.dataset.catalogKind || previousRoute;
@@ -1773,10 +1845,11 @@
       const [path, queryString = ''] = raw.split('?');
       const params = new URLSearchParams(queryString);
       if (path === 'home') homePage();
-      else if (path === 'items' || path === 'monsters' || path === 'recipes') {
+      else if (path === 'items' || path === 'monsters' || path === 'recipes' || path === 'titles') {
         const filters = catalogFilters(path);
         if (params.has('q')) filters.q = params.get('q') || '';
-        filters.page = 1;
+        const routePage = Number.parseInt(params.get('page') || '1', 10);
+        filters.page = Number.isFinite(routePage) && routePage > 0 ? routePage : 1;
         const data = await fetchCatalog(path, controller.signal);
         if (controller.signal.aborted || requestId !== state.requestId) return;
         catalogPage(path, data);
@@ -2158,6 +2231,7 @@
     normalizeDependentFilters('items');
     normalizeDependentFilters('monsters');
     normalizeDependentFilters('recipes');
+    normalizeDependentFilters('titles');
     document.documentElement.dataset.theme = state.theme;
     updateThemeChrome();
     localStorage.setItem('iris-server', state.server);
