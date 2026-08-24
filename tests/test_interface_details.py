@@ -289,21 +289,28 @@ class InterfaceDetailTests(unittest.TestCase):
         self.assertIn(
             "trackRecentlyViewed('monster', monster.id, monster.name,", self.script
         )
-        self.assertIn("trackRecentlyViewed('title', index, name, levelLabel)", self.script)
+        self.assertIn(
+            "trackRecentlyViewed('title', index, name, levelLabel)", self.script
+        )
         self.assertIn("recent-viewed-list", self.script)
         self.assertNotIn("recent-viewed-card", self.script)
         self.assertIn("recentlyViewed: normalizedRecentViewedEntries()", self.script)
         self.assertIn("profile.recentlyViewed", self.script)
         self.assertIn("localRecentlyViewed", self.script)
 
-
     def test_titles_are_clickable_level_aware_and_have_known_source_filter(self):
-        self.assertIn("return { q: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'level', page: 1 };", self.script)
+        self.assertIn(
+            "return { q: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'level', page: 1 };",
+            self.script,
+        )
         self.assertIn('href="#title/${Number(title.index)}"', self.script)
         self.assertIn("['level', 'По уровню']", self.script)
         self.assertIn("['name', 'По названию']", self.script)
         self.assertIn("['index', 'По индексу']", self.script)
-        self.assertIn("Только титулы, для которых в выбранной базе указан подтверждённый источник получения.", self.script)
+        self.assertIn(
+            "Только титулы, для которых в выбранной базе указан подтверждённый источник получения.",
+            self.script,
+        )
         self.assertIn("kind === 'titles'", self.script)
         self.assertNotIn("Индекс ${escapeHTML(title.index)}", self.script)
 
