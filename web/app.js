@@ -498,7 +498,7 @@
       : '';
     const serverDifference = `<section class="home-server-difference home-compact-section" aria-labelledby="serverDifferenceTitle">
       <h2 id="serverDifferenceTitle">Сервер</h2>
-      <p>Выберите The Original или Iris Kiss Kiss в верхней панели. Характеристики предметов одинаковы, а монстры и источники получения могут отличаться. База автоматически показывает данные выбранного сервера.</p>
+      <p>Выберите The Original или Iris Kiss Kiss в верхней панели. Названия и характеристики предметов берутся из общего справочника, а монстры и источники получения — из данных выбранного сервера.</p>
     </section>`;
     const vkNews = `<section class="home-vk-news home-compact-section" aria-labelledby="vkNewsTitle">
       <div class="home-section-heading home-section-heading--news">
@@ -854,7 +854,7 @@
       return `<button type="button" class="filter-chip" data-clear-filter="${key}" aria-label="Убрать фильтр: ${escapeHTML(value)}"><span>${escapeHTML(value)}</span>${icons.close}</button>`;
     });
     if (!chips.length) return '';
-    return `${chips.join('')}<button class="clear-all" type="button" data-action="reset-filters">Сбросить всё</button>`;
+    return `${chips.join('')}<button class="clear-all" type="button" data-action="reset-filters">Сбросить фильтры</button>`;
   }
 
   function optionList(options, selected, anyLabel) {
@@ -2180,12 +2180,12 @@
     closeMoreMenu();
     if (type === 'about') {
       infoDialogTitle.textContent = 'О приложении';
-      infoDialogBody.innerHTML = `<p>Iris Online Database — локальная база данных о предметах, монстрах, рецептах и способах их получения.</p><dl class="kv-list"><div><dt>Версия</dt><dd>${APP_VERSION}</dd></div><div><dt>Автор</dt><dd>Хоуп (The Original)</dd></div><div><dt>Данные</dt><dd>Хранятся и обрабатываются локально на этом компьютере</dd></div><div><dt>Проверка обновлений</dt><dd>${updateStatusHTML()}</dd></div></dl><p class="muted-copy">Приложение обращается к GitHub для проверки версии и загрузки подготовленной копии последней публичной записи ВКонтакте. Само приложение напрямую к VK не подключается. Профиль, история, избранное и поисковые запросы в GitHub не отправляются.</p><div class="legal-notice"><p><strong>© 2026 Iris Online Database</strong></p><p>Iris Online Database — неофициальное фанатское приложение для Iris Online. Проект не связан с разработчиками, издателями или правообладателями игры. Все игровые материалы, названия, логотипы и товарные знаки принадлежат их соответствующим правообладателям.</p><p><a class="external-link" href="https://irisonline.ru/" target="_blank" rel="noopener noreferrer" aria-label="Официальный сайт игры Iris Online — открыть в новой вкладке">Официальный сайт игры: irisonline.ru ${icons.external}</a></p><p><a class="external-link" href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external" aria-label="GitHub проекта Iris Online Database — открыть в новой вкладке">GitHub проекта ${icons.external}</a></p></div>`;
+      infoDialogBody.innerHTML = `<p>Iris Online Database — локальная база данных о предметах, монстрах, титулах, рецептах и источниках получения.</p><dl class="kv-list"><div><dt>Версия</dt><dd>${APP_VERSION}</dd></div><div><dt>Автор</dt><dd>Хоуп (Original)</dd></div><div><dt>Данные</dt><dd>Хранятся и обрабатываются локально на этом компьютере</dd></div><div><dt>Проверка обновлений</dt><dd>${updateStatusHTML()}</dd></div></dl><p class="muted-copy">Приложение обращается к GitHub для проверки версии и загрузки подготовленной копии последней публичной записи ВКонтакте. Само приложение напрямую к VK не подключается. Профиль, история, избранное и поисковые запросы в GitHub не отправляются.</p><div class="legal-notice"><p><strong>© 2026 Iris Online Database</strong></p><p>Iris Online Database — неофициальное фанатское приложение для Iris Online. Проект не связан с разработчиками, издателями или правообладателями игры. Все игровые материалы, названия, логотипы и товарные знаки принадлежат их соответствующим правообладателям.</p><p><a class="external-link" href="https://irisonline.ru/" target="_blank" rel="noopener noreferrer" aria-label="Официальный сайт игры Iris Online — открыть в новой вкладке">Официальный сайт игры: irisonline.ru ${icons.external}</a></p><p><a class="external-link" href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external" aria-label="GitHub проекта Iris Online Database — открыть в новой вкладке">GitHub проекта ${icons.external}</a></p></div>`;
     } else if (type === 'data') {
       const meta = state.meta?.meta || {};
       const server = activeServerMeta();
       infoDialogTitle.textContent = 'Актуальность данных';
-      infoDialogBody.innerHTML = `<p>Здесь указаны даты обновления встроенных данных для выбранного сервера.</p><dl class="kv-list"><div><dt>Предметы и характеристики</dt><dd>${formatSourceDate(meta.dataUpdatedAt)}</dd></div><div><dt>Обычная добыча</dt><dd>${formatSourceDate(server.directDropsUpdatedAt)}</dd></div><div><dt>Состав групп</dt><dd>${formatSourceDate(server.dropListsUpdatedAt)}</dd></div><div><dt>Мировая добыча</dt><dd>${formatSourceDate(server.worldDropsUpdatedAt)}</dd></div></dl><p class="muted-copy">Каталог предметов общий. Источники получения зависят от выбранного сервера.</p>`;
+      infoDialogBody.innerHTML = `<p>Здесь указаны даты обновления встроенных данных для выбранного сервера.</p><dl class="kv-list"><div><dt>Предметы и характеристики</dt><dd>${formatSourceDate(meta.dataUpdatedAt)}</dd></div><div><dt>Обычная добыча</dt><dd>${formatSourceDate(server.directDropsUpdatedAt)}</dd></div><div><dt>Состав групп</dt><dd>${formatSourceDate(server.dropListsUpdatedAt)}</dd></div><div><dt>Мировая добыча</dt><dd>${formatSourceDate(server.worldDropsUpdatedAt)}</dd></div></dl><p class="muted-copy">Названия и характеристики предметов берутся из общего справочника. Источники получения и состав монстров зависят от выбранного сервера.</p>`;
     } else if (type === 'feedback') {
       infoDialogTitle.textContent = 'Пожелания и замечания';
       infoDialogBody.innerHTML = `<p>Откройте Google Таблицы и оставьте комментарий в подходящей ячейке.</p><p><a class="primary-button" target="_blank" rel="noopener noreferrer external" href="https://docs.google.com/spreadsheets/d/1OEKLkfWQPNXG5QXpn1C0JZKOsgxjlTkrE5ckikG4uf4/edit?gid=1073338359#gid=1073338359">Открыть Google Таблицы ${icons.external}</a></p>`;

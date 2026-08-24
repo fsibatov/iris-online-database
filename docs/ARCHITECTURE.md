@@ -1,23 +1,23 @@
 # Архитектура v2
 
-## Выбор desktop stack
+## Технологический стек
 
-На 13 августа 2026 года стабильная ветка Wails — v2.14.0; Wails v3 остаётся beta. Поэтому production v2.0.0 использует Wails 2.14.0, Go backend, существующий vanilla HTML/CSS/JavaScript и системный Microsoft WebView2. Electron не используется и отдельный Chromium runtime не поставляется.
+Проект использует Wails 2.14.0, Go, существующий интерфейс на HTML/CSS/JavaScript и системный Microsoft WebView2. Electron не используется, отдельный Chromium Runtime не поставляется. Версии инструментов зафиксированы и проверяются релизным контуром.
 
 ## Поток выполнения
 
-`main_windows.go` создаёт одно системное окно и передаёт Wails embedded `web/` assets. Запросы `/api/*` обрабатывает существующий Go `http.Handler` через Wails AssetServer — это внутрипроцессный adapter, а не `net.Listen`.
+`main_windows.go` создаёт одно системное окно и передаёт Wails встроенные ресурсы `web/`. Запросы `/api/*` обрабатывает существующий Go `http.Handler` через Wails AssetServer — внутри процесса, без `net.Listen`.
 
-Внутренние переходы — hash routes (`#item/…`, `#monster/…`, `#recipe/…`). Внешний HTTPS-link перехватывается frontend и передаётся `DesktopBridge.OpenExternalURL`; Go повторно проверяет exact-host allowlist и открывает системный браузер.
+Внутренние переходы используют hash-маршруты (`#item/…`, `#monster/…`, `#recipe/…`, `#title/…`). Внешнюю HTTPS-ссылку интерфейс передаёт `DesktopBridge.OpenExternalURL`; Go повторно проверяет хост по точному списку разрешённых адресов и открывает системный браузер.
 
-`SingleInstanceLock` использует стабильный application UUID. Повторный запуск показывает и разворачивает существующее окно. X закрывает приложение; `OnShutdown` отменяет online operations, сбрасывает cache, записывает профиль и закрывает log writer.
+`SingleInstanceLock` использует стабильный UUID приложения. Повторный запуск показывает и разворачивает существующее окно. Кнопка закрытия завершает приложение; `OnShutdown` отменяет сетевые операции, очищает кеш, записывает профиль и закрывает журнал.
 
-## Storage
+## Хранение данных
 
-Backend profile path и schema v1 сохранены. `%LOCALAPPDATA%\IrisOnlineDatabase\WebView2` — стабильный WebView2 data directory, поэтому pending write переживает немедленное закрытие и повторный запуск. Подробности в `PROFILE_COMPATIBILITY.md`.
+Путь и схема профиля v1 сохранены. `%LOCALAPPDATA%\IrisOnlineDatabase\WebView2` — стабильный каталог данных WebView2, поэтому состояние, ожидающее записи, сохраняется между запусками. Подробнее: `PROFILE_COMPATIBILITY.md`.
 
-## Security boundaries
+## Границы безопасности
 
-Production host — только `wails.localhost`. Remote origins не получают bindings. Embedded CSP разрешает `connect-src 'self'`; VK image CDN не разрешён. Updater сохраняет только текст JSON, поэтому приложение не загружает непроверенные VK thumbnails.
+Рабочий внутренний хост — только `wails.localhost`. Удалённые источники не получают Wails bindings. Встроенная CSP разрешает `connect-src 'self'`; CDN изображений ВКонтакте не разрешён. Модуль обновления сохраняет только текстовый JSON, поэтому приложение не загружает непроверенные изображения ВКонтакте.
 
-Release build использует tags `desktop,wv2runtime.embed,production`, `-trimpath`, пустой Go build ID и external output directory. Wails dev mode может иметь devtools; production build — нет.
+Релизная сборка использует теги `desktop,wv2runtime.embed,production`, `-trimpath`, пустой Go build ID и внешний каталог для результата. Инструменты разработчика могут быть доступны только в режиме разработки; в релизной сборке они отключены.

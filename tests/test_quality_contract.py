@@ -28,6 +28,8 @@ class QualityContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         cls.contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        cls.changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        cls.architecture = (ROOT / "docs/ARCHITECTURE.md").read_text(encoding="utf-8")
         cls.vk_workflow = (ROOT / ".github/workflows/update-vk-news.yml").read_text(
             encoding="utf-8"
         )
@@ -53,6 +55,28 @@ class QualityContractTests(unittest.TestCase):
         self.assertNotIn(f"C:\\IrisRelease\\{version}", self.build_docs)
         self.assertNotIn(f"IrisOnlineDB-{version}-Windows-x64.exe", self.release_docs)
         self.assertNotIn(f"`v{version}` tag", self.release_docs)
+
+    def test_readme_describes_server_data_without_claiming_equivalence(self):
+        self.assertIn(
+            "Названия и характеристики предметов берутся из общего справочника",
+            self.readme,
+        )
+        self.assertIn("данные одного сервера не подставляются", self.readme)
+        self.assertNotIn("Характеристики предметов одинаковы", self.readme)
+
+    def test_release_style_author_is_consistent(self):
+        author = "Хоуп (Original)"
+        self.assertIn(f"Автор программы: {author}", self.changelog)
+        self.assertIn(f"Автор программы: {author}", self.readme)
+        self.assertIn(author, self.html)
+        self.assertIn(author, self.script)
+        self.assertIn(author, self.wails)
+        self.assertNotIn("Хоуп (The Original)", self.html)
+        self.assertNotIn("Хоуп (The Original)", self.script)
+        self.assertNotIn("Хоуп (The Original)", self.wails)
+
+    def test_architecture_documents_title_route(self):
+        self.assertIn("`#title/…`", self.architecture)
 
     def test_windows_release_gate_runs_current_python_regression_suite(self):
         self.assertIn(
@@ -119,7 +143,11 @@ class QualityContractTests(unittest.TestCase):
         ]
         self.assertIn("Рецепты — в отдельном разделе.", home)
         self.assertIn('<h2 id="serverDifferenceTitle">Сервер</h2>', home)
-        self.assertIn("Характеристики предметов одинаковы", home)
+        self.assertIn(
+            "Названия и характеристики предметов берутся из общего справочника", home
+        )
+        self.assertIn("из данных выбранного сервера", home)
+        self.assertNotIn("Характеристики предметов одинаковы", home)
         self.assertNotIn("The Original — 609 монстров", home)
         self.assertNotIn("Iris Kiss Kiss — 677 монстров", home)
         self.assertNotIn("The Original и Iris Kiss Kiss: в чём разница?", home)

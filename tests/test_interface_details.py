@@ -186,8 +186,11 @@ class InterfaceDetailTests(unittest.TestCase):
         self.assertIn("Последняя запись ВКонтакте", home)
         self.assertIn("Проверить новую запись", home)
         self.assertIn('<h2 id="serverDifferenceTitle">Сервер</h2>', home)
-        self.assertIn("Характеристики предметов одинаковы", home)
-        self.assertIn("База автоматически показывает данные выбранного сервера.", home)
+        self.assertIn(
+            "Названия и характеристики предметов берутся из общего справочника", home
+        )
+        self.assertIn("из данных выбранного сервера", home)
+        self.assertNotIn("Характеристики предметов одинаковы", home)
         self.assertNotIn("The Original — 609 монстров", home)
         self.assertNotIn("Iris Kiss Kiss — 677 монстров", home)
         self.assertIn("источники получения", home)
@@ -540,13 +543,19 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
             "sort((a, b) => baseAttemptChance(b) - baseAttemptChance(a))", self.script
         )
 
+    def test_filter_reset_action_uses_one_label(self):
+        self.assertNotIn(">Сбросить</button>", self.html)
+        self.assertNotIn("Сбросить всё", self.script)
+        self.assertIn(">Сбросить фильтры</button>", self.html)
+        self.assertGreaterEqual(self.script.count("Сбросить фильтры"), 2)
+
     def test_about_shows_author_and_github(self):
         about = self.script[
             self.script.index("if (type === 'about')") : self.script.index(
                 "} else if (type === 'data')"
             )
         ]
-        self.assertIn("Хоуп (The Original)", about)
+        self.assertIn("Хоуп (Original)", about)
         self.assertIn("https://github.com/fsibatov/iris-online-database", about)
 
     def test_descriptions_remain_conditional(self):
