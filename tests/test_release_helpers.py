@@ -70,6 +70,12 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertNotIn('"--notes-file", "CHANGELOG.md"', script)
         self.assertIn("GetTempFileName", script)
         self.assertIn("WriteAllText", script)
+        self.assertIn("[IO.File]::ReadAllText($ChangelogPath", script)
+        self.assertIn("New-Object Text.UTF8Encoding($false)", script)
+        self.assertNotIn(
+            "$ChangelogText = Get-Content -LiteralPath $ChangelogPath -Raw",
+            script,
+        )
         self.assertTrue(
             script.isascii(),
             "Windows PowerShell 5.1 release engine must remain ASCII-safe because UTF-8 without BOM is code-page dependent",

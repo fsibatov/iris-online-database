@@ -1648,7 +1648,7 @@ function Create-Release {
         $Artifacts = @($ArtifactNames | ForEach-Object { Join-Path $OutputFull $_ })
         $Checksums = Join-Path $OutputFull "SHA256SUMS.txt"
         $ChangelogPath = Join-Path $Root "CHANGELOG.md"
-        $ChangelogText = Get-Content -LiteralPath $ChangelogPath -Raw
+        $ChangelogText = [IO.File]::ReadAllText($ChangelogPath, (New-Object Text.UTF8Encoding($false)))
         $VersionPattern = [Regex]::Escape($Version)
         $ReleaseSectionPattern = "(?ms)^##\s+" + $VersionPattern + "[^\r\n]*\r?\n(.*?)(?=^##\s+\d+\.\d+(?:\.\d+)?[^\r\n]*(?:\r?\n|\z)|\z)"
         $ReleaseSection = [Regex]::Match($ChangelogText, $ReleaseSectionPattern)

@@ -19,7 +19,7 @@ const applicationID = "iris-online-database"
 
 var appVersion = "2.0.3"
 
-//go:embed web/* data/latest-vk.json assets/game_data.json.gz assets/set_effects.json.gz assets/item_abilities.json.gz assets/item_recipes.json.gz assets/monster_details.json.gz assets/chest_contents.json.gz assets/monster_presence.json.gz
+//go:embed web/* data/latest-vk.json assets/game_data.json.gz assets/set_effects.json.gz assets/item_abilities.json.gz assets/item_recipes.json.gz assets/quest_reward_sources.json.gz assets/monster_details.json.gz assets/chest_contents.json.gz assets/monster_presence.json.gz
 var embedded embed.FS
 
 func (a *application) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {

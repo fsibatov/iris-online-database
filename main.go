@@ -287,6 +287,20 @@ type itemRecipeSupplement struct {
 	Recipes       map[string][]itemRecipeMaterialSource `json:"recipes"`
 }
 
+type questRewardSource struct {
+	ItemID          int    `json:"itemId"`
+	QuestID         int    `json:"questId"`
+	QuestTitleIndex int    `json:"questTitleIndex"`
+	Quest           string `json:"quest"`
+	RewardType      string `json:"rewardType"`
+	Quantity        int    `json:"quantity"`
+}
+
+type questRewardSupplement struct {
+	SchemaVersion int                 `json:"schemaVersion"`
+	Rewards       []questRewardSource `json:"rewards"`
+}
+
 type chestContentSourceRow struct {
 	ItemID    int `json:"itemId"`
 	Quantity  int `json:"quantity"`
@@ -509,6 +523,7 @@ type ItemDrop struct {
 	ItemBaseChance    float64        `json:"itemBaseChance,omitempty"`
 	BaseAttemptChance float64        `json:"baseAttemptChance,omitempty"`
 	Quantity          int            `json:"quantity"`
+	RewardType        string         `json:"rewardType,omitempty"`
 	SlotNumber        int            `json:"slotNumber"`
 	SlotTitle         string         `json:"slotTitle"`
 	ChoicePosition    int            `json:"choicePosition"`
@@ -570,6 +585,7 @@ type appStore struct {
 	monsterTypeNames map[int]string
 	categoryItems    map[string]int
 	itemRecipes      map[int][]itemRecipeMaterialSource
+	questRewards     map[int][]questRewardSource
 	chestProfiles    map[string]map[int]chestProfileSource
 	monsterPresence  map[string]map[int]struct{}
 	runtimes         map[string]*runtimeSlot
@@ -610,6 +626,10 @@ func ensureLoaded() error {
 			return
 		}
 		if err := mergeRecipeSupplement(); err != nil {
+			loadErr = err
+			return
+		}
+		if err := mergeQuestRewardSupplement(); err != nil {
 			loadErr = err
 			return
 		}
@@ -872,6 +892,69 @@ func mergeRecipeSupplement() error {
 			return fmt.Errorf("некорректный ID рецепта: %q", key)
 		}
 		store.itemRecipes[id] = append([]itemRecipeMaterialSource(nil), materials...)
+	}
+	return nil
+}
+
+func mergeQuestRewardSupplement() error {
+	raw, err := embedded.ReadFile("assets/quest_reward_sources.json.gz")
+	if err != nil {
+		return fmt.Errorf("не удалось прочитать награды заданий: %w", err)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("не удалось открыть награды заданий: %w", err)
+	}
+	defer gz.Close()
+	var supplement questRewardSupplement
+	if err := json.NewDecoder(gz).Decode(&supplement); err != nil {
+		return fmt.Errorf("не удалось разобрать награды заданий: %w", err)
+	}
+	if supplement.SchemaVersion != 1 {
+		return fmt.Errorf(
+			"неподдерживаемая версия наград заданий: %d",
+			supplement.SchemaVersion,
+		)
+	}
+
+	items := make(map[int]*Item, len(store.data.Items))
+	for index := range store.data.Items {
+		item := &store.data.Items[index]
+		items[item.ID] = item
+	}
+	store.questRewards = make(map[int][]questRewardSource)
+	seen := make(map[string]struct{}, len(supplement.Rewards))
+	for _, reward := range supplement.Rewards {
+		item := items[reward.ItemID]
+		_, isRecipe := store.itemRecipes[reward.ItemID]
+		if item == nil || (!isTitleItem(item) && !isRecipe) {
+			return fmt.Errorf(
+				"награда задания %d ссылается на неподдерживаемый предмет %d",
+				reward.QuestID,
+				reward.ItemID,
+			)
+		}
+		if reward.QuestID <= 0 || reward.QuestTitleIndex <= 0 ||
+			strings.TrimSpace(reward.Quest) == "" || reward.Quantity <= 0 {
+			return fmt.Errorf("некорректная награда задания: %+v", reward)
+		}
+		if reward.RewardType != "default" && reward.RewardType != "select" {
+			return fmt.Errorf(
+				"неизвестный тип награды задания %d: %q",
+				reward.QuestID,
+				reward.RewardType,
+			)
+		}
+		key := fmt.Sprintf("%d:%d:%s", reward.ItemID, reward.QuestID, reward.RewardType)
+		if _, duplicate := seen[key]; duplicate {
+			return fmt.Errorf("повторяющаяся награда задания: %s", key)
+		}
+		seen[key] = struct{}{}
+		reward.Quest = strings.TrimSpace(reward.Quest)
+		store.questRewards[reward.ItemID] = append(
+			store.questRewards[reward.ItemID],
+			reward,
+		)
 	}
 	return nil
 }
@@ -1203,6 +1286,10 @@ func buildRuntime(server ServerData, chestProfiles map[int]chestProfileSource, m
 		knownSourceItems: make(map[int]struct{}),
 	}
 
+	for itemID := range store.questRewards {
+		rt.knownSourceItems[itemID] = struct{}{}
+	}
+
 	for key, entries := range server.DropLists {
 		groupID, err := strconv.Atoi(key)
 		if err != nil || groupID <= 0 {
@@ -1495,11 +1582,38 @@ func matchingGroupItems(rt *runtimeData, itemID int) (map[int][]DropItem, map[in
 	return matches, overflow
 }
 
-func itemDropSources(itemID int, rt *runtimeData) []ItemDrop {
-	if rt == nil {
-		return []ItemDrop{}
+func questRewardDrops(itemID int) []ItemDrop {
+	rewards := store.questRewards[itemID]
+	if len(rewards) == 0 {
+		return nil
 	}
-	drops := append([]ItemDrop(nil), rt.questByItem[itemID]...)
+	drops := make([]ItemDrop, 0, len(rewards))
+	for index, reward := range rewards {
+		context := "Гарантированная награда"
+		if reward.RewardType == "select" {
+			context = "Награда на выбор"
+		}
+		drops = append(drops, ItemDrop{
+			ItemID:       itemID,
+			QuestID:      reward.QuestID,
+			Quest:        reward.Quest,
+			Source:       "Награда за задание",
+			Context:      context,
+			Quantity:     reward.Quantity,
+			RewardType:   reward.RewardType,
+			ItemPosition: index + 1,
+		})
+	}
+	return drops
+}
+
+func itemDropSources(itemID int, rt *runtimeData) []ItemDrop {
+	drops := questRewardDrops(itemID)
+	if rt == nil {
+		sortItemDropSources(drops)
+		return drops
+	}
+	drops = append(drops, rt.questByItem[itemID]...)
 	drops = append(drops, rt.chestByItem[itemID]...)
 	matches, itemOverflow := matchingGroupItems(rt, itemID)
 	if len(matches) == 0 {
@@ -1594,16 +1708,18 @@ func itemDropSortChance(drop ItemDrop) float64 {
 
 func itemDropSourceRank(source string) int {
 	switch source {
-	case "Выпадение монстра":
+	case "Награда за задание":
 		return 0
-	case "Мировое выпадение":
+	case "Выпадение монстра":
 		return 1
-	case "Сундук":
+	case "Мировое выпадение":
 		return 2
-	case "Квестовое выпадение", "Квестовый дроп":
+	case "Сундук":
 		return 3
-	default:
+	case "Квестовое выпадение", "Квестовый дроп":
 		return 4
+	default:
+		return 5
 	}
 }
 
@@ -1960,7 +2076,7 @@ func titleDropKey(drop ItemDrop) string {
 }
 
 func titleDropSources(title *Title, rt *runtimeData) []ItemDrop {
-	if title == nil || rt == nil {
+	if title == nil {
 		return []ItemDrop{}
 	}
 	itemIDs := title.ItemIDs
@@ -2495,6 +2611,8 @@ func itemSetForPresentation(value ItemSet) ItemSet {
 
 func recipeSourceTypeLabel(source string) string {
 	switch source {
+	case "Награда за задание":
+		return "Задание"
 	case "Выпадение монстра":
 		return "Монстр"
 	case "Мировое выпадение":
@@ -2513,6 +2631,11 @@ func recipeSourceTypeLabel(source string) string {
 
 func recipeSourceName(drop ItemDrop) string {
 	switch drop.Source {
+	case "Награда за задание":
+		if strings.TrimSpace(drop.Quest) != "" {
+			return drop.Quest
+		}
+		return "Задание"
 	case "Мировое выпадение":
 		if strings.TrimSpace(drop.Monster) != "" {
 			return drop.Monster

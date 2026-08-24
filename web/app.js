@@ -1433,6 +1433,8 @@
 
   function bestSourceSummary(drops) {
     const rows = Array.isArray(drops) ? drops : [];
+    const questReward = rows.find(drop => drop.source === 'Награда за задание');
+    if (questReward) return [sourceName(questReward), questReward.context].filter(Boolean).join(' — ');
     const knownDrops = rows.filter(drop => drop.source !== 'Сундук' || drop.chanceKnown === true);
     const best = (knownDrops.length ? knownDrops : rows).reduce((current, row) => !current || baseAttemptChance(row) > baseAttemptChance(current) ? row : current, null);
     const bestChanceKnown = best && (best.source !== 'Сундук' || best.chanceKnown === true);
@@ -1477,7 +1479,7 @@
       ${recipeContext ? recipeProductHTML(data.recipeProduct, item) : ''}
       ${recipeContext ? recipeMaterialsHTML(data.recipe) : ''}
       ${chestContentsHTML(data.chest)}
-      ${recipeContext && drops.length === 1 ? `<section class="single-source-block" aria-labelledby="singleRecipeSourceTitle"><h2 id="singleRecipeSourceTitle">Источник получения</h2><div class="source-list">${sourceRow(drops[0])}</div></section>` : drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary)}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p></div><button class="secondary-button" type="button" data-open-details="item-sources">Показать все источники</button></section>` : ''}
+      ${recipeContext && drops.length === 1 ? `<section class="single-source-block" aria-labelledby="singleRecipeSourceTitle"><h2 id="singleRecipeSourceTitle">Источник получения</h2><div class="source-list">${sourceRow(drops[0])}</div>${questRewardScopeNote(drops)}</section>` : drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary)}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p></div><button class="secondary-button" type="button" data-open-details="item-sources">Показать все источники</button></section>` : ''}
       <section class="detail-accordions">
         ${drops.length > 1 || (!recipeContext && drops.length) ? accordion('Источники получения', formatCount(drops.length, 'вариант', 'варианта', 'вариантов'), sourcesContent(), false, 'item-sources') : ''}
         ${description ? accordion('Описание', '', `<p class="reading-text">${multilineHTML(description)}</p>`, false) : ''}
@@ -1601,10 +1603,11 @@
   function sourceName(drop) {
     const isWorld = drop.source === 'Мировое выпадение';
     const isChest = drop.source === 'Сундук';
-    const isQuest = drop.source === 'Квестовый дроп' || drop.source === 'Квестовое выпадение';
+    const isQuestReward = drop.source === 'Награда за задание';
+    const isQuestDrop = drop.source === 'Квестовый дроп' || drop.source === 'Квестовое выпадение';
     if (isWorld) return drop.monster || 'Мировая добыча';
     if (isChest) return drop.container || 'Сундук';
-    if (isQuest) return drop.quest || 'Задание';
+    if (isQuestReward || isQuestDrop) return drop.quest || 'Задание';
     return `${drop.monster || 'Источник'}${drop.monsterLevel ? ` · Уровень ${drop.monsterLevel}` : ''}`;
   }
 
@@ -1613,7 +1616,7 @@
       { title: 'Монстры с подтверждённым выпадением', sources: ['Выпадение монстра'] },
       { title: 'Мировая добыча', sources: ['Мировое выпадение'] },
       { title: 'Сундуки', sources: ['Сундук'] },
-      { title: 'Задания', sources: ['Квестовый дроп', 'Квестовое выпадение'] },
+      { title: 'Задания', sources: ['Награда за задание', 'Квестовый дроп', 'Квестовое выпадение'] },
     ];
     const known = new Set(definitions.flatMap(def => def.sources));
     const result = definitions.map(def => ({ ...def, rows: drops.filter(drop => def.sources.includes(drop.source)), shown: SOURCE_BATCH })).filter(def => def.rows.length);
@@ -1636,8 +1639,12 @@
   function sourceRow(drop) {
     const isWorld = drop.source === 'Мировое выпадение';
     const isChest = drop.source === 'Сундук';
-    const isQuest = drop.source === 'Квестовый дроп' || drop.source === 'Квестовое выпадение';
+    const isQuestReward = drop.source === 'Награда за задание';
+    const isQuestDrop = drop.source === 'Квестовый дроп' || drop.source === 'Квестовое выпадение';
+    const isQuest = isQuestReward || isQuestDrop;
     const baseDetails = isWorld ? [drop.context] : isChest ? [chestSourceDetails(drop)] : isQuest ? [drop.context] : [drop.slotTitle];
+    if (isQuest && Number(drop.questId) > 0) baseDetails.push(`ID задания: ${formatNumber(drop.questId)}`);
+    if (isQuestReward && Number(drop.quantity) > 1) baseDetails.push(`Количество: ×${formatNumber(drop.quantity)}`);
     if (!isQuest && !isChest && drop.groupChanceKnown) {
       baseDetails.push(`Шанс группы: ${formatChance(drop.groupBaseChance ?? drop.groupChance)}`);
       baseDetails.push(`Если группа выбрана: ${formatChance(drop.itemBaseChance ?? drop.itemChance)}`);
@@ -1645,7 +1652,7 @@
     const sourceLabel = sourceName(drop).trim().toLocaleLowerCase('ru-RU');
     const details = [...new Set(baseDetails.filter(Boolean).map(value => String(value).trim()).filter(value => value && value.toLocaleLowerCase('ru-RU') !== sourceLabel))].join(' · ');
     const chanceLabel = isChest ? 'Шанс при открытии' : isQuest ? 'Шанс при выполнении условий' : 'За одну основную попытку';
-    const chanceKnown = !isChest || drop.chanceKnown === true;
+    const chanceKnown = !isQuestReward && (!isChest || drop.chanceKnown === true);
     const icon = icons[isWorld ? 'home' : isQuest ? 'info' : isChest ? 'item' : 'monster'];
     const chance = chanceKnown ? `<span class="source-chance"><small>${chanceLabel}</small><strong>${formatChance(baseAttemptChance(drop))}</strong></span>` : '';
     const content = `<span class="source-icon">${icon}</span><span><strong>${escapeHTML(sourceName(drop))}</strong>${details ? `<small>${escapeHTML(details)}</small>` : ''}</span>${chance}`;
@@ -1656,12 +1663,18 @@
     return drop.monsterId ? `<a class="source-row" href="#monster/${drop.monsterId}">${content}</a>` : `<div class="source-row">${content}</div>`;
   }
 
+  function questRewardScopeNote(drops) {
+    if (!Array.isArray(drops) || !drops.some(drop => drop.source === 'Награда за задание')) return '';
+    return '<p class="world-source-note">Награды за завершение заданий взяты из общих игровых данных. Доступность самого задания на выбранном сервере отдельно не подтверждена.</p>';
+  }
+
   function sourcesContent() {
     const meta = activeServerMeta();
     if (!state.sourceSections.length) return '<p class="empty-copy">Для выбранного сервера источники не найдены.</p>';
     const dates = `<div class="data-inline"><strong>Актуальность данных</strong><span>Обычная добыча: ${formatSourceDate(meta.directDropsUpdatedAt)}</span><span>Состав групп: ${formatSourceDate(meta.dropListsUpdatedAt)}</span><span>Мировая добыча: ${formatSourceDate(meta.worldDropsUpdatedAt)}</span></div>`;
+    const questNote = questRewardScopeNote(state.sourceSections.flatMap(section => section.rows));
     const help = `<button class="text-button" type="button" data-dialog="chance">${icons.info}<span>Как рассчитывается шанс</span></button>`;
-    return `${dates}${help}<div class="source-sections">${state.sourceSections.map((section, index) => sourceSectionHTML(section, index)).join('')}</div>`;
+    return `${dates}${questNote}${help}<div class="source-sections">${state.sourceSections.map((section, index) => sourceSectionHTML(section, index)).join('')}</div>`;
   }
 
   function sourceSectionHTML(section, index) {

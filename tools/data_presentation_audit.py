@@ -21,6 +21,7 @@ GAME_DATA = ROOT / "assets/game_data.json.gz"
 SET_EFFECTS = ROOT / "assets/set_effects.json.gz"
 ITEM_ABILITIES = ROOT / "assets/item_abilities.json.gz"
 ITEM_RECIPES = ROOT / "assets/item_recipes.json.gz"
+QUEST_REWARDS = ROOT / "assets/quest_reward_sources.json.gz"
 MONSTER_DETAILS = ROOT / "assets/monster_details.json.gz"
 CHEST_CONTENTS = ROOT / "assets/chest_contents.json.gz"
 MAIN_GO = ROOT / "main.go"
@@ -225,6 +226,7 @@ def audit() -> dict:
     sets = load_gzip(SET_EFFECTS)
     abilities = load_gzip(ITEM_ABILITIES)
     recipes = load_gzip(ITEM_RECIPES)
+    quest_rewards = load_gzip(QUEST_REWARDS)
     monster_details = load_gzip(MONSTER_DETAILS)
     chest_contents = load_gzip(CHEST_CONTENTS)
     go_source = MAIN_GO.read_text(encoding="utf-8")
@@ -420,6 +422,51 @@ def audit() -> dict:
         key=int,
     )
 
+    title_item_ids = {
+        item_id
+        for item_id, patch in abilities.get("items", {}).items()
+        if int(patch.get("titleIndex", 0) or 0) > 0
+    }
+    quest_reward_rows = quest_rewards.get("rewards", [])
+    quest_reward_relations = [
+        (row.get("itemId"), row.get("questId"), row.get("rewardType"))
+        for row in quest_reward_rows
+    ]
+    quest_reward_duplicates = sorted(
+        relation
+        for relation, count in collections.Counter(quest_reward_relations).items()
+        if count > 1
+    )
+    invalid_quest_reward_rows = []
+    quest_reward_target_ids_missing = set()
+    quest_reward_unsupported_targets = set()
+    for index, row in enumerate(quest_reward_rows):
+        item_id = row.get("itemId")
+        quest_id = row.get("questId")
+        title_index = row.get("questTitleIndex")
+        quest_name = str(row.get("quest", "")).strip()
+        reward_type = row.get("rewardType")
+        quantity = row.get("quantity")
+        valid = (
+            isinstance(item_id, int)
+            and item_id > 0
+            and isinstance(quest_id, int)
+            and quest_id > 0
+            and isinstance(title_index, int)
+            and title_index > 0
+            and bool(quest_name)
+            and reward_type in {"default", "select"}
+            and isinstance(quantity, int)
+            and quantity > 0
+        )
+        if not valid:
+            invalid_quest_reward_rows.append(index)
+            continue
+        if str(item_id) not in base_items_by_id:
+            quest_reward_target_ids_missing.add(str(item_id))
+        if str(item_id) not in title_item_ids and str(item_id) not in recipe_ids:
+            quest_reward_unsupported_targets.add(str(item_id))
+
     chest_profile_counts = {}
     chest_row_counts = {}
     chest_output_ids_missing = set()
@@ -503,6 +550,18 @@ def audit() -> dict:
             or "assets/set_effects.json.gz" not in go_source,
             "recipe_supplement_not_merged": "mergeRecipeSupplement()" not in go_source
             or "assets/item_recipes.json.gz" not in go_source,
+            "quest_reward_supplement_not_merged": "mergeQuestRewardSupplement()"
+            not in go_source
+            or "assets/quest_reward_sources.json.gz" not in go_source,
+            "quest_reward_schema_version": quest_rewards.get("schemaVersion"),
+            "invalid_quest_reward_rows": invalid_quest_reward_rows,
+            "duplicate_quest_reward_relations": quest_reward_duplicates,
+            "quest_reward_target_ids_missing_from_game_data": sorted(
+                quest_reward_target_ids_missing, key=int
+            ),
+            "quest_reward_unsupported_targets": sorted(
+                quest_reward_unsupported_targets, key=int
+            ),
             "chest_supplement_not_merged": "mergeChestContentSupplement()"
             not in go_source
             or "assets/chest_contents.json.gz" not in go_source,
@@ -558,6 +617,10 @@ def audit() -> dict:
         "ability_supplement_ids_missing_from_game_data",
         "monster_supplement_ids_missing_from_game_data",
         "recipe_ids_missing_from_game_data",
+        "invalid_quest_reward_rows",
+        "duplicate_quest_reward_relations",
+        "quest_reward_target_ids_missing_from_game_data",
+        "quest_reward_unsupported_targets",
         "chest_source_ids_missing_from_game_data",
         "invalid_chest_profiles",
         "unknown_make_skill_codes",
@@ -570,12 +633,15 @@ def audit() -> dict:
         "monster_supplement_not_merged",
         "set_supplement_not_merged",
         "recipe_supplement_not_merged",
+        "quest_reward_supplement_not_merged",
         "chest_supplement_not_merged",
         "recipe_missing_material_fallback_absent",
         "chest_missing_item_fallback_absent",
     ):
         if checks[name]:
             fatal.append(name)
+    if checks["quest_reward_schema_version"] != 1:
+        fatal.append("quest_reward_schema_version")
     if (
         checks["frontend_has_set_slice_limit"]
         or checks["frontend_uses_generic_properties_array"]
@@ -589,6 +655,7 @@ def audit() -> dict:
         "setEffectsSha256": hashlib.sha256(SET_EFFECTS.read_bytes()).hexdigest(),
         "itemAbilitiesSha256": hashlib.sha256(ITEM_ABILITIES.read_bytes()).hexdigest(),
         "itemRecipesSha256": hashlib.sha256(ITEM_RECIPES.read_bytes()).hexdigest(),
+        "questRewardsSha256": hashlib.sha256(QUEST_REWARDS.read_bytes()).hexdigest(),
         "monsterDetailsSha256": hashlib.sha256(
             MONSTER_DETAILS.read_bytes()
         ).hexdigest(),
@@ -631,6 +698,15 @@ def audit() -> dict:
             sorted(monster_patch_field_counts.items())
         ),
         "recipeRows": len(recipes.get("recipes", {})),
+        "questRewardRelations": len(quest_reward_rows),
+        "questRewardItems": len({row.get("itemId") for row in quest_reward_rows}),
+        "questRewardQuests": len({row.get("questId") for row in quest_reward_rows}),
+        "questRewardDefaultRelations": sum(
+            1 for row in quest_reward_rows if row.get("rewardType") == "default"
+        ),
+        "questRewardSelectRelations": sum(
+            1 for row in quest_reward_rows if row.get("rewardType") == "select"
+        ),
         "chestProfilesByServer": dict(sorted(chest_profile_counts.items())),
         "chestItemRowsByServer": dict(sorted(chest_row_counts.items())),
         "chestOutputIDsMissingFromGameData": len(chest_output_ids_missing),
@@ -677,6 +753,12 @@ def main() -> None:
         )
         print(
             f"recipes={result['recipeRows']} materials={result['recipeMaterialLinks']}"
+        )
+        print(
+            "quest rewards="
+            f"{result['questRewardRelations']} "
+            f"items={result['questRewardItems']} "
+            f"quests={result['questRewardQuests']}"
         )
         print(
             f"chests={result['chestProfilesByServer']} chest rows={result['chestItemRowsByServer']} unknown outputs={result['chestOutputIDsMissingFromGameData']}"
