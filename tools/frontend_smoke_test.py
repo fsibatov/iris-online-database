@@ -390,6 +390,18 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
             require(
                 back.inner_text().strip() == "Назад", "detail back action is missing"
             )
+            require(
+                page.locator(".breadcrumbs").inner_text().strip() == "Назад",
+                "detail breadcrumb repeats the current entity name",
+            )
+            back_style = back.evaluate(
+                "el => ({size: parseFloat(getComputedStyle(el).fontSize), "
+                "weight: parseInt(getComputedStyle(el).fontWeight, 10)})"
+            )
+            require(
+                back_style["size"] >= 16 and back_style["weight"] >= 700,
+                "detail back action is not visually prominent",
+            )
             back.click()
             page.wait_for_selector('.detail-page[data-route="item/2001"]')
             require(
@@ -413,9 +425,27 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 page.locator(".detail-summary--title").count() == 1,
                 "title detail does not use the dedicated two-column layout",
             )
+            title_badge = page.locator(".title-index-badge--large")
             require(
-                page.locator(".title-index-badge--large").inner_text().strip() == "991",
+                title_badge.inner_text().strip() == "991",
                 "title detail index badge is missing or malformed",
+            )
+            badge_metrics = page.evaluate(
+                """() => {
+                    const heading = document.querySelector('.title-heading-line > h1');
+                    const badge = document.querySelector('.title-index-badge--large');
+                    const style = getComputedStyle(heading);
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+                    const glyph = context.measureText('А');
+                    const glyphHeight = glyph.actualBoundingBoxAscent + glyph.actualBoundingBoxDescent;
+                    return { badgeHeight: badge.getBoundingClientRect().height, glyphHeight };
+                }"""
+            )
+            require(
+                abs(badge_metrics["badgeHeight"] - badge_metrics["glyphHeight"]) <= 4,
+                "title index badge height does not match the title capital height",
             )
             technical = page.get_by_text("Технические сведения", exact=True)
             require(technical.count() == 1, "title technical details are missing")
@@ -426,6 +456,27 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
             )
             page.set_viewport_size({"width": 360, "height": 780})
             page.wait_for_timeout(50)
+            mobile_badge_metrics = page.evaluate(
+                """() => {
+                    const heading = document.querySelector('.title-heading-line > h1');
+                    const badge = document.querySelector('.title-index-badge--large');
+                    const style = getComputedStyle(heading);
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+                    const glyph = context.measureText('А');
+                    const glyphHeight = glyph.actualBoundingBoxAscent + glyph.actualBoundingBoxDescent;
+                    return { badgeHeight: badge.getBoundingClientRect().height, glyphHeight };
+                }"""
+            )
+            require(
+                abs(
+                    mobile_badge_metrics["badgeHeight"]
+                    - mobile_badge_metrics["glyphHeight"]
+                )
+                <= 4,
+                "title index badge height diverges on a narrow viewport",
+            )
             title_box = title_heading.bounding_box()
             require(
                 title_box is not None and title_box["width"] >= 160,

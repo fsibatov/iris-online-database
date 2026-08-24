@@ -518,11 +518,10 @@ html[data-theme="light"] .control-select { color-scheme: light; }
 .search-result-section h2 { margin: 0; font-size: 20px; }
 .search-result-section header a { color: var(--accent); font-size: 14px; }
 
-.breadcrumbs { min-width: 0; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
-.breadcrumbs button { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
+.breadcrumbs { min-width: 0; display: flex; align-items: center; color: var(--muted); font-size: 16px; }
+.breadcrumbs button { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; padding: 4px 2px; border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
 .breadcrumbs button:hover { color: var(--text); }
-.breadcrumbs button svg { width: 17px; height: 17px; }
-.breadcrumbs > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.breadcrumbs button svg { width: 20px; height: 20px; }
 .detail-page { max-width: 1040px; }
 .detail-summary {
   min-width: 0;
@@ -544,7 +543,7 @@ html[data-theme="light"] .control-select { color-scheme: light; }
 .detail-summary--title .detail-heading h1 { min-width: 0; overflow-wrap: break-word; word-break: normal; }
 .title-heading-line { min-width: 0; display: flex; align-items: center; gap: 10px; }
 .title-heading-line > h1 { flex: 1 1 auto; }
-.title-index-badge--large { min-height: 28px; padding-inline: 8px; border-radius: 8px; font-size: 13px; }
+.title-index-badge--large { height: clamp(20px, 2.88vw, 30px); min-height: 0; padding-inline: 7px; border-radius: 7px; font-size: clamp(11px, 1.15vw, 13px); }
 .class-label {
   max-width: 100%;
   border-color: var(--border-strong);
@@ -914,7 +913,7 @@ a.link-row:hover { background: var(--surface-2); }
   .detail-summary { grid-template-columns: 44px minmax(0, 1fr) 44px; }
   .detail-summary--item, .detail-summary--title { grid-template-columns: minmax(0, 1fr) 44px; }
   .title-heading-line { gap: 6px; }
-  .title-index-badge--large { padding-inline: 6px; }
+  .title-index-badge--large { padding-inline: 5px; }
   .detail-icon { width: 42px; height: 42px; }
   .favorite-button.large { width: 42px; height: 42px; }
 }

@@ -455,8 +455,8 @@
     return `<header class="page-header"><div><h1>${escapeHTML(title)}</h1>${subtitle ? `<p>${escapeHTML(subtitle)}</p>` : ''}</div></header>`;
   }
 
-  function breadcrumb(parentRoute, parentLabel, current) {
-    return `<nav class="breadcrumbs" aria-label="Навигация по разделам"><button type="button" data-route-back="${parentRoute}" aria-label="Назад к предыдущей странице. Если история пуста, открыть раздел «${escapeHTML(parentLabel)}»">${icons.arrowLeft}<span>Назад</span></button><span aria-current="page">${escapeHTML(current)}</span></nav>`;
+  function breadcrumb(parentRoute, parentLabel) {
+    return `<nav class="breadcrumbs" aria-label="Навигация по разделам"><button type="button" data-route-back="${parentRoute}" aria-label="Назад к предыдущей странице. Если история пуста, открыть раздел «${escapeHTML(parentLabel)}»">${icons.arrowLeft}<span>Назад</span></button></nav>`;
   }
 
   function renderNavigation() {
@@ -1470,7 +1470,7 @@
       ? `${MAKE_SKILL_NAMES[Number(item.makeSkill)] || `Профессия ${item.makeSkill}`} (${formatNumber(Math.max(0, Number(item.makeSkillExp) || 0))})`
       : '';
     main.innerHTML = `<section class="page detail-page" data-route="${detailRoute}">
-      ${breadcrumb(recipeContext ? 'recipes' : 'items', recipeContext ? 'Рецепты' : 'Предметы', item.name)}
+      ${breadcrumb(recipeContext ? 'recipes' : 'items', recipeContext ? 'Рецепты' : 'Предметы')}
       <header class="detail-summary detail-summary--item">
         <div class="detail-heading detail-heading--item"><h1>${escapeHTML(item.name)}</h1><p>${escapeHTML([item.typeLine || item.category, recipeContext ? recipeMasteryRequirement : itemLevelSummary(item)].filter(Boolean).join(' · '))}</p><div class="detail-labels">${qualityBadge(item.quality, item.qualityId)}${itemClassBadge(presentation.classes)}${itemSetBadge(setMembers.length)}</div></div>
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
@@ -1513,7 +1513,7 @@
     state.monsterWorldDrops = null;
 
     main.innerHTML = `<section class="page detail-page" data-route="title/${index}">
-      ${breadcrumb('titles', 'Титулы', name)}
+      ${breadcrumb('titles', 'Титулы')}
       <header class="detail-summary detail-summary--title">
         <div class="detail-heading"><div class="title-heading-line">${titleIndexBadge(index, true)}<h1>${escapeHTML(name)}</h1></div><p>${escapeHTML(levelLabel)}</p></div>
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
@@ -1736,7 +1736,7 @@
     state.monsterWorldDrops = { monsterId: Number(monster.id), count: worldRuleCount, slots: [], groups: [], loaded: false, loading: false, shellRendered: false };
     const topDrops = topMonsterDrops(slots, 6);
     main.innerHTML = `<section class="page detail-page" data-route="monster/${Number(monster.id)}">
-      ${breadcrumb('monsters', 'Монстры', monster.name)}
+      ${breadcrumb('monsters', 'Монстры')}
       <header class="detail-summary">
         <span class="detail-icon">${icons.monster}</span>
         <div class="detail-heading"><h1>${escapeHTML(monster.name)}</h1><p>${escapeHTML([monster.category, monster.typeName, `Уровень ${monster.level}`].filter(Boolean).join(' · '))}</p><div class="detail-labels">${monster.aggressive ? '<span class="meta-label warning-label">Агрессивный</span>' : '<span class="meta-label">Неагрессивный</span>'}</div></div>

@@ -301,6 +301,19 @@ class InterfaceDetailTests(unittest.TestCase):
         self.assertIn("profile.recentlyViewed", self.script)
         self.assertIn("localRecentlyViewed", self.script)
 
+    def test_detail_back_control_is_prominent_without_duplicate_title(self):
+        breadcrumb = self.script[
+            self.script.index("function breadcrumb") : self.script.index(
+                "function renderNavigation"
+            )
+        ]
+        self.assertIn("function breadcrumb(parentRoute, parentLabel)", breadcrumb)
+        self.assertNotIn("aria-current=\"page\"", breadcrumb)
+        self.assertNotIn("current", breadcrumb)
+        self.assertIn("font-size: 16px", self.styles)
+        self.assertIn("font-weight: 700", self.styles)
+        self.assertIn("width: 20px; height: 20px", self.styles)
+
     def test_titles_are_clickable_level_aware_and_have_known_source_filter(self):
         self.assertIn(
             "return { q: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'level', page: 1 };",
@@ -339,6 +352,10 @@ class InterfaceDetailTests(unittest.TestCase):
             self.styles,
         )
         self.assertIn(".title-index-badge {", self.styles)
+        self.assertIn(
+            ".title-index-badge--large { height: clamp(20px, 2.88vw, 30px);",
+            self.styles,
+        )
         self.assertIn("font-variant-numeric: tabular-nums", self.styles)
         self.assertIn("qualityDisplayLabel", self.script)
         self.assertIn("return 'Покупной'", self.script)
