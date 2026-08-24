@@ -22,7 +22,7 @@ jobs:
           sed -n '/^          from pathlib import Path$/,/^          PY$/p' .github/workflows/agent-v202.yml | sed '$d; s/^          //' > /tmp/agent_v202_patch.py
           python /tmp/agent_v202_patch.py
           node --check web/app.js
-          python -m unittest discover -s tests -p 'test_release_helpers.py'
+          PYTHONPATH=tools python -m unittest discover -s tests -p 'test_release_helpers.py'
           go test ./...
           git config user.name "OpenAI"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
