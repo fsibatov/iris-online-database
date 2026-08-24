@@ -573,7 +573,7 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         self.assertIn("grid-template-columns: 18px minmax(0, 1fr);", self.styles)
         self.assertIn("single-source-block", self.script)
         self.assertIn("drops.length === 1", self.script)
-        self.assertIn("grid-template-columns: repeat(5, minmax(0, 1fr));", self.styles)
+        self.assertIn("grid-template-columns: repeat(6, minmax(0, 1fr));", self.styles)
 
 
 if __name__ == "__main__":
