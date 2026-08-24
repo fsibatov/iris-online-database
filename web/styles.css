@@ -432,6 +432,30 @@ html[data-theme="light"] .control-select { color-scheme: light; }
 .result-icon svg { width: 20px; height: 20px; }
 .result-copy { min-width: 0; display: grid; gap: 3px; }
 .result-copy > strong { min-width: 0; font-size: 16px; overflow-wrap: anywhere; }
+.title-name-line { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.title-name-line > strong { min-width: 0; font-size: 16px; overflow-wrap: anywhere; }
+.title-name-line--compact { gap: 6px; }
+.title-name-line--compact > strong { font-size: inherit; }
+.title-index-badge {
+  flex: 0 0 auto;
+  min-width: 3.2ch;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-soft) 62%, var(--surface));
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: .035em;
+  white-space: nowrap;
+}
 .result-secondary, .result-tertiary { min-width: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .result-tertiary { display: flex; flex-wrap: wrap; gap: 5px 10px; align-items: center; color: var(--soft); }
 .result-arrow { color: var(--soft); }
@@ -478,6 +502,7 @@ html[data-theme="light"] .control-select { color-scheme: light; }
 .rarity-label.quality-normal { color: #ffffff; border-color: color-mix(in srgb, #ffffff 38%, var(--border)); }
 .rarity-label.quality-magic { color: #00ff00; border-color: color-mix(in srgb, #00ff00 52%, var(--border)); background: color-mix(in srgb, #00ff00 8%, var(--surface-2)); }
 .rarity-label.quality-shop { color: #ffcd00; border-color: color-mix(in srgb, #ffcd00 52%, var(--border)); background: color-mix(in srgb, #ffcd00 9%, var(--surface-2)); }
+.rarity-label.quality-event { color: #c9a0dc; border-color: color-mix(in srgb, #c9a0dc 52%, var(--border)); background: color-mix(in srgb, #c9a0dc 9%, var(--surface-2)); }
 .rarity-label.quality-default { color: var(--muted); }
 .set-label { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: var(--accent-soft); }
 .warning-label { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 42%, var(--border)); }
@@ -516,7 +541,9 @@ html[data-theme="light"] .control-select { color-scheme: light; }
 .detail-labels { margin-top: 10px; display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 7px; }
 .detail-heading--item { text-align: left; }
 .detail-summary--item, .detail-summary--title { grid-template-columns: minmax(0, 1fr) 52px; }
-.detail-summary--title .detail-heading h1 { overflow-wrap: break-word; word-break: normal; }
+.detail-summary--title .detail-heading h1 { min-width: 0; overflow-wrap: break-word; word-break: normal; }
+.title-heading-line { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.title-index-badge--large { min-height: 28px; padding-inline: 8px; border-radius: 8px; font-size: 13px; }
 .class-label {
   max-width: 100%;
   border-color: var(--border-strong);
@@ -843,7 +870,7 @@ a.link-row:hover { background: var(--surface-2); }
   .result-main { min-height: 82px; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; padding-left: 10px; }
   .result-arrow { display: none; }
   .result-icon { width: 32px; height: 32px; }
-  .result-copy > strong { font-size: 15px; }
+  .result-copy > strong, .title-name-line > strong { font-size: 15px; }
   .result-list.card-view { grid-template-columns: 1fr; }
   .detail-summary { grid-template-columns: 50px minmax(0, 1fr) 46px; gap: 11px; }
   .detail-summary--item, .detail-summary--title { grid-template-columns: minmax(0, 1fr) 46px; }
@@ -885,6 +912,8 @@ a.link-row:hover { background: var(--surface-2); }
   .control-select--server { max-width: 108px; padding-inline: 9px 28px; background-position: right 8px center; }
   .detail-summary { grid-template-columns: 44px minmax(0, 1fr) 44px; }
   .detail-summary--item, .detail-summary--title { grid-template-columns: minmax(0, 1fr) 44px; }
+  .title-heading-line { gap: 6px; }
+  .title-index-badge--large { padding-inline: 6px; }
   .detail-icon { width: 42px; height: 42px; }
   .favorite-button.large { width: 42px; height: 42px; }
 }

@@ -92,6 +92,8 @@ CHEST_ITEM = {
         "name": "Тестовая шкатулка",
         "category": "Шкатулки",
         "typeLine": "Шкатулка",
+        "quality": "Не указано",
+        "qualityId": 0,
         "sellType": 0,
     },
     "bonuses": [],
@@ -117,6 +119,8 @@ RUNE_ITEM = {
         "name": "Тестовая руна",
         "category": "Руны",
         "typeLine": "Руна",
+        "quality": "Событийное",
+        "qualityId": 9,
         "sellType": 0,
     },
     "bonuses": [],
@@ -127,6 +131,7 @@ TITLE = {
     "title": {"index": 991, "name": "Антагонист I", "level": 1},
     "effect": "+1 к тестовой характеристике",
     "drops": [],
+    "itemIds": [1550112],
 }
 
 
@@ -369,8 +374,18 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
 
             page.evaluate("location.hash = 'item/2001'")
             page.wait_for_selector('.detail-page[data-route="item/2001"]')
+            require(
+                page.locator(".rarity-label.quality-shop").inner_text().strip()
+                == "Покупной",
+                "purchased tooltip category color/label regression",
+            )
             page.locator('.chest-content-row[href="#item/2002"]').click()
             page.wait_for_selector('.detail-page[data-route="item/2002"]')
+            require(
+                page.locator(".rarity-label.quality-event").inner_text().strip()
+                == "Ивентовый",
+                "event tooltip category color/label regression",
+            )
             back = page.locator("[data-route-back]")
             require(
                 back.inner_text().strip() == "Назад", "detail back action is missing"
@@ -397,6 +412,17 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
             require(
                 page.locator(".detail-summary--title").count() == 1,
                 "title detail does not use the dedicated two-column layout",
+            )
+            require(
+                page.locator(".title-index-badge--large").inner_text().strip() == "991",
+                "title detail index badge is missing or malformed",
+            )
+            technical = page.get_by_text("Технические сведения", exact=True)
+            require(technical.count() == 1, "title technical details are missing")
+            technical.click()
+            require(
+                page.get_by_text("Связанный предмет — ID", exact=True).count() == 1,
+                "title technical item reference is missing",
             )
             page.set_viewport_size({"width": 360, "height": 780})
             page.wait_for_timeout(50)

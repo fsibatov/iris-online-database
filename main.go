@@ -2318,14 +2318,15 @@ func handleTitle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
 		return
 	}
-	response := map[string]any{
-		"title":  titleSummary(title),
-		"effect": "",
-		"drops":  []ItemDrop{},
-	}
-	itemIDs := title.ItemIDs
+	itemIDs := append([]int(nil), title.ItemIDs...)
 	if len(itemIDs) == 0 && title.ItemID > 0 {
 		itemIDs = []int{title.ItemID}
+	}
+	response := map[string]any{
+		"title":   titleSummary(title),
+		"effect":  "",
+		"drops":   []ItemDrop{},
+		"itemIds": itemIDs,
 	}
 	for _, itemID := range itemIDs {
 		if item := store.itemsByID[itemID]; item != nil {

@@ -212,7 +212,8 @@ func TestTitleDetailLegacyItemRedirectAndFavoriteMigration(t *testing.T) {
 			Name  string `json:"name"`
 			Level int    `json:"level"`
 		} `json:"title"`
-		Effect string `json:"effect"`
+		Effect  string `json:"effect"`
+		ItemIDs []int  `json:"itemIds"`
 	}
 	if err := json.Unmarshal(detailRec.Body.Bytes(), &detail); err != nil {
 		t.Fatal(err)
@@ -222,6 +223,9 @@ func TestTitleDetailLegacyItemRedirectAndFavoriteMigration(t *testing.T) {
 	}
 	if !strings.Contains(detail.Effect, "Физ. уклонение +10") || strings.Contains(detail.Effect, "Получено звание") {
 		t.Fatalf("title effect is not clean: %q", detail.Effect)
+	}
+	if len(detail.ItemIDs) != 1 || detail.ItemIDs[0] != 807005 {
+		t.Fatalf("title technical item ids=%v want=[807005]", detail.ItemIDs)
 	}
 
 	legacyReq := httptest.NewRequest(http.MethodGet, "/api/items/807005?server=original", nil)

@@ -316,15 +316,34 @@ class InterfaceDetailTests(unittest.TestCase):
         )
         self.assertIn("kind === 'titles'", self.script)
         self.assertNotIn("Индекс ${escapeHTML(title.index)}", self.script)
+        self.assertIn("function formatTitleIndex(value)", self.script)
+        self.assertIn("String(index).padStart(3, '0')", self.script)
+        self.assertIn("title-index-badge", self.script)
+        self.assertIn("title-heading-line", self.script)
+        self.assertIn(
+            "accordion('Технические сведения', `Индекс ${formatTitleIndex(index)}`",
+            self.script,
+        )
+        self.assertIn("['Индекс титула', formatNumber(index)]", self.script)
+        self.assertIn(
+            "['Связанный предмет — ID', formatNumber(itemIDs[0])]", self.script
+        )
         self.assertIn('class="detail-summary detail-summary--title"', self.script)
         self.assertIn(
             ".detail-summary--item, .detail-summary--title { grid-template-columns: minmax(0, 1fr) 52px; }",
             self.styles,
         )
         self.assertIn(
-            ".detail-summary--title .detail-heading h1 { overflow-wrap: break-word; word-break: normal; }",
+            ".detail-summary--title .detail-heading h1 { min-width: 0; overflow-wrap: break-word; word-break: normal; }",
             self.styles,
         )
+        self.assertIn(".title-index-badge {", self.styles)
+        self.assertIn("font-variant-numeric: tabular-nums", self.styles)
+        self.assertIn("qualityDisplayLabel", self.script)
+        self.assertIn("return 'Покупной'", self.script)
+        self.assertIn("return 'Ивентовый'", self.script)
+        self.assertIn(".rarity-label.quality-event { color: #c9a0dc", self.styles)
+        self.assertIn(".rarity-label.quality-shop { color: #ffcd00", self.styles)
 
     def test_items_have_known_source_filter(self):
         self.assertIn("knownSource: ''", self.script)

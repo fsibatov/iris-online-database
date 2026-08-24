@@ -1100,17 +1100,24 @@ func TestNavigationDoesNotDuplicateItemCategories(t *testing.T) {
 	}
 }
 
-func TestUnspecifiedQualityBadgeIsSuppressed(t *testing.T) {
+func TestTooltipCategoriesUseSourcePresentation(t *testing.T) {
 	data, err := os.ReadFile("web/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
 	script := string(data)
-	if !strings.Contains(script, "label.toLocaleLowerCase('ru-RU') === 'не указано'") {
-		t.Fatal("unspecified quality is not suppressed in the interface")
+	for _, expected := range []string{
+		"if (id === 0 || value.toLocaleLowerCase('ru-RU') === 'не указано') return 'Покупной';",
+		"if (id === 9 || value.toLocaleLowerCase('ru-RU').includes('событийн')) return 'Ивентовый';",
+		"if (id === 0) return 'quality-shop';",
+		"if (id === 9) return 'quality-event';",
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("tooltip category presentation marker is missing: %s", expected)
+		}
 	}
-	if strings.Count(script, "qualityBadge(item.quality)") != 2 {
-		t.Fatal("quality badge helper is not used in both item card and item detail")
+	if strings.Count(script, "qualityBadge(item.quality, item.qualityId)") != 2 {
+		t.Fatal("quality badge helper is not used with source tooltip color in both item card and item detail")
 	}
 }
 
@@ -1633,6 +1640,7 @@ func TestRarityColorsArePreserved(t *testing.T) {
 		"quality-normal": "#ffffff",
 		"quality-magic":  "#00ff00",
 		"quality-shop":   "#ffcd00",
+		"quality-event":  "#c9a0dc",
 	} {
 		marker := ".rarity-label." + className + " { color: " + color
 		if !strings.Contains(styles, marker) {

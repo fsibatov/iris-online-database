@@ -264,6 +264,19 @@
     return numberFormatter.format(Number(value || 0));
   }
 
+  function formatTitleIndex(value) {
+    const index = Math.trunc(Number(value));
+    if (!Number.isFinite(index) || index <= 0) return '';
+    return String(index).padStart(3, '0');
+  }
+
+  function titleIndexBadge(value, large = false) {
+    const index = Math.trunc(Number(value));
+    const label = formatTitleIndex(index);
+    if (!label) return '';
+    return `<span class="title-index-badge${large ? ' title-index-badge--large' : ''}" title="Индекс титула ${escapeHTML(formatNumber(index))}" aria-label="Индекс титула ${escapeHTML(formatNumber(index))}">${escapeHTML(label)}</span>`;
+  }
+
   function russianPlural(value, one, few, many) {
     const number = Math.abs(Math.trunc(Number(value) || 0));
     const lastTwo = number % 100;
@@ -320,21 +333,35 @@
     catch (_) { return safe; }
   }
 
-  function qualityClass(quality) {
+  function qualityDisplayLabel(quality, qualityID = null) {
+    const value = String(quality || '').trim();
+    const hasID = qualityID !== null && qualityID !== undefined && String(qualityID).trim() !== '';
+    const id = hasID ? Number(qualityID) : Number.NaN;
+    if (id === 0 || value.toLocaleLowerCase('ru-RU') === 'не указано') return 'Покупной';
+    if (id === 9 || value.toLocaleLowerCase('ru-RU').includes('событийн')) return 'Ивентовый';
+    return value;
+  }
+
+  function qualityClass(quality, qualityID = null) {
+    const hasID = qualityID !== null && qualityID !== undefined && String(qualityID).trim() !== '';
+    const id = hasID ? Number(qualityID) : Number.NaN;
+    if (id === 0) return 'quality-shop';
+    if (id === 9) return 'quality-event';
     const value = String(quality || '').trim().toLowerCase();
     if (value.includes('уникаль')) return 'quality-unique';
     if (value.includes('эпичес')) return 'quality-epic';
     if (value.includes('редк')) return 'quality-rare';
     if (value.includes('магичес')) return 'quality-magic';
     if (value.includes('покуп')) return 'quality-shop';
+    if (value.includes('событийн') || value.includes('ивент')) return 'quality-event';
     if (value.includes('обыч')) return 'quality-normal';
     return 'quality-default';
   }
 
-  function qualityBadge(quality) {
-    const label = String(quality || '').trim();
-    if (!label || label.toLocaleLowerCase('ru-RU') === 'не указано') return '';
-    return `<span class="rarity-label ${qualityClass(label)}">${escapeHTML(label)}</span>`;
+  function qualityBadge(quality, qualityID = null) {
+    const label = qualityDisplayLabel(quality, qualityID);
+    if (!label) return '';
+    return `<span class="rarity-label ${qualityClass(label, qualityID)}">${escapeHTML(label)}</span>`;
   }
 
   function itemSetBadge(setSize) {
@@ -491,7 +518,7 @@
     const viewed = recentViewedEntries().slice(0, 6);
     const serverLabel = serverName(activeServerMeta());
     const recentlyViewed = viewed.length
-      ? `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><div class="home-section-heading"><h2 id="viewedTitle">Недавно просмотренные</h2><button class="text-button compact-button" type="button" data-action="clear-recently-viewed" aria-label="Очистить недавно просмотренные">Очистить</button></div><div class="recent-viewed-list">${viewed.map(entry => `<a href="#${entry.type}/${entry.id}"><span class="recent-viewed-icon">${icons[entry.type]}</span><span><strong>${escapeHTML(entry.name)}</strong><small>${entry.type === 'item' ? 'Предмет' : entry.type === 'title' ? 'Титул' : 'Монстр'}</small></span>${icons.chevron}</a>`).join('')}</div></section>`
+      ? `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><div class="home-section-heading"><h2 id="viewedTitle">Недавно просмотренные</h2><button class="text-button compact-button" type="button" data-action="clear-recently-viewed" aria-label="Очистить недавно просмотренные">Очистить</button></div><div class="recent-viewed-list">${viewed.map(entry => `<a href="#${entry.type}/${entry.id}"><span class="recent-viewed-icon">${icons[entry.type]}</span><span>${entry.type === 'title' ? `<span class="title-name-line title-name-line--compact">${titleIndexBadge(entry.id)}<strong>${escapeHTML(entry.name)}</strong></span>` : `<strong>${escapeHTML(entry.name)}</strong>`}<small>${entry.type === 'item' ? 'Предмет' : entry.type === 'title' ? 'Титул' : 'Монстр'}</small></span>${icons.chevron}</a>`).join('')}</div></section>`
       : `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><p class="home-start-hint">Здесь появятся открытые предметы, монстры и титулы.</p></section>`;
     const updateNotice = state.updateInfo.updateAvailable && state.updateInfo.latestVersion
       ? `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="https://github.com/fsibatov/iris-online-database/releases/latest" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`
@@ -588,7 +615,10 @@
         ? ['Титул', record.level ? `Уровень ${record.level}` : 'Уровень не указан'].join(' · ')
         : [record.category, record.typeName, `Уровень ${record.level}`].filter(Boolean).join(' · ');
     suggestionRoutes.push(route);
-    return `<div class="suggestion-option" id="suggestion-${index}" role="option" aria-selected="false" data-suggestion-index="${index}" data-suggestion="${escapeHTML(route)}"><span class="suggestion-type-icon">${icons[type]}</span><span><strong>${highlight(record.name, query)}</strong><small>${escapeHTML(subtitle)}</small></span></div>`;
+    const name = type === 'title'
+      ? `<span class="title-name-line title-name-line--compact">${titleIndexBadge(record.index)}<strong>${highlight(record.name, query)}</strong></span>`
+      : `<strong>${highlight(record.name, query)}</strong>`;
+    return `<div class="suggestion-option" id="suggestion-${index}" role="option" aria-selected="false" data-suggestion-index="${index}" data-suggestion="${escapeHTML(route)}"><span class="suggestion-type-icon">${icons[type]}</span><span>${name}<small>${escapeHTML(subtitle)}</small></span></div>`;
   }
 
   function renderSuggestions(data, query) {
@@ -752,7 +782,7 @@
     return `<article class="result-row title-result-row">
       <a class="result-main" href="#title/${Number(title.index)}" aria-label="Открыть титул: ${escapeHTML(title.name)}">
         <span class="result-icon">${icons.title}</span>
-        <span class="result-copy"><strong>${highlight(title.name, query)}</strong><span class="result-secondary">${escapeHTML(level)}</span></span>
+        <span class="result-copy"><span class="title-name-line">${titleIndexBadge(title.index)}<strong>${highlight(title.name, query)}</strong></span><span class="result-secondary">${escapeHTML(level)}</span></span>
         <span class="result-arrow">${icons.chevron}</span>
       </a>
       <button class="favorite-button ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
@@ -763,7 +793,7 @@
     const key = `item:${item.id}`;
     const active = state.favorites.has(key);
     const secondary = [item.typeLine || item.category, item.level ? `Ранг ${item.level}` : ''].filter(Boolean).join(' · ');
-    const tertiary = [qualityBadge(item.quality), primaryItemStat(item) ? `<span>${escapeHTML(primaryItemStat(item))}</span>` : '', itemSetBadge(item.setSize)].filter(Boolean).join('');
+    const tertiary = [qualityBadge(item.quality, item.qualityId), primaryItemStat(item) ? `<span>${escapeHTML(primaryItemStat(item))}</span>` : '', itemSetBadge(item.setSize)].filter(Boolean).join('');
     return `<article class="result-row">
       <a class="result-main" href="#item/${item.id}" aria-label="Открыть предмет: ${escapeHTML(item.name)}">
         <span class="result-icon">${icons.item}</span>
@@ -792,7 +822,7 @@
     return `<article class="result-row recipe-result-row">
       <a class="result-main" href="#recipe/${recipe.id}" aria-label="Открыть рецепт: ${escapeHTML(recipe.name)}">
         <span class="result-icon">${icons.recipe}</span>
-        <span class="result-copy"><strong>${highlight(recipe.name, query)}</strong><span class="result-secondary">${escapeHTML(secondary)}</span><span class="result-tertiary">${qualityBadge(recipe.quality)}<span class="recipe-material-preview">${escapeHTML(materialsLine)}</span></span>${sourceLine ? `<span class="recipe-source-preview">${escapeHTML(sourceLine)}</span>` : ''}</span>
+        <span class="result-copy"><strong>${highlight(recipe.name, query)}</strong><span class="result-secondary">${escapeHTML(secondary)}</span><span class="result-tertiary">${qualityBadge(recipe.quality, recipe.qualityId)}<span class="recipe-material-preview">${escapeHTML(materialsLine)}</span></span>${sourceLine ? `<span class="recipe-source-preview">${escapeHTML(sourceLine)}</span>` : ''}</span>
         <span class="result-arrow">${icons.chevron}</span>
       </a>
       <button class="favorite-button ${state.favorites.has(`item:${recipe.id}`) ? 'active' : ''}" type="button" data-favorite="item:${recipe.id}" aria-label="${state.favorites.has(`item:${recipe.id}`) ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
@@ -850,7 +880,13 @@
           ? { knownSource: 'Известно, где получить', minLevel: 'Уровень от', maxLevel: 'Уровень до' }
           : { category: 'Категория', type: 'Тип', minLevel: 'Уровень от', maxLevel: 'Уровень до' };
     const chips = Object.entries(labels).filter(([key]) => String(filters[key] || '').trim()).map(([key, label]) => {
-      const value = key === 'knownSource' ? label : key.startsWith('min') || key.startsWith('max') ? `${label} ${filters[key]}` : filters[key];
+      const value = key === 'knownSource'
+        ? label
+        : key.startsWith('min') || key.startsWith('max')
+          ? `${label} ${filters[key]}`
+          : key === 'quality'
+            ? qualityDisplayLabel(filters[key])
+            : filters[key];
       return `<button type="button" class="filter-chip" data-clear-filter="${key}" aria-label="Убрать фильтр: ${escapeHTML(value)}"><span>${escapeHTML(value)}</span>${icons.close}</button>`;
     });
     if (!chips.length) return '';
@@ -861,6 +897,10 @@
     return `<option value="">${escapeHTML(anyLabel)}</option>${(options || []).map(value => `<option value="${escapeHTML(value)}" ${value === selected ? 'selected' : ''}>${escapeHTML(value)}</option>`).join('')}`;
   }
 
+  function qualityOptionList(options, selected, anyLabel) {
+    return `<option value="">${escapeHTML(anyLabel)}</option>${(options || []).map(value => `<option value="${escapeHTML(value)}" ${value === selected ? 'selected' : ''}>${escapeHTML(qualityDisplayLabel(value))}</option>`).join('')}`;
+  }
+
   function renderFilterDrawer(kind, filterData) {
     const filters = catalogFilters(kind);
     const dependentLocked = !['recipes', 'titles'].includes(kind) && !filters.category;
@@ -869,11 +909,11 @@
       ? `<label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только титулы, для которых в выбранной базе указан подтверждённый источник получения.</small></span></label>`
       : kind === 'recipes'
         ? `<label class="field"><span>Тип рецепта</span><select class="control-select" name="type">${optionList(filterData.types, filters.type, 'Любой')}</select></label>
-           <label class="field"><span>Редкость</span><select class="control-select" name="quality">${optionList(filterData.qualities, filters.quality, 'Любая')}</select></label>
+           <label class="field"><span>Редкость</span><select class="control-select" name="quality">${qualityOptionList(filterData.qualities, filters.quality, 'Любая')}</select></label>
            <label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только рецепты, для которых в выбранной базе указан источник получения.</small></span></label>`
         : `<label class="field"><span>Категория</span><select class="control-select" name="category">${optionList(filterData.categories, filters.category, 'Любая')}</select></label>
            ${kind === 'items'
-             ? `<label class="field"><span>Подкатегория</span><select class="control-select" name="subcategory" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.subcategories, filters.subcategory, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="field"><span>Редкость</span><select class="control-select" name="quality" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.qualities, filters.quality, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только предметы, для которых в выбранной базе указан источник получения.</small></span></label>`
+             ? `<label class="field"><span>Подкатегория</span><select class="control-select" name="subcategory" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.subcategories, filters.subcategory, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="field"><span>Редкость</span><select class="control-select" name="quality" ${dependentLocked ? 'disabled' : ''}>${qualityOptionList(filterData.qualities, filters.quality, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только предметы, для которых в выбранной базе указан источник получения.</small></span></label>`
              : `<label class="field"><span>Тип монстра</span><select class="control-select" name="type" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.types, filters.type, 'Любой')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label>`}`;
     const minLabel = kind === 'monsters' || kind === 'titles' ? 'Уровень от' : kind === 'recipes' ? 'Уровень мастерства от' : 'Ранг от';
     const maxLabel = kind === 'monsters' || kind === 'titles' ? 'Уровень до' : kind === 'recipes' ? 'Уровень мастерства до' : 'Ранг до';
@@ -1430,7 +1470,7 @@
     main.innerHTML = `<section class="page detail-page" data-route="${detailRoute}">
       ${breadcrumb(recipeContext ? 'recipes' : 'items', recipeContext ? 'Рецепты' : 'Предметы', item.name)}
       <header class="detail-summary detail-summary--item">
-        <div class="detail-heading detail-heading--item"><h1>${escapeHTML(item.name)}</h1><p>${escapeHTML([item.typeLine || item.category, recipeContext ? recipeMasteryRequirement : itemLevelSummary(item)].filter(Boolean).join(' · '))}</p><div class="detail-labels">${qualityBadge(item.quality)}${itemClassBadge(presentation.classes)}${itemSetBadge(setMembers.length)}</div></div>
+        <div class="detail-heading detail-heading--item"><h1>${escapeHTML(item.name)}</h1><p>${escapeHTML([item.typeLine || item.category, recipeContext ? recipeMasteryRequirement : itemLevelSummary(item)].filter(Boolean).join(' · '))}</p><div class="detail-labels">${qualityBadge(item.quality, item.qualityId)}${itemClassBadge(presentation.classes)}${itemSetBadge(setMembers.length)}</div></div>
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
       </header>
       ${gameProperties(presentation, recipeContext ? 'Характеристики рецепта' : 'Характеристики предмета', data.set ? setContent(item, data.set) : '')}
@@ -1458,6 +1498,9 @@
     const level = Number(title.level) || 0;
     const levelLabel = level > 0 ? `Уровень ${formatNumber(level)}` : 'Уровень не указан';
     const effect = normalizeDisplayText(data.effect || '');
+    const itemIDs = Array.isArray(data.itemIds)
+      ? [...new Set(data.itemIds.map(value => Math.trunc(Number(value))).filter(value => Number.isInteger(value) && value > 0))]
+      : [];
     const drops = [...(data.drops || [])];
     const sourceSummary = bestSourceSummary(drops);
     const key = `title:${index}`;
@@ -1470,14 +1513,20 @@
     main.innerHTML = `<section class="page detail-page" data-route="title/${index}">
       ${breadcrumb('titles', 'Титулы', name)}
       <header class="detail-summary detail-summary--title">
-        <div class="detail-heading"><h1>${escapeHTML(name)}</h1><p>${escapeHTML(levelLabel)}</p></div>
+        <div class="detail-heading"><div class="title-heading-line">${titleIndexBadge(index, true)}<h1>${escapeHTML(name)}</h1></div><p>${escapeHTML(levelLabel)}</p></div>
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
       </header>
       ${effect ? `<section class="title-effect-card" aria-labelledby="titleEffectTitle"><span class="eyebrow">Характеристики</span><h2 id="titleEffectTitle">Эффект титула</h2><p class="reading-text">${multilineHTML(effect)}</p></section>` : `<section class="title-effect-card title-effect-card--empty" aria-label="Эффект титула"><h2>Эффект титула</h2><p class="empty-copy">Для этого титула эффект в доступных игровых данных не указан.</p></section>`}
       ${drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary || 'Источник получения')}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p></div><button class="secondary-button" type="button" data-open-details="title-sources">Показать все источники</button></section>` : ''}
       <section class="detail-accordions">
         ${drops.length ? accordion('Источники получения', formatCount(drops.length, 'вариант', 'варианта', 'вариантов'), sourcesContent(), false, 'title-sources') : ''}
-        ${accordion('Сведения', levelLabel, kvList([['Уровень', level > 0 ? formatNumber(level) : 'Не указан'], ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server]]), false)}
+        ${accordion('Технические сведения', `Индекс ${formatTitleIndex(index)}`, kvList([
+          ['Индекс титула', formatNumber(index)],
+          ['Уровень', level > 0 ? formatNumber(level) : 'Не указан'],
+          ...(itemIDs.length === 1 ? [['Связанный предмет — ID', formatNumber(itemIDs[0])]] : []),
+          ...(itemIDs.length > 1 ? [['Связанные предметы — ID', itemIDs.map(formatNumber).join(', ')]] : []),
+          ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server],
+        ]), false)}
       </section>
     </section>`;
     positionSearchWidget(false);
