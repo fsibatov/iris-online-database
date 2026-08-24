@@ -543,6 +543,7 @@ html[data-theme="light"] .control-select { color-scheme: light; }
 .detail-summary--item, .detail-summary--title { grid-template-columns: minmax(0, 1fr) 52px; }
 .detail-summary--title .detail-heading h1 { min-width: 0; overflow-wrap: break-word; word-break: normal; }
 .title-heading-line { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.title-heading-line > h1 { flex: 1 1 auto; }
 .title-index-badge--large { min-height: 28px; padding-inline: 8px; border-radius: 8px; font-size: 13px; }
 .class-label {
   max-width: 100%;

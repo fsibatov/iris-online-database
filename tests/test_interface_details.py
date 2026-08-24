@@ -320,6 +320,7 @@ class InterfaceDetailTests(unittest.TestCase):
         self.assertIn("String(index).padStart(3, '0')", self.script)
         self.assertIn("title-index-badge", self.script)
         self.assertIn("title-heading-line", self.script)
+        self.assertIn(".title-heading-line > h1 { flex: 1 1 auto; }", self.styles)
         self.assertIn(
             "accordion('Технические сведения', `Индекс ${formatTitleIndex(index)}`",
             self.script,

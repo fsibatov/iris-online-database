@@ -523,8 +523,8 @@ def main() -> int:
                 return 2
             print(f"Embedded frontend smoke test: FAIL [{category}]")
             return 1
-        except RuntimeError:
-            print("Embedded frontend smoke test: FAIL [REGRESSION]")
+        except RuntimeError as error:
+            print(f"Embedded frontend smoke test: FAIL [REGRESSION] {error}")
             return 1
     finally:
         server.shutdown()
