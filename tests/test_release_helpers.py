@@ -58,6 +58,19 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertEqual(resources["fixed"]["product_version"], f"{version}.0")
         self.assertEqual(resources["info"]["0419"]["ProductVersion"], version)
 
+    def test_release_uses_only_current_changelog_section_for_notes(self):
+        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(f"## {version} —", changelog)
+        self.assertIn("$ReleaseSectionPattern", script)
+        self.assertIn('"--notes-file", $ReleaseNotesPath', script)
+        self.assertNotIn('"--notes-file", "CHANGELOG.md"', script)
+        self.assertIn("GetTempFileName", script)
+        self.assertIn("WriteAllText", script)
+
     def test_desktop_build_contract_has_no_production_listener(self):
         windows_main = (ROOT / "main_windows.go").read_text(encoding="utf-8")
         server = (ROOT / "server.go").read_text(encoding="utf-8")

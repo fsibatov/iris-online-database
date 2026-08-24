@@ -1647,13 +1647,31 @@ function Create-Release {
         )
         $Artifacts = @($ArtifactNames | ForEach-Object { Join-Path $OutputFull $_ })
         $Checksums = Join-Path $OutputFull "SHA256SUMS.txt"
-        $ReleaseArguments = @("release", "create", $Tag) + $Artifacts + @(
-            $Checksums,
-            "--verify-tag",
-            "--title", "Iris Online Database $Version",
-            "--notes-file", "CHANGELOG.md"
-        )
-        Invoke-Checked "gh" $ReleaseArguments 600
+        $ChangelogPath = Join-Path $Root "CHANGELOG.md"
+        $ChangelogText = Get-Content -LiteralPath $ChangelogPath -Raw
+        $VersionPattern = [Regex]::Escape($Version)
+        $ReleaseSectionPattern = "(?ms)^##\s+" + $VersionPattern + "(?:\s+—[^\r\n]*)?\r?\n(.*?)(?=^##\s+\d+\.\d+(?:\.\d+)?(?:\s+—|\s*$)|\z)"
+        $ReleaseSection = [Regex]::Match($ChangelogText, $ReleaseSectionPattern)
+        if (-not $ReleaseSection.Success) {
+            throw "CHANGELOG.md does not contain release notes for version $Version."
+        }
+        $ReleaseNotes = $ReleaseSection.Groups[1].Value.Trim()
+        if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
+            throw "Release notes for version $Version are empty."
+        }
+        $ReleaseNotesPath = [IO.Path]::GetTempFileName()
+        try {
+            [IO.File]::WriteAllText($ReleaseNotesPath, $ReleaseNotes, (New-Object Text.UTF8Encoding($false)))
+            $ReleaseArguments = @("release", "create", $Tag) + $Artifacts + @(
+                $Checksums,
+                "--verify-tag",
+                "--title", "Iris Online Database $Version",
+                "--notes-file", $ReleaseNotesPath
+            )
+            Invoke-Checked "gh" $ReleaseArguments 600
+        } finally {
+            Remove-Item -LiteralPath $ReleaseNotesPath -Force -ErrorAction SilentlyContinue
+        }
         Write-Host "GitHub release $Tag created." -ForegroundColor Green
     } finally { Pop-Location }
 }

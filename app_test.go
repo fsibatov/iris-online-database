@@ -194,7 +194,14 @@ func TestDependentItemFiltersAreIgnoredWithoutCategory(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	expected := len(store.data.Items) - len(store.itemRecipes)
+	expected := 0
+	for index := range store.data.Items {
+		item := &store.data.Items[index]
+		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe || isTitleItem(item) {
+			continue
+		}
+		expected++
+	}
 	if response.Total != expected {
 		t.Fatalf("dependent filters were applied without a category: got %d want %d", response.Total, expected)
 	}

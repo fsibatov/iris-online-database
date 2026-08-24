@@ -280,8 +280,8 @@ class InterfaceDetailTests(unittest.TestCase):
         )
         subprocess.run(["node", "-e", probe], check=True)
 
-    def test_recently_viewed_supports_items_and_monsters_in_profile(self):
-        self.assertIn("['item', 'monster'].includes(type)", self.script)
+    def test_recently_viewed_supports_items_monsters_and_titles_in_profile(self):
+        self.assertIn("['item', 'monster', 'title'].includes(type)", self.script)
         self.assertIn("const key = `${type}:${numericID}:${server}`", self.script)
         self.assertIn("entry.type === 'monster'", self.script)
         self.assertIn("normalizeServerKey(entry.server)", self.script)
@@ -289,11 +289,23 @@ class InterfaceDetailTests(unittest.TestCase):
         self.assertIn(
             "trackRecentlyViewed('monster', monster.id, monster.name,", self.script
         )
+        self.assertIn("trackRecentlyViewed('title', index, name, levelLabel)", self.script)
         self.assertIn("recent-viewed-list", self.script)
         self.assertNotIn("recent-viewed-card", self.script)
         self.assertIn("recentlyViewed: normalizedRecentViewedEntries()", self.script)
         self.assertIn("profile.recentlyViewed", self.script)
         self.assertIn("localRecentlyViewed", self.script)
+
+
+    def test_titles_are_clickable_level_aware_and_have_known_source_filter(self):
+        self.assertIn("return { q: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'level', page: 1 };", self.script)
+        self.assertIn('href="#title/${Number(title.index)}"', self.script)
+        self.assertIn("['level', 'По уровню']", self.script)
+        self.assertIn("['name', 'По названию']", self.script)
+        self.assertIn("['index', 'По индексу']", self.script)
+        self.assertIn("Только титулы, для которых в выбранной базе указан подтверждённый источник получения.", self.script)
+        self.assertIn("kind === 'titles'", self.script)
+        self.assertNotIn("Индекс ${escapeHTML(title.index)}", self.script)
 
     def test_items_have_known_source_filter(self):
         self.assertIn("knownSource: ''", self.script)

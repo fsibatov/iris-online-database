@@ -341,8 +341,16 @@ func TestItemsCatalogAndGlobalSearchExcludeRecipes(t *testing.T) {
 	if err := json.Unmarshal(itemsRec.Body.Bytes(), &itemsPayload); err != nil {
 		t.Fatal(err)
 	}
-	if itemsPayload.Total != len(store.data.Items)-len(store.itemRecipes) {
-		t.Fatalf("items total=%d expected=%d", itemsPayload.Total, len(store.data.Items)-len(store.itemRecipes))
+	expected := 0
+	for index := range store.data.Items {
+		item := &store.data.Items[index]
+		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe || isTitleItem(item) {
+			continue
+		}
+		expected++
+	}
+	if itemsPayload.Total != expected {
+		t.Fatalf("items total=%d expected=%d", itemsPayload.Total, expected)
 	}
 
 	var recipe *Item

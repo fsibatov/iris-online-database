@@ -584,6 +584,19 @@ html[data-theme="light"] .control-select { color-scheme: light; }
   line-height: 1;
   overflow-wrap: anywhere;
 }
+.title-effect-card {
+  max-width: 680px;
+  display: grid;
+  gap: 6px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.title-effect-card h2 { margin: 0; font-size: 18px; }
+.title-effect-card .reading-text { color: var(--text); }
+.title-effect-card--empty { gap: 4px; }
+
 .source-overview, .monster-drop-preview {
   min-width: 0;
   display: flex;
@@ -1223,6 +1236,3 @@ a.link-row:hover { background: var(--surface-2); }
   .version-status-number { font-size: 11px; }
   .section-tabs-row { padding-bottom: 6px; }
 }
-
-.title-result-row { grid-template-columns: minmax(0, 1fr); }
-.title-result-row .result-main { cursor: default; }

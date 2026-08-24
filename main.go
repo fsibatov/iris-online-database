@@ -546,6 +546,17 @@ type searchDocument struct {
 	Stems   string
 }
 
+type Title struct {
+	Index   int    `json:"index"`
+	Name    string `json:"name"`
+	ItemID  int    `json:"-"`
+	ItemIDs []int  `json:"-"`
+}
+
+type titleDefinitionFile struct {
+	Titles []Title `json:"titles"`
+}
+
 type appStore struct {
 	data             GameData
 	itemsByID        map[int]*Item
@@ -553,6 +564,9 @@ type appStore struct {
 	itemNames        map[int]string
 	itemSearch       []searchDocument
 	monsterSearch    []searchDocument
+	titles           []Title
+	titlesByIndex    map[int]*Title
+	titleSearch      []searchDocument
 	monsterTypeNames map[int]string
 	categoryItems    map[string]int
 	itemRecipes      map[int][]itemRecipeMaterialSource
@@ -607,6 +621,10 @@ func ensureLoaded() error {
 			loadErr = err
 			return
 		}
+		if err := loadTitleDefinitions(); err != nil {
+			loadErr = err
+			return
+		}
 		store.itemsByID = make(map[int]*Item, len(store.data.Items))
 		store.monstersByID = make(map[int]*Monster, len(store.data.Monsters))
 		store.itemNames = make(map[int]string, len(store.data.Items))
@@ -619,7 +637,9 @@ func ensureLoaded() error {
 			store.itemsByID[item.ID] = item
 			store.itemNames[item.ID] = item.Name
 			store.itemSearch[i] = newSearchDocument(fmt.Sprintf("%d %s %s %s %s %s", item.ID, item.Name, item.TypeLine, item.Category, item.Subcategory, item.Quality))
-			store.categoryItems[item.Category]++
+			if _, isRecipe := store.itemRecipes[item.ID]; !isRecipe && !isTitleItem(item) {
+				store.categoryItems[item.Category]++
+			}
 		}
 		for i := range store.data.Monsters {
 			monster := &store.data.Monsters[i]
@@ -1818,6 +1838,180 @@ func limitedQueryValue(values url.Values, key string, maxRunes int) (string, boo
 	return value, true
 }
 
+func isTitleItem(item *Item) bool {
+	return item != nil && item.TitleIndex > 0
+}
+
+func loadTitleDefinitions() error {
+	raw, err := embedded.ReadFile("web/titles.json")
+	if err != nil {
+		return fmt.Errorf("не удалось прочитать определения титулов: %w", err)
+	}
+
+	var definitions titleDefinitionFile
+	if err := json.Unmarshal(raw, &definitions); err != nil {
+		return fmt.Errorf("не удалось разобрать определения титулов: %w", err)
+	}
+	if len(definitions.Titles) == 0 {
+		return fmt.Errorf("список титулов пуст")
+	}
+
+	itemsByTitle := make(map[int][]*Item)
+	for index := range store.data.Items {
+		item := &store.data.Items[index]
+		if !isTitleItem(item) {
+			continue
+		}
+		itemsByTitle[item.TitleIndex] = append(itemsByTitle[item.TitleIndex], item)
+	}
+	for titleIndex := range itemsByTitle {
+		sort.Slice(itemsByTitle[titleIndex], func(i, j int) bool {
+			return itemsByTitle[titleIndex][i].ID < itemsByTitle[titleIndex][j].ID
+		})
+	}
+
+	seen := make(map[int]struct{}, len(definitions.Titles))
+	store.titles = make([]Title, 0, len(definitions.Titles))
+	for _, definition := range definitions.Titles {
+		definition.Name = strings.TrimSpace(definition.Name)
+		if definition.Index <= 0 || definition.Name == "" {
+			return fmt.Errorf("некорректное определение титула: index=%d name=%q", definition.Index, definition.Name)
+		}
+		if _, exists := seen[definition.Index]; exists {
+			return fmt.Errorf("повторный индекс титула: %d", definition.Index)
+		}
+		seen[definition.Index] = struct{}{}
+		if items := itemsByTitle[definition.Index]; len(items) != 0 {
+			definition.ItemID = items[0].ID
+			definition.ItemIDs = make([]int, 0, len(items))
+			for _, item := range items {
+				definition.ItemIDs = append(definition.ItemIDs, item.ID)
+			}
+		}
+		store.titles = append(store.titles, definition)
+	}
+
+	for titleIndex := range itemsByTitle {
+		if _, exists := seen[titleIndex]; !exists {
+			return fmt.Errorf("для титульного предмета указан неизвестный индекс титула: %d", titleIndex)
+		}
+	}
+
+	store.titlesByIndex = make(map[int]*Title, len(store.titles))
+	store.titleSearch = make([]searchDocument, len(store.titles))
+	for index := range store.titles {
+		title := &store.titles[index]
+		store.titlesByIndex[title.Index] = title
+		store.titleSearch[index] = newSearchDocument(fmt.Sprintf("%d %s", title.Index, title.Name))
+	}
+	return nil
+}
+
+func titleLevel(title *Title) int {
+	if title == nil {
+		return 0
+	}
+	level := 0
+	itemIDs := title.ItemIDs
+	if len(itemIDs) == 0 && title.ItemID > 0 {
+		itemIDs = []int{title.ItemID}
+	}
+	for _, itemID := range itemIDs {
+		item := store.itemsByID[itemID]
+		if item == nil {
+			continue
+		}
+		candidate := 0
+		if item.MinLevel > 0 {
+			candidate = item.MinLevel
+		} else if item.MaxLevel > 0 && item.MaxLevel < 100 {
+			candidate = item.MaxLevel
+		}
+		if candidate > 0 && (level == 0 || candidate < level) {
+			level = candidate
+		}
+	}
+	return level
+}
+
+func titleHasKnownSource(title *Title, rt *runtimeData) bool {
+	if title == nil || rt == nil {
+		return false
+	}
+	for _, itemID := range title.ItemIDs {
+		if _, ok := rt.knownSourceItems[itemID]; ok {
+			return true
+		}
+	}
+	if len(title.ItemIDs) == 0 && title.ItemID > 0 {
+		_, ok := rt.knownSourceItems[title.ItemID]
+		return ok
+	}
+	return false
+}
+
+func titleDropKey(drop ItemDrop) string {
+	drop.ItemID = 0
+	raw, err := json.Marshal(drop)
+	if err != nil {
+		return fmt.Sprintf("fallback:%s:%d:%d:%d:%d:%d", drop.Source, drop.MonsterID, drop.ContainerID, drop.QuestID, drop.GroupID, drop.SourceLine)
+	}
+	return string(raw)
+}
+
+func titleDropSources(title *Title, rt *runtimeData) []ItemDrop {
+	if title == nil || rt == nil {
+		return []ItemDrop{}
+	}
+	itemIDs := title.ItemIDs
+	if len(itemIDs) == 0 && title.ItemID > 0 {
+		itemIDs = []int{title.ItemID}
+	}
+	drops := make([]ItemDrop, 0)
+	seen := make(map[string]struct{})
+	for _, itemID := range itemIDs {
+		for _, drop := range itemDropSources(itemID, rt) {
+			key := titleDropKey(drop)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			drops = append(drops, drop)
+		}
+	}
+	sortItemDropSources(drops)
+	return drops
+}
+
+func titleSummary(title *Title) map[string]any {
+	return map[string]any{
+		"index": title.Index,
+		"name":  title.Name,
+		"level": titleLevel(title),
+	}
+}
+
+func titleEffectText(item *Item) string {
+	if item == nil {
+		return ""
+	}
+	text := strings.ReplaceAll(strings.ReplaceAll(item.Tooltip, "\r\n", "\n"), "\r", "\n")
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	for _, marker := range []string{"Эффект звания:", "Эффекты:"} {
+		if position := strings.Index(text, marker); position >= 0 {
+			return strings.TrimSpace(text[position+len(marker):])
+		}
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) > 1 && strings.HasPrefix(strings.TrimSpace(lines[0]), "Получено звание") {
+		return strings.TrimSpace(strings.Join(lines[1:], "\n"))
+	}
+	return text
+}
+
 func itemLevel(item *Item) int {
 	if item.MinLevel > 1 {
 		return item.MinLevel
@@ -1959,7 +2153,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if q == "" {
-		writeJSON(w, map[string]any{"items": []any{}, "monsters": []any{}})
+		writeJSON(w, map[string]any{"items": []any{}, "monsters": []any{}, "titles": []any{}})
 		return
 	}
 	query := q
@@ -1970,9 +2164,21 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe {
 			continue
 		}
+		if isTitleItem(item) {
+			continue
+		}
 		if matchesSearch(store.itemSearch[i], query) {
 			items = append(items, itemSummary(item))
 			if len(items) == 6 {
+				break
+			}
+		}
+	}
+	titles := make([]map[string]any, 0, 4)
+	for i := range store.titles {
+		if matchesSearch(store.titleSearch[i], query) {
+			titles = append(titles, titleSummary(&store.titles[i]))
+			if len(titles) == 4 {
 				break
 			}
 		}
@@ -1989,7 +2195,148 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, map[string]any{"items": items, "monsters": monsters})
+	writeJSON(w, map[string]any{"items": items, "monsters": monsters, "titles": titles})
+}
+
+func handleTitles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if r.URL.Path != "/api/titles" {
+		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
+		return
+	}
+	qv := r.URL.Query()
+	query, queryOK := limitedQueryValue(qv, "q", 160)
+	if !queryOK {
+		http.Error(w, "Слишком длинный поисковый запрос.\n", http.StatusBadRequest)
+		return
+	}
+	knownSource := qv.Get("knownSource")
+	if knownSource != "" && knownSource != "1" {
+		http.Error(w, "Некорректное значение фильтра источника.\n", http.StatusBadRequest)
+		return
+	}
+	minLevel := clampInt(parseInt(qv, "minLevel", 0), 0, 10000)
+	maxLevel := clampInt(parseInt(qv, "maxLevel", 0), 0, 10000)
+	if minLevel > 0 && maxLevel > 0 && minLevel > maxLevel {
+		minLevel, maxLevel = maxLevel, minLevel
+	}
+	sortMode, sortOK := limitedQueryValue(qv, "sort", 20)
+	if !sortOK || (sortMode != "" && sortMode != "level" && sortMode != "name" && sortMode != "index") {
+		http.Error(w, "Некорректный режим сортировки.\n", http.StatusBadRequest)
+		return
+	}
+	if sortMode == "" {
+		sortMode = "level"
+	}
+	page := clampInt(parseInt(qv, "page", 1), 1, 100000)
+	pageSize := clampInt(parseInt(qv, "pageSize", 20), 8, 48)
+	var rt *runtimeData
+	if knownSource == "1" {
+		rt = activeRuntime(qv.Get("server"))
+	}
+
+	filtered := make([]*Title, 0, len(store.titles))
+	for index := range store.titles {
+		title := &store.titles[index]
+		level := titleLevel(title)
+		if minLevel > 0 && (level == 0 || level < minLevel) {
+			continue
+		}
+		if maxLevel > 0 && (level == 0 || level > maxLevel) {
+			continue
+		}
+		if knownSource == "1" && !titleHasKnownSource(title, rt) {
+			continue
+		}
+		if query != "" && !matchesSearch(store.titleSearch[index], query) {
+			continue
+		}
+		filtered = append(filtered, title)
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		left, right := filtered[i], filtered[j]
+		switch sortMode {
+		case "level":
+			leftLevel, rightLevel := titleLevel(left), titleLevel(right)
+			if leftLevel == 0 || rightLevel == 0 {
+				if leftLevel != rightLevel {
+					return rightLevel == 0
+				}
+			} else if leftLevel != rightLevel {
+				return leftLevel < rightLevel
+			}
+		case "name":
+			if left.Name != right.Name {
+				return catalogNameLess(left.Name, right.Name)
+			}
+		case "index":
+			if left.Index != right.Index {
+				return left.Index < right.Index
+			}
+		}
+		if left.Name != right.Name {
+			return catalogNameLess(left.Name, right.Name)
+		}
+		return left.Index < right.Index
+	})
+
+	total := len(filtered)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := min(total, start+pageSize)
+	result := make([]map[string]any, 0, end-start)
+	for _, title := range filtered[start:end] {
+		result = append(result, titleSummary(title))
+	}
+	writeJSON(w, map[string]any{
+		"titles":   result,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+		"pages":    max(1, (total+pageSize-1)/pageSize),
+		"filters":  map[string]any{},
+	})
+}
+
+func handleTitle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	index, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/api/titles/"))
+	if err != nil || index <= 0 {
+		http.Error(w, "Некорректный идентификатор титула.\n", http.StatusBadRequest)
+		return
+	}
+	title := store.titlesByIndex[index]
+	if title == nil {
+		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
+		return
+	}
+	response := map[string]any{
+		"title":  titleSummary(title),
+		"effect": "",
+		"drops":  []ItemDrop{},
+	}
+	itemIDs := title.ItemIDs
+	if len(itemIDs) == 0 && title.ItemID > 0 {
+		itemIDs = []int{title.ItemID}
+	}
+	for _, itemID := range itemIDs {
+		if item := store.itemsByID[itemID]; item != nil {
+			if effect := titleEffectText(item); effect != "" {
+				response["effect"] = effect
+				break
+			}
+		}
+	}
+	response["drops"] = titleDropSources(title, activeRuntime(r.URL.Query().Get("server")))
+	writeJSON(w, response)
 }
 
 func handleItems(w http.ResponseWriter, r *http.Request) {
@@ -2042,6 +2389,9 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 	for i := range store.data.Items {
 		item := &store.data.Items[i]
 		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe {
+			continue
+		}
+		if isTitleItem(item) {
 			continue
 		}
 		if scope == "weapons" && item.Category != "Оружие/щит" {
@@ -2388,6 +2738,9 @@ func recipeProduct(item *Item) *Item {
 		if _, isRecipe := store.itemRecipes[candidate.ID]; isRecipe {
 			continue
 		}
+		if isTitleItem(candidate) {
+			continue
+		}
 		if recipeProductNameKey(candidate.Name) != key {
 			continue
 		}
@@ -2412,6 +2765,10 @@ func handleItem(w http.ResponseWriter, r *http.Request) {
 	item := store.itemsByID[id]
 	if item == nil {
 		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
+		return
+	}
+	if isTitleItem(item) {
+		writeJSON(w, map[string]any{"titleIndex": item.TitleIndex})
 		return
 	}
 	server := r.URL.Query().Get("server")
@@ -2843,7 +3200,17 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 	}
 	references := make([]favoriteReference, 0, len(request.Keys))
 	seen := make(map[string]struct{}, len(request.Keys))
+	seenReferences := make(map[string]struct{}, len(request.Keys))
+	migratedKeys := make(map[string]string)
 	missing := 0
+	addReference := func(kind string, id int) {
+		canonical := fmt.Sprintf("%s:%d", kind, id)
+		if _, exists := seenReferences[canonical]; exists {
+			return
+		}
+		seenReferences[canonical] = struct{}{}
+		references = append(references, favoriteReference{kind: kind, id: id})
+	}
 	for _, key := range request.Keys {
 		if _, ok := seen[key]; ok {
 			continue
@@ -2859,18 +3226,30 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 		}
 		switch parts[0] {
 		case "item":
-			if store.itemsByID[id] != nil {
+			if item := store.itemsByID[id]; item != nil {
+				if isTitleItem(item) {
+					canonical := fmt.Sprintf("title:%d", item.TitleIndex)
+					migratedKeys[key] = canonical
+					addReference("title", item.TitleIndex)
+					continue
+				}
 				kind := "item"
 				if _, isRecipe := store.itemRecipes[id]; isRecipe {
 					kind = "recipe"
 				}
-				references = append(references, favoriteReference{kind: kind, id: id})
+				addReference(kind, id)
+			} else {
+				missing++
+			}
+		case "title":
+			if store.titlesByIndex[id] != nil {
+				addReference("title", id)
 			} else {
 				missing++
 			}
 		case "monster":
 			if store.monstersByID[id] != nil && monsterVisible(rt, id) {
-				references = append(references, favoriteReference{kind: "monster", id: id})
+				addReference("monster", id)
 			} else {
 				missing++
 			}
@@ -2914,6 +3293,10 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 			row := recipeSummary(store.itemsByID[reference.id], rt)
 			row["kind"] = "recipe"
 			pageRows = append(pageRows, row)
+		case "title":
+			row := titleSummary(store.titlesByIndex[reference.id])
+			row["kind"] = "title"
+			pageRows = append(pageRows, row)
 		case "monster":
 			row := monsterSummary(store.monstersByID[reference.id])
 			row["kind"] = "monster"
@@ -2922,6 +3305,7 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, len(pageRows))
 	recipes := make([]map[string]any, 0, len(pageRows))
+	titles := make([]map[string]any, 0, len(pageRows))
 	monsters := make([]map[string]any, 0, len(pageRows))
 	for _, row := range pageRows {
 		switch row["kind"] {
@@ -2929,20 +3313,24 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 			items = append(items, row)
 		case "recipe":
 			recipes = append(recipes, row)
+		case "title":
+			titles = append(titles, row)
 		case "monster":
 			monsters = append(monsters, row)
 		}
 	}
 	writeJSON(w, map[string]any{
-		"rows":      pageRows,
-		"items":     items,
-		"recipes":   recipes,
-		"monsters":  monsters,
-		"total":     len(references),
-		"page":      page,
-		"pageSize":  pageSize,
-		"pages":     pages,
-		"missing":   missing,
-		"totalKeys": len(seen),
+		"rows":         pageRows,
+		"items":        items,
+		"recipes":      recipes,
+		"titles":       titles,
+		"monsters":     monsters,
+		"total":        len(references),
+		"page":         page,
+		"pageSize":     pageSize,
+		"pages":        pages,
+		"missing":      missing,
+		"totalKeys":    len(seen),
+		"migratedKeys": migratedKeys,
 	})
 }

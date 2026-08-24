@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.2';
+  const APP_VERSION = '2.0.3';
   const PAGE_SIZE = 24;
   const FAVORITES_PAGE_SIZE = 24;
   const SOURCE_BATCH = 20;
@@ -34,7 +34,7 @@
   }
 
   function defaultTitleFilters() {
-    return { q: '', sort: 'index', page: 1 };
+    return { q: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'level', page: 1 };
   }
 
   function resetTransientCatalogFilters() {
@@ -62,7 +62,6 @@
     monsterFilters: defaultMonsterFilters(),
     recipeFilters: defaultRecipeFilters(),
     titleFilters: defaultTitleFilters(),
-    titlesData: null,
     routeController: null,
     catalogController: null,
     suggestionController: null,
@@ -189,7 +188,7 @@
   function isInternalAppRoute(route) {
     const path = String(route || '').split('?')[0];
     return ['home', 'items', 'monsters', 'recipes', 'titles', 'favorites', 'search'].includes(path)
-      || /^(?:item|monster|recipe)\/\d+$/.test(path);
+      || /^(?:item|monster|recipe|title)\/\d+$/.test(path);
   }
 
   function routeHistoryState(index, route) {
@@ -257,6 +256,7 @@
     if (path.startsWith('item/')) return 'items';
     if (path.startsWith('monster/')) return 'monsters';
     if (path.startsWith('recipe/')) return 'recipes';
+    if (path.startsWith('title/')) return 'titles';
     return path;
   }
 
@@ -456,7 +456,7 @@
   function normalizedRecentViewedEntries() {
     if (!Array.isArray(state.recentlyViewed)) return [];
     return state.recentlyViewed.filter(entry => {
-      if (!entry || !['item', 'monster'].includes(entry.type) || Number(entry.id) <= 0 || !hasMeaningfulText(entry.name)) return false;
+      if (!entry || !['item', 'monster', 'title'].includes(entry.type) || Number(entry.id) <= 0 || !hasMeaningfulText(entry.name)) return false;
       if (entry.type === 'monster') return ['kiss', 'original'].includes(normalizeServerKey(entry.server || ''));
       return true;
     }).slice(0, RECENT_VIEWED_LIMIT);
@@ -470,7 +470,7 @@
     const numericID = Number(id);
     const cleanName = String(name || '').trim();
     const cleanMeta = String(meta || '').trim().slice(0, 240);
-    if (!['item', 'monster'].includes(type) || !Number.isInteger(numericID) || numericID <= 0 || !cleanName) return;
+    if (!['item', 'monster', 'title'].includes(type) || !Number.isInteger(numericID) || numericID <= 0 || !cleanName) return;
     const server = type === 'monster' ? state.server : '';
     const key = `${type}:${numericID}:${server}`;
     const next = [{ type, id: numericID, name: cleanName, ...(cleanMeta ? { meta: cleanMeta } : {}), ...(server ? { server } : {}) }, ...normalizedRecentViewedEntries().filter(entry => `${entry.type}:${entry.id}:${entry.type === 'monster' ? normalizeServerKey(entry.server) : ''}` !== key)].slice(0, RECENT_VIEWED_LIMIT);
@@ -491,8 +491,8 @@
     const viewed = recentViewedEntries().slice(0, 6);
     const serverLabel = serverName(activeServerMeta());
     const recentlyViewed = viewed.length
-      ? `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><div class="home-section-heading"><h2 id="viewedTitle">Недавно просмотренные</h2><button class="text-button compact-button" type="button" data-action="clear-recently-viewed" aria-label="Очистить недавно просмотренные">Очистить</button></div><div class="recent-viewed-list">${viewed.map(entry => `<a href="#${entry.type}/${entry.id}"><span class="recent-viewed-icon">${icons[entry.type]}</span><span><strong>${escapeHTML(entry.name)}</strong><small>${entry.type === 'item' ? 'Предмет' : 'Монстр'}</small></span>${icons.chevron}</a>`).join('')}</div></section>`
-      : `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><p class="home-start-hint">Здесь появятся открытые предметы и монстры.</p></section>`;
+      ? `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><div class="home-section-heading"><h2 id="viewedTitle">Недавно просмотренные</h2><button class="text-button compact-button" type="button" data-action="clear-recently-viewed" aria-label="Очистить недавно просмотренные">Очистить</button></div><div class="recent-viewed-list">${viewed.map(entry => `<a href="#${entry.type}/${entry.id}"><span class="recent-viewed-icon">${icons[entry.type]}</span><span><strong>${escapeHTML(entry.name)}</strong><small>${entry.type === 'item' ? 'Предмет' : entry.type === 'title' ? 'Титул' : 'Монстр'}</small></span>${icons.chevron}</a>`).join('')}</div></section>`
+      : `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><p class="home-start-hint">Здесь появятся открытые предметы, монстры и титулы.</p></section>`;
     const updateNotice = state.updateInfo.updateAvailable && state.updateInfo.latestVersion
       ? `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="https://github.com/fsibatov/iris-online-database/releases/latest" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`
       : '';
@@ -527,7 +527,7 @@
       <div class="home-primary">
         <p class="eyebrow">Iris Online</p>
         <h1>Поиск по Iris Online</h1>
-        <p>Предметы, монстры и ID. Рецепты — в отдельном разделе.</p>
+        <p>Предметы, монстры, титулы и ID. Рецепты — в отдельном разделе.</p>
         <div id="homeSearchHost" class="home-search-host"></div>
       </div>
       ${updateNotice}
@@ -580,12 +580,15 @@
   }
 
   function suggestionOption(record, type, query, index) {
-    const route = `${type}/${record.id}`;
+    const identifier = type === 'title' ? record.index : record.id;
+    const route = `${type}/${identifier}`;
     const subtitle = type === 'item'
       ? [record.typeLine, record.level ? `Ранг ${record.level}` : '', `ID ${record.id}`].filter(Boolean).join(' · ')
-      : [record.category, record.typeName, `Уровень ${record.level}`].filter(Boolean).join(' · ');
+      : type === 'title'
+        ? ['Титул', record.level ? `Уровень ${record.level}` : 'Уровень не указан'].join(' · ')
+        : [record.category, record.typeName, `Уровень ${record.level}`].filter(Boolean).join(' · ');
     suggestionRoutes.push(route);
-    return `<div class="suggestion-option" id="suggestion-${index}" role="option" aria-selected="false" data-suggestion-index="${index}" data-suggestion="${escapeHTML(route)}"><span class="suggestion-type-icon">${icons[type === 'item' ? 'item' : 'monster']}</span><span><strong>${highlight(record.name, query)}</strong><small>${escapeHTML(subtitle)}</small></span></div>`;
+    return `<div class="suggestion-option" id="suggestion-${index}" role="option" aria-selected="false" data-suggestion-index="${index}" data-suggestion="${escapeHTML(route)}"><span class="suggestion-type-icon">${icons[type]}</span><span><strong>${highlight(record.name, query)}</strong><small>${escapeHTML(subtitle)}</small></span></div>`;
   }
 
   function renderSuggestions(data, query) {
@@ -597,6 +600,9 @@
     }
     if (data.monsters?.length) {
       groups.push(`<section class="suggestion-group" aria-label="Монстры"><h2>Монстры</h2>${data.monsters.map(record => suggestionOption(record, 'monster', query, index++)).join('')}</section>`);
+    }
+    if (data.titles?.length) {
+      groups.push(`<section class="suggestion-group" aria-label="Титулы"><h2>Титулы</h2>${data.titles.map(record => suggestionOption(record, 'title', query, index++)).join('')}</section>`);
     }
     suggestions.innerHTML = groups.length ? `${groups.join('')}<button class="suggestion-all" type="button" data-search-all>Показать все результаты для «${escapeHTML(query)}»</button>` : `<div class="suggestion-empty"><strong>Ничего не найдено</strong><span>Попробуйте ввести название иначе или укажите ID.</span></div>`;
     suggestions.hidden = false;
@@ -627,21 +633,22 @@
 
   async function searchPage(query, signal) {
     const params = value => new URLSearchParams({ q: value, page: '1', pageSize: '12', sort: 'name', server: state.server });
-    const [itemsData, monstersData] = await Promise.all([
+    const [itemsData, monstersData, titlesData] = await Promise.all([
       api(`/api/items?${params(query)}`, { signal }),
       api(`/api/monsters?${params(query)}`, { signal }),
+      api(`/api/titles?${params(query)}`, { signal }),
     ]);
-    const total = Number(itemsData.total || 0) + Number(monstersData.total || 0);
+    const total = Number(itemsData.total || 0) + Number(monstersData.total || 0) + Number(titlesData.total || 0);
     main.innerHTML = `<section class="page search-results-page">
       ${pageHeader(`Результаты поиска`, total ? `По запросу «${query}» найдено: ${formatNumber(total)}.` : `По запросу «${query}» ничего не найдено.`)}
-      ${total ? `<div class="search-result-sections">${searchResultSection('Предметы', 'items', itemsData.items || [], itemsData.total, query)}${searchResultSection('Монстры', 'monsters', monstersData.monsters || [], monstersData.total, query)}</div>` : `<div class="state-message compact"><span class="state-symbol">0</span><h2>Нет совпадений</h2><p>Проверьте написание, используйте часть названия или ID.</p></div>`}
+      ${total ? `<div class="search-result-sections">${searchResultSection('Предметы', 'items', itemsData.items || [], itemsData.total, query)}${searchResultSection('Монстры', 'monsters', monstersData.monsters || [], monstersData.total, query)}${searchResultSection('Титулы', 'titles', titlesData.titles || [], titlesData.total, query)}</div>` : `<div class="state-message compact"><span class="state-symbol">0</span><h2>Нет совпадений</h2><p>Проверьте написание, используйте часть названия или ID.</p></div>`}
     </section>`;
     positionSearchWidget(false);
   }
 
   function searchResultSection(title, route, records, total, query) {
     if (!records.length) return '';
-    const rows = records.map(record => route === 'items' ? itemRow(record, query) : monsterRow(record, query)).join('');
+    const rows = records.map(record => route === 'items' ? itemRow(record, query) : route === 'titles' ? titleRow(record, query) : monsterRow(record, query)).join('');
     return `<section class="search-result-section"><header><h2>${title}</h2><a href="#${route}?q=${encodeURIComponent(query)}">Все результаты · ${formatNumber(total)}</a></header><div class="result-list">${rows}</div></section>`;
   }
 
@@ -695,34 +702,7 @@
     return query ? `${kind}?${query}` : kind;
   }
 
-  async function fetchTitleCatalog(signal) {
-    if (!Array.isArray(state.titlesData)) {
-      const payload = await api('/titles.json', { signal });
-      state.titlesData = Array.isArray(payload?.titles) ? payload.titles : [];
-    }
-    const filters = state.titleFilters;
-    const query = String(filters.q || '').trim().toLocaleLowerCase('ru-RU');
-    let rows = state.titlesData.filter(record => {
-      if (!query) return true;
-      const searchable = `${formatTitleIndex(record.index)} ${record.index} ${record.name}`.toLocaleLowerCase('ru-RU');
-      return searchable.includes(query);
-    });
-    rows = [...rows].sort((left, right) => {
-      if (filters.sort === 'name') {
-        return String(left.name || '').localeCompare(String(right.name || ''), 'ru-RU', { sensitivity: 'base' }) || Number(left.index) - Number(right.index);
-      }
-      return Number(left.index) - Number(right.index) || String(left.name || '').localeCompare(String(right.name || ''), 'ru-RU', { sensitivity: 'base' });
-    });
-    const total = rows.length;
-    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    const page = Math.min(Math.max(1, Number(filters.page) || 1), pages);
-    filters.page = page;
-    const start = (page - 1) * PAGE_SIZE;
-    return { titles: rows.slice(start, start + PAGE_SIZE), total, page, pages, filters: {} };
-  }
-
   async function fetchCatalog(kind, signal) {
-    if (kind === 'titles') return fetchTitleCatalog(signal);
     return api(`/api/${kind}?${buildCatalogParams(kind)}`, { signal });
   }
 
@@ -733,7 +713,7 @@
       ${pageHeader(catalogTitle(kind), kind === 'items' ? 'Каталог предметов Iris Online.' : kind === 'recipes' ? 'Рецепты Iris Online и материалы для изготовления.' : kind === 'titles' ? 'Каталог титулов Iris Online.' : 'Каталог монстров Iris Online.')}
       <section class="catalog-controls" aria-label="Управление каталогом">
         <label class="catalog-search"><span class="visually-hidden">Поиск в каталоге</span>${icons.search}<input type="search" data-catalog-search value="${escapeHTML(filters.q)}" placeholder="Поиск в каталоге"></label>
-        ${kind === 'titles' ? '' : `<button class="secondary-button filter-button" type="button" data-action="open-filters">${icons.filter}<span>Фильтры</span><strong data-filter-count>${activeFilterCount(kind) || ''}</strong></button>`}
+        <button class="secondary-button filter-button" type="button" data-action="open-filters">${icons.filter}<span>Фильтры</span><strong data-filter-count>${activeFilterCount(kind) || ''}</strong></button>
         <label class="sort-control"><span class="visually-hidden">Сортировка</span><select class="control-select" data-catalog-sort aria-label="Сортировка">${sortOptions(kind, filters.sort)}</select></label>
         <div class="view-switch" role="group" aria-label="Вид каталога"><button type="button" data-view="list" class="${state.view === 'list' ? 'active' : ''}" aria-label="Компактный список">${icons.list}</button><button type="button" data-view="cards" class="${state.view === 'cards' ? 'active' : ''}" aria-label="Плитка">${icons.grid}</button></div>
       </section>
@@ -743,12 +723,12 @@
       <div data-catalog-pagination>${pagination(data.page, data.pages)}</div>
     </section>`;
     positionSearchWidget(false);
-    if (kind !== 'titles') renderFilterDrawer(kind, data.filters || {});
+    renderFilterDrawer(kind, data.filters || {});
   }
 
   function sortOptions(kind, selected) {
     if (kind === 'titles') {
-      const options = [['index', 'По индексу'], ['name', 'По названию']];
+      const options = [['level', 'По уровню'], ['name', 'По названию'], ['index', 'По индексу']];
       return options.map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('');
     }
     const options = [
@@ -765,15 +745,18 @@
     return `<div class="result-list ${state.view === 'cards' ? 'card-view' : ''}">${records.map(record => kind === 'items' ? itemRow(record, catalogFilters(kind).q) : kind === 'recipes' ? recipeRow(record, catalogFilters(kind).q) : kind === 'titles' ? titleRow(record, catalogFilters(kind).q) : monsterRow(record, catalogFilters(kind).q)).join('')}</div>`;
   }
 
-  function formatTitleIndex(value) {
-    const index = Number(value);
-    if (!Number.isInteger(index) || index < 0) return '';
-    return String(index).padStart(3, '0');
-  }
-
   function titleRow(title, query = '') {
-    const label = `${formatTitleIndex(title.index)}. ${String(title.name || '').trim()}`;
-    return `<article class="result-row title-result-row"><div class="result-main"><span class="result-icon">${icons.title}</span><span class="result-copy"><strong>${highlight(label, query)}</strong><span class="result-secondary">Индекс ${escapeHTML(title.index)}</span></span></div></article>`;
+    const key = `title:${title.index}`;
+    const active = state.favorites.has(key);
+    const level = Number(title.level) > 0 ? `Уровень ${formatNumber(title.level)}` : 'Уровень не указан';
+    return `<article class="result-row title-result-row">
+      <a class="result-main" href="#title/${Number(title.index)}" aria-label="Открыть титул: ${escapeHTML(title.name)}">
+        <span class="result-icon">${icons.title}</span>
+        <span class="result-copy"><strong>${highlight(title.name, query)}</strong><span class="result-secondary">${escapeHTML(level)}</span></span>
+        <span class="result-arrow">${icons.chevron}</span>
+      </a>
+      <button class="favorite-button ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
+    </article>`;
   }
 
   function itemRow(item, query = '') {
@@ -846,20 +829,26 @@
   }
 
   function activeFilterCount(kind) {
-    if (kind === 'titles') return 0;
     const filters = catalogFilters(kind);
-    const keys = kind === 'items' ? ['category', 'subcategory', 'quality', 'knownSource', 'minLevel', 'maxLevel'] : kind === 'recipes' ? ['type', 'quality', 'knownSource', 'minLevel', 'maxLevel'] : ['category', 'type', 'minLevel', 'maxLevel'];
+    const keys = kind === 'items'
+      ? ['category', 'subcategory', 'quality', 'knownSource', 'minLevel', 'maxLevel']
+      : kind === 'recipes'
+        ? ['type', 'quality', 'knownSource', 'minLevel', 'maxLevel']
+        : kind === 'titles'
+          ? ['knownSource', 'minLevel', 'maxLevel']
+          : ['category', 'type', 'minLevel', 'maxLevel'];
     return keys.reduce((count, key) => count + (String(filters[key] || '').trim() ? 1 : 0), 0);
   }
 
   function activeFilterChips(kind) {
-    if (kind === 'titles') return '';
     const filters = catalogFilters(kind);
     const labels = kind === 'items'
       ? { category: 'Категория', subcategory: 'Подкатегория', quality: 'Редкость', knownSource: 'Известно, где получить', minLevel: 'Ранг от', maxLevel: 'Ранг до' }
       : kind === 'recipes'
         ? { type: 'Тип рецепта', quality: 'Редкость', knownSource: 'Известно, где получить', minLevel: 'Уровень мастерства от', maxLevel: 'Уровень мастерства до' }
-        : { category: 'Категория', type: 'Тип', minLevel: 'Уровень от', maxLevel: 'Уровень до' };
+        : kind === 'titles'
+          ? { knownSource: 'Известно, где получить', minLevel: 'Уровень от', maxLevel: 'Уровень до' }
+          : { category: 'Категория', type: 'Тип', minLevel: 'Уровень от', maxLevel: 'Уровень до' };
     const chips = Object.entries(labels).filter(([key]) => String(filters[key] || '').trim()).map(([key, label]) => {
       const value = key === 'knownSource' ? label : key.startsWith('min') || key.startsWith('max') ? `${label} ${filters[key]}` : filters[key];
       return `<button type="button" class="filter-chip" data-clear-filter="${key}" aria-label="Убрать фильтр: ${escapeHTML(value)}"><span>${escapeHTML(value)}</span>${icons.close}</button>`;
@@ -873,21 +862,24 @@
   }
 
   function renderFilterDrawer(kind, filterData) {
-    if (kind === 'titles') return;
     const filters = catalogFilters(kind);
-    const dependentLocked = kind !== 'recipes' && !filters.category;
+    const dependentLocked = !['recipes', 'titles'].includes(kind) && !filters.category;
     filterDrawer.dataset.kind = kind;
-    const fields = kind === 'recipes'
-      ? `<label class="field"><span>Тип рецепта</span><select class="control-select" name="type">${optionList(filterData.types, filters.type, 'Любой')}</select></label>
-         <label class="field"><span>Редкость</span><select class="control-select" name="quality">${optionList(filterData.qualities, filters.quality, 'Любая')}</select></label>
-         <label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только рецепты, для которых в выбранной базе указан источник получения.</small></span></label>`
-      : `<label class="field"><span>Категория</span><select class="control-select" name="category">${optionList(filterData.categories, filters.category, 'Любая')}</select></label>
-         ${kind === 'items'
-           ? `<label class="field"><span>Подкатегория</span><select class="control-select" name="subcategory" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.subcategories, filters.subcategory, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="field"><span>Редкость</span><select class="control-select" name="quality" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.qualities, filters.quality, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только предметы, для которых в выбранной базе указан источник получения.</small></span></label>`
-           : `<label class="field"><span>Тип монстра</span><select class="control-select" name="type" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.types, filters.type, 'Любой')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label>`}`;
+    const fields = kind === 'titles'
+      ? `<label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только титулы, для которых в выбранной базе указан подтверждённый источник получения.</small></span></label>`
+      : kind === 'recipes'
+        ? `<label class="field"><span>Тип рецепта</span><select class="control-select" name="type">${optionList(filterData.types, filters.type, 'Любой')}</select></label>
+           <label class="field"><span>Редкость</span><select class="control-select" name="quality">${optionList(filterData.qualities, filters.quality, 'Любая')}</select></label>
+           <label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только рецепты, для которых в выбранной базе указан источник получения.</small></span></label>`
+        : `<label class="field"><span>Категория</span><select class="control-select" name="category">${optionList(filterData.categories, filters.category, 'Любая')}</select></label>
+           ${kind === 'items'
+             ? `<label class="field"><span>Подкатегория</span><select class="control-select" name="subcategory" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.subcategories, filters.subcategory, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="field"><span>Редкость</span><select class="control-select" name="quality" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.qualities, filters.quality, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только предметы, для которых в выбранной базе указан источник получения.</small></span></label>`
+             : `<label class="field"><span>Тип монстра</span><select class="control-select" name="type" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.types, filters.type, 'Любой')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label>`}`;
+    const minLabel = kind === 'monsters' || kind === 'titles' ? 'Уровень от' : kind === 'recipes' ? 'Уровень мастерства от' : 'Ранг от';
+    const maxLabel = kind === 'monsters' || kind === 'titles' ? 'Уровень до' : kind === 'recipes' ? 'Уровень мастерства до' : 'Ранг до';
     filterDrawerBody.innerHTML = `<div class="drawer-fields">
       ${fields}
-      <div class="range-fields"><label class="field"><span>${kind === 'monsters' ? 'Уровень от' : kind === 'recipes' ? 'Уровень мастерства от' : 'Ранг от'}</span><input name="minLevel" type="number" inputmode="numeric" min="0" value="${escapeHTML(filters.minLevel)}"></label><label class="field"><span>${kind === 'monsters' ? 'Уровень до' : kind === 'recipes' ? 'Уровень мастерства до' : 'Ранг до'}</span><input name="maxLevel" type="number" inputmode="numeric" min="0" value="${escapeHTML(filters.maxLevel)}"></label></div>
+      <div class="range-fields"><label class="field"><span>${minLabel}</span><input name="minLevel" type="number" inputmode="numeric" min="0" value="${escapeHTML(filters.minLevel)}"></label><label class="field"><span>${maxLabel}</span><input name="maxLevel" type="number" inputmode="numeric" min="0" value="${escapeHTML(filters.maxLevel)}"></label></div>
     </div>`;
   }
 
@@ -1399,6 +1391,21 @@
     return `<details class="detail-accordion ${className}" ${open ? 'open' : ''}><summary><span><strong>${escapeHTML(title)}</strong>${summary ? `<small>${escapeHTML(summary)}</small>` : ''}</span>${icons.chevron}</summary><div class="accordion-content">${content}</div></details>`;
   }
 
+  function bestSourceSummary(drops) {
+    const rows = Array.isArray(drops) ? drops : [];
+    const knownDrops = rows.filter(drop => drop.source !== 'Сундук' || drop.chanceKnown === true);
+    const best = (knownDrops.length ? knownDrops : rows).reduce((current, row) => !current || baseAttemptChance(row) > baseAttemptChance(current) ? row : current, null);
+    const bestChanceKnown = best && (best.source !== 'Сундук' || best.chanceKnown === true);
+    const bestLabel = bestChanceKnown
+      ? (best.source === 'Сундук'
+        ? `${formatChance(baseAttemptChance(best))} при открытии`
+        : best.groupChanceKnown
+          ? `${formatChance(baseAttemptChance(best))} за одну основную попытку`
+          : `${formatChance(baseAttemptChance(best))} при выполнении условий`)
+      : '';
+    return best ? [sourceName(best), bestLabel].filter(Boolean).join(' — ') : '';
+  }
+
   function itemDetail(data, parentRoute = 'items') {
     const item = data.item;
     trackRecentlyViewed('item', item.id, item.name, [item.typeLine || item.category, itemLevelSummary(item), `ID ${item.id}`].filter(Boolean).join(' · '));
@@ -1409,11 +1416,7 @@
     const presentation = itemPresentation(item, bonuses);
     const description = meaningfulDescription(item.tooltip, item.name);
     const drops = [...(data.drops || [])];
-    const knownDrops = drops.filter(drop => drop.source !== 'Сундук' || drop.chanceKnown === true);
-    const best = (knownDrops.length ? knownDrops : drops).reduce((current, row) => !current || baseAttemptChance(row) > baseAttemptChance(current) ? row : current, null);
-    const bestChanceKnown = best && (best.source !== 'Сундук' || best.chanceKnown === true);
-    const bestLabel = bestChanceKnown ? (best.source === 'Сундук' ? `${formatChance(baseAttemptChance(best))} при открытии` : best.groupChanceKnown ? `${formatChance(baseAttemptChance(best))} за одну основную попытку` : `${formatChance(baseAttemptChance(best))} при выполнении условий`) : '';
-    const sourceSummary = best ? [sourceName(best), bestLabel].filter(Boolean).join(' — ') : '';
+    const sourceSummary = bestSourceSummary(drops);
     state.sourceSections = buildSourceSections(drops);
     state.monsterDrops = null;
     state.monsterWorldDrops = null;
@@ -1439,6 +1442,42 @@
         ${drops.length > 1 || (!recipeContext && drops.length) ? accordion('Источники получения', formatCount(drops.length, 'вариант', 'варианта', 'вариантов'), sourcesContent(), false, 'item-sources') : ''}
         ${description ? accordion('Описание', '', `<p class="reading-text">${multilineHTML(description)}</p>`, false) : ''}
         ${accordion('Технические сведения', `ID ${item.id}`, `${kvList([...itemTechnicalRows(item), ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server]])}`, false)}
+      </section>
+    </section>`;
+    positionSearchWidget(false);
+  }
+
+  function titleDetail(data) {
+    const title = data.title || {};
+    const index = Number(title.index);
+    const name = String(title.name || '').trim();
+    if (!Number.isInteger(index) || index <= 0 || !name) {
+      notFoundPage();
+      return;
+    }
+    const level = Number(title.level) || 0;
+    const levelLabel = level > 0 ? `Уровень ${formatNumber(level)}` : 'Уровень не указан';
+    const effect = normalizeDisplayText(data.effect || '');
+    const drops = [...(data.drops || [])];
+    const sourceSummary = bestSourceSummary(drops);
+    const key = `title:${index}`;
+    const active = state.favorites.has(key);
+    trackRecentlyViewed('title', index, name, levelLabel);
+    state.sourceSections = buildSourceSections(drops);
+    state.monsterDrops = null;
+    state.monsterWorldDrops = null;
+
+    main.innerHTML = `<section class="page detail-page" data-route="title/${index}">
+      ${breadcrumb('titles', 'Титулы', name)}
+      <header class="detail-summary">
+        <div class="detail-heading"><h1>${escapeHTML(name)}</h1><p>${escapeHTML(levelLabel)}</p></div>
+        <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
+      </header>
+      ${effect ? `<section class="title-effect-card" aria-labelledby="titleEffectTitle"><span class="eyebrow">Характеристики</span><h2 id="titleEffectTitle">Эффект титула</h2><p class="reading-text">${multilineHTML(effect)}</p></section>` : `<section class="title-effect-card title-effect-card--empty" aria-label="Эффект титула"><h2>Эффект титула</h2><p class="empty-copy">Для этого титула эффект в доступных игровых данных не указан.</p></section>`}
+      ${drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary || 'Источник получения')}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p></div><button class="secondary-button" type="button" data-open-details="title-sources">Показать все источники</button></section>` : ''}
+      <section class="detail-accordions">
+        ${drops.length ? accordion('Источники получения', formatCount(drops.length, 'вариант', 'варианта', 'вариантов'), sourcesContent(), false, 'title-sources') : ''}
+        ${accordion('Сведения', levelLabel, kvList([['Уровень', level > 0 ? formatNumber(level) : 'Не указан'], ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server]]), false)}
       </section>
     </section>`;
     positionSearchWidget(false);
@@ -1787,13 +1826,25 @@
   async function favoritesPage(signal) {
     const keys = [...state.favorites];
     if (!keys.length) {
-      main.innerHTML = `<section class="page">${pageHeader('Избранное', 'Сохранённые предметы, монстры и рецепты.')}<div class="state-message compact"><span class="state-symbol">☆</span><h2>Избранное пусто</h2><p>Добавляйте предметы, монстров и рецепты кнопкой со звездой.</p><a class="primary-button" href="#items">Открыть предметы</a></div></section>`;
+      main.innerHTML = `<section class="page">${pageHeader('Избранное', 'Сохранённые предметы, монстры, рецепты и титулы.')}<div class="state-message compact"><span class="state-symbol">☆</span><h2>Избранное пусто</h2><p>Добавляйте предметы, монстров, рецепты и титулы кнопкой со звездой.</p><a class="primary-button" href="#items">Открыть предметы</a></div></section>`;
       positionSearchWidget(false);
       return;
     }
     const data = await api('/api/favorites', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys, server: state.server, page: state.favoritePage, pageSize: FAVORITES_PAGE_SIZE }) });
+    const migratedKeys = data.migratedKeys && typeof data.migratedKeys === 'object' ? data.migratedKeys : {};
+    let favoritesMigrated = false;
+    Object.entries(migratedKeys).forEach(([legacyKey, canonicalKey]) => {
+      if (!legacyKey || !canonicalKey || !state.favorites.has(legacyKey)) return;
+      state.favorites.delete(legacyKey);
+      state.favorites.add(canonicalKey);
+      favoritesMigrated = true;
+    });
+    if (favoritesMigrated) {
+      localStorage.setItem('iris-favorites', JSON.stringify([...state.favorites]));
+      scheduleProfileSave(0);
+    }
     state.favoritePage = Math.max(1, Number(data.page || 1));
-    const rows = (data.rows || []).map(row => row.kind === 'monster' ? monsterRow(row) : row.kind === 'recipe' ? recipeRow(row) : itemRow(row));
+    const rows = (data.rows || []).map(row => row.kind === 'monster' ? monsterRow(row) : row.kind === 'recipe' ? recipeRow(row) : row.kind === 'title' ? titleRow(row) : itemRow(row));
     const missing = Number(data.missing || 0);
     main.innerHTML = `<section class="page">${pageHeader('Избранное', `В избранном: ${formatNumber(data.total)}.`)}${missing ? `<p class="muted-copy">Не удалось показать ${formatCount(missing, 'запись', 'записи', 'записей')}. Эти записи остаются сохранёнными в профиле.</p>` : ''}<div class="result-list">${rows.join('')}</div>${pagination(data.page, data.pages, 'favorite-page')}</section>`;
     positionSearchWidget(false);
@@ -1809,7 +1860,11 @@
     const visiblePage = main.querySelector('.page');
     const visibleDetail = main.querySelector('.detail-page');
     const visibleCatalog = main.querySelector('.catalog-page');
-    const preserveItemDetail = Boolean(visibleDetail && ((visibleDetail.dataset.route?.startsWith('item/') && targetPath.startsWith('item/')) || (visibleDetail.dataset.route?.startsWith('recipe/') && targetPath.startsWith('recipe/'))));
+    const preserveItemDetail = Boolean(visibleDetail && (
+      (visibleDetail.dataset.route?.startsWith('item/') && targetPath.startsWith('item/'))
+      || (visibleDetail.dataset.route?.startsWith('recipe/') && targetPath.startsWith('recipe/'))
+      || (visibleDetail.dataset.route?.startsWith('title/') && targetPath.startsWith('title/'))
+    ));
     const preserveCatalogPage = Boolean(visibleCatalog && ['items', 'monsters', 'recipes', 'titles'].includes(targetPath));
     const preservePageTransition = Boolean(visiblePage && !preserveItemDetail && !preserveCatalogPage && targetPath !== 'home');
     const preserveVisiblePage = preserveItemDetail || preserveCatalogPage || preservePageTransition;
@@ -1861,7 +1916,15 @@
         const id = path.slice(5);
         const data = await api(`/api/items/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
         if (controller.signal.aborted || requestId !== state.requestId) return;
-        if (Array.isArray(data.recipe) && data.recipe.length) {
+        if (Number(data.titleIndex) > 0) {
+          const titleRoute = `title/${Number(data.titleIndex)}`;
+          state.route = titleRoute;
+          replaceRouteHash(titleRoute);
+          renderNavigation();
+          const titleData = await api(`/api/titles/${Number(data.titleIndex)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
+          if (controller.signal.aborted || requestId !== state.requestId) return;
+          titleDetail(titleData);
+        } else if (Array.isArray(data.recipe) && data.recipe.length) {
           const recipeRoute = `recipe/${Number(data.item?.id || id)}`;
           state.route = recipeRoute;
           replaceRouteHash(recipeRoute);
@@ -1879,6 +1942,11 @@
         const data = await api(`/api/monsters/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
         if (controller.signal.aborted || requestId !== state.requestId) return;
         monsterDetail(data);
+      } else if (path.startsWith('title/')) {
+        const index = path.slice(6);
+        const data = await api(`/api/titles/${encodeURIComponent(index)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
+        if (controller.signal.aborted || requestId !== state.requestId) return;
+        titleDetail(data);
       } else if (path === 'favorites') await favoritesPage(controller.signal);
       else notFoundPage();
       if (!controller.signal.aborted && requestId === state.requestId) main.focus({ preventScroll: true });
@@ -1892,7 +1960,7 @@
         replaceRouteHash(visibleRoute);
         renderNavigation();
         const failureMessage = preserveItemDetail
-          ? 'Не удалось открыть предмет. Попробуйте ещё раз.'
+          ? (targetPath.startsWith('title/') ? 'Не удалось открыть титул. Попробуйте ещё раз.' : 'Не удалось открыть запись. Попробуйте ещё раз.')
           : preserveCatalogPage
             ? 'Не удалось открыть каталог. Попробуйте ещё раз.'
             : 'Не удалось открыть страницу. Попробуйте ещё раз.';
@@ -2472,7 +2540,7 @@
       if (homeServerName) homeServerName.textContent = serverLabel;
       showToast(`Выбран сервер ${serverLabel}. Данные обновлены.`);
       const activeRoute = routeBase();
-      if (['home', 'monsters', 'favorites', 'search'].includes(activeRoute) || state.route.startsWith('item/') || state.route.startsWith('recipe/') || state.route.startsWith('monster/')) renderRoute();
+      if (['home', 'monsters', 'favorites', 'search'].includes(activeRoute) || state.route.startsWith('item/') || state.route.startsWith('recipe/') || state.route.startsWith('monster/') || state.route.startsWith('title/')) renderRoute();
     }
   });
 

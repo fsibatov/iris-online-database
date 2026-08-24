@@ -1,6 +1,6 @@
-# Iris Online Database 2.0.2
+# Iris Online Database 2.0.3
 
-Iris Online Database — неофициальная локальная база предметов, монстров, рецептов, сундуков, комплектов и источников добычи Iris Online.
+Iris Online Database — неофициальная локальная база предметов, монстров, титулов, рецептов, сундуков, комплектов и источников добычи Iris Online.
 
 Версия 2.0 — обычное Windows desktop-приложение. `IrisOnlineDatabase.exe` открывает собственное окно на Wails 2.14.0 и Microsoft WebView2: без адресной строки, внешней вкладки браузера и TCP-порта для интерфейса. HTML/CSS/JavaScript и игровые данные встроены в EXE; основной поиск и база работают без интернета.
 
@@ -17,11 +17,11 @@ Iris Online Database — неофициальная локальная база 
 
 ## Запуск
 
-Релиз v2.0.2 содержит три Windows-сборки:
+Релиз v2.0.3 содержит три Windows-сборки:
 
-- `IrisOnlineDB-2.0.2-Windows-x64.exe` — основной вариант для большинства ПК с 64-разрядной Windows на Intel/AMD;
-- `IrisOnlineDB-2.0.2-Windows-x86.exe` — для 32-разрядной Windows;
-- `IrisOnlineDB-2.0.2-Windows-arm64.exe` — для Windows on ARM.
+- `IrisOnlineDB-2.0.3-Windows-x64.exe` — основной вариант для большинства ПК с 64-разрядной Windows на Intel/AMD;
+- `IrisOnlineDB-2.0.3-Windows-x86.exe` — для 32-разрядной Windows;
+- `IrisOnlineDB-2.0.3-Windows-arm64.exe` — для Windows on ARM.
 
 Установка не требуется: скачайте подходящий EXE и запустите его двойным щелчком. `SHA256SUMS.txt` содержит контрольные суммы всех трёх файлов.
 
@@ -54,7 +54,7 @@ WebView использует внутренний виртуальный origin 
 - [Устранение проблем](docs/TROUBLESHOOTING.md)
 - [Политика безопасности](SECURITY.md)
 - [Участие в разработке](CONTRIBUTING.md)
-- [Изменения v2.0.2](CHANGELOG.md)
+- [Изменения v2.0.3](CHANGELOG.md)
 
 На Windows запустите `powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1`. Меню проверяет/устанавливает инструменты, запускает строгий gate, собирает EXE во внешнюю папку и не создаёт вторую копию source. Необязательный `01_TEST.bat` поставляется отдельно от source archive: положите его рядом с папкой `iris-online-database` и запустите двойным щелчком. Он только вызывает канонический `IrisTools.ps1 -Action Test`, сохраняет exit code и оставляет окно открытым.
 
