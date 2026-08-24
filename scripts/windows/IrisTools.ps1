@@ -1650,7 +1650,7 @@ function Create-Release {
         $ChangelogPath = Join-Path $Root "CHANGELOG.md"
         $ChangelogText = Get-Content -LiteralPath $ChangelogPath -Raw
         $VersionPattern = [Regex]::Escape($Version)
-        $ReleaseSectionPattern = "(?ms)^##\s+" + $VersionPattern + "(?:\s+—[^\r\n]*)?\r?\n(.*?)(?=^##\s+\d+\.\d+(?:\.\d+)?(?:\s+—|\s*$)|\z)"
+        $ReleaseSectionPattern = "(?ms)^##\s+" + $VersionPattern + "[^\r\n]*\r?\n(.*?)(?=^##\s+\d+\.\d+(?:\.\d+)?[^\r\n]*(?:\r?\n|\z)|\z)"
         $ReleaseSection = [Regex]::Match($ChangelogText, $ReleaseSectionPattern)
         if (-not $ReleaseSection.Success) {
             throw "CHANGELOG.md does not contain release notes for version $Version."

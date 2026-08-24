@@ -70,6 +70,10 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertNotIn('"--notes-file", "CHANGELOG.md"', script)
         self.assertIn("GetTempFileName", script)
         self.assertIn("WriteAllText", script)
+        self.assertTrue(
+            script.isascii(),
+            "Windows PowerShell 5.1 release engine must remain ASCII-safe because UTF-8 without BOM is code-page dependent",
+        )
 
     def test_desktop_build_contract_has_no_production_listener(self):
         windows_main = (ROOT / "main_windows.go").read_text(encoding="utf-8")
