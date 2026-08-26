@@ -1,3 +1,5 @@
+import base64
+import re
 import unittest
 from pathlib import Path
 
@@ -92,6 +94,18 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
         self.assertIn("exit $Result.ExitCode", workflow)
         self.assertIn("VK updater ended in an unexpected state", workflow)
         self.assertNotIn("continue-on-error", workflow)
+
+    def test_commit_message_is_reconstructed_from_ascii_safe_utf8(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        match = re.search(r'\$CommitMessageBase64 = "([A-Za-z0-9+/=]+)"', workflow)
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        message = base64.b64decode(match.group(1), validate=True).decode("utf-8")
+        self.assertEqual(message, "Обновлена последняя запись VK")
+        self.assertIn("[Text.Encoding]::UTF8.GetString($CommitMessageBytes)", workflow)
+        self.assertIn("commit -m $CommitMessage", workflow)
+        self.assertNotIn('commit -m "Обновлена последняя запись VK"', workflow)
 
     def test_push_rebases_and_retries_against_current_main(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
