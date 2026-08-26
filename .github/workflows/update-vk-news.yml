@@ -350,7 +350,10 @@ jobs:
           git add -- data/latest-vk.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          git -c commit.gpgSign=false commit -m "Обновлена последняя запись VK"
+          $CommitMessageBase64 = "0J7QsdC90L7QstC70LXQvdCwINC/0L7RgdC70LXQtNC90Y/RjyDQt9Cw0L/QuNGB0YwgVks="
+          $CommitMessageBytes = [Convert]::FromBase64String($CommitMessageBase64)
+          $CommitMessage = [Text.Encoding]::UTF8.GetString($CommitMessageBytes)
+          git -c commit.gpgSign=false commit -m $CommitMessage
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           for ($PushAttempt = 1; $PushAttempt -le 3; $PushAttempt++) {
