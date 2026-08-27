@@ -217,25 +217,44 @@ func TestKnownSourceItemFilterIsServerAware(t *testing.T) {
 		t.Fatalf("known-source index is empty: kiss=%d original=%d", len(kiss.knownSourceItems), len(original.knownSourceItems))
 	}
 
-	var itemID int
-	var sourceServer, otherServer string
+	eligibleCatalogItem := func(id int) bool {
+		item := store.itemsByID[id]
+		if item == nil || isTitleItem(item) {
+			return false
+		}
+		_, isRecipe := store.itemRecipes[id]
+		return !isRecipe
+	}
+	type sourceCandidate struct {
+		id           int
+		sourceServer string
+		otherServer  string
+	}
+	candidates := make([]sourceCandidate, 0)
 	for id := range kiss.knownSourceItems {
-		if _, ok := original.knownSourceItems[id]; !ok {
-			itemID, sourceServer, otherServer = id, "kiss", "original"
-			break
+		if _, ok := original.knownSourceItems[id]; ok || !eligibleCatalogItem(id) {
+			continue
 		}
+		candidates = append(candidates, sourceCandidate{id: id, sourceServer: "kiss", otherServer: "original"})
 	}
-	if itemID == 0 {
-		for id := range original.knownSourceItems {
-			if _, ok := kiss.knownSourceItems[id]; !ok {
-				itemID, sourceServer, otherServer = id, "original", "kiss"
-				break
-			}
+	for id := range original.knownSourceItems {
+		if _, ok := kiss.knownSourceItems[id]; ok || !eligibleCatalogItem(id) {
+			continue
 		}
+		candidates = append(candidates, sourceCandidate{id: id, sourceServer: "original", otherServer: "kiss"})
 	}
-	if itemID == 0 {
-		t.Fatal("no server-specific known-source item found in the current data package")
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].id != candidates[j].id {
+			return candidates[i].id < candidates[j].id
+		}
+		return candidates[i].sourceServer < candidates[j].sourceServer
+	})
+	if len(candidates) == 0 {
+		t.Fatal("no catalog item with a server-specific known source found in the current data package")
 	}
+	itemID := candidates[0].id
+	sourceServer := candidates[0].sourceServer
+	otherServer := candidates[0].otherServer
 
 	request := func(server string) struct {
 		Items []Item `json:"items"`
