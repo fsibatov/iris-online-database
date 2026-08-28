@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 const (
 	vkCommunityPageURL         = "https://vk.ru/wall-59626511"
 	vkNewsJSONURL              = "https://raw.githubusercontent.com/fsibatov/iris-online-database/main/data/latest-vk.json"
+	vkNewsGitHubAPIURL         = "https://api.github.com/repos/fsibatov/iris-online-database/contents/data/latest-vk.json?ref=main"
 	maxCommunityNewsBytes      = 256 << 10
 	maxCommunityPostTextLength = 4000
 	communityCacheTTL          = 2 * time.Minute
@@ -43,13 +45,14 @@ type communityNewsFile struct {
 }
 
 type communityChecker struct {
-	mu        sync.Mutex
-	attempted bool
-	checkedAt time.Time
-	result    communityStatusResult
-	lastGood  communityStatusResult
-	client    *http.Client
-	newsURL   string
+	mu          sync.Mutex
+	attempted   bool
+	checkedAt   time.Time
+	result      communityStatusResult
+	lastGood    communityStatusResult
+	client      *http.Client
+	newsURL     string
+	fallbackURL string
 }
 
 func newCommunityChecker() *communityChecker {
@@ -67,7 +70,7 @@ func newCommunityChecker() *communityChecker {
 					return http.ErrUseLastResponse
 				}
 				host := strings.ToLower(req.URL.Hostname())
-				if host != "raw.githubusercontent.com" && !strings.HasSuffix(host, ".githubusercontent.com") {
+				if host != "raw.githubusercontent.com" && host != "api.github.com" && !strings.HasSuffix(host, ".githubusercontent.com") {
 					return http.ErrUseLastResponse
 				}
 				req.Header.Del("Referer")
@@ -76,11 +79,12 @@ func newCommunityChecker() *communityChecker {
 				return nil
 			},
 		},
-		newsURL:   vkNewsJSONURL,
-		attempted: seed.Available,
-		checkedAt: time.Now(),
-		result:    seed,
-		lastGood:  seed,
+		newsURL:     vkNewsJSONURL,
+		fallbackURL: vkNewsGitHubAPIURL,
+		attempted:   seed.Available,
+		checkedAt:   time.Now(),
+		result:      seed,
+		lastGood:    seed,
 	}
 }
 
@@ -108,6 +112,9 @@ func (c *communityChecker) Check(ctx context.Context, force bool) communityStatu
 		return c.result
 	}
 	fresh := checkCommunityNewsJSON(ctx, c.client, c.newsURL, force)
+	if !fresh.Available && strings.TrimSpace(c.fallbackURL) != "" {
+		fresh = checkCommunityNewsGitHubAPI(ctx, c.client, c.fallbackURL, force)
+	}
 	if fresh.Available {
 		c.lastGood = fresh
 		c.result = fresh
@@ -123,10 +130,9 @@ func (c *communityChecker) Check(ctx context.Context, force bool) communityStatu
 	return c.result
 }
 
-func checkCommunityNewsJSON(ctx context.Context, client *http.Client, target string, force bool) communityStatusResult {
-	result := communityStatusResult{CommunityURL: vkCommunityPageURL}
+func communityNewsBody(ctx context.Context, client *http.Client, target string, force bool, githubAPI bool) []byte {
 	if client == nil || strings.TrimSpace(target) == "" {
-		return result
+		return nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -146,26 +152,65 @@ func checkCommunityNewsJSON(ctx context.Context, client *http.Client, target str
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return result
+		return nil
 	}
-	request.Header.Set("Accept", "application/json")
+	if githubAPI {
+		request.Header.Set("Accept", "application/vnd.github+json")
+		request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	} else {
+		request.Header.Set("Accept", "application/json")
+	}
 	request.Header.Set("User-Agent", "IrisOnlineDatabase/"+appVersion)
 	request.Header.Set("Cache-Control", "no-cache")
 	request.Header.Set("Pragma", "no-cache")
 
 	response, err := client.Do(request)
 	if err != nil {
-		return result
+		return nil
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return result
+		return nil
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxCommunityNewsBytes+1))
 	if err != nil || len(body) > maxCommunityNewsBytes {
+		return nil
+	}
+	return body
+}
+
+func checkCommunityNewsGitHubAPI(ctx context.Context, client *http.Client, target string, force bool) communityStatusResult {
+	result := communityStatusResult{CommunityURL: vkCommunityPageURL}
+	body := communityNewsBody(ctx, client, target, force, true)
+	if len(body) == 0 {
 		return result
 	}
+	var payload struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || !strings.EqualFold(strings.TrimSpace(payload.Encoding), "base64") {
+		return result
+	}
+	encoded := strings.Map(func(r rune) rune {
+		if r == '\r' || r == '\n' || r == ' ' || r == '\t' {
+			return -1
+		}
+		return r
+	}, payload.Content)
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(decoded) > maxCommunityNewsBytes {
+		return result
+	}
+	return decodeCommunityNews(decoded)
+}
 
+func checkCommunityNewsJSON(ctx context.Context, client *http.Client, target string, force bool) communityStatusResult {
+	result := communityStatusResult{CommunityURL: vkCommunityPageURL}
+	body := communityNewsBody(ctx, client, target, force, false)
+	if len(body) == 0 {
+		return result
+	}
 	return decodeCommunityNews(body)
 }
 

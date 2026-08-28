@@ -24,6 +24,8 @@ ITEM_RECIPES = ROOT / "assets/item_recipes.json.gz"
 QUEST_REWARDS = ROOT / "assets/quest_reward_sources.json.gz"
 MONSTER_DETAILS = ROOT / "assets/monster_details.json.gz"
 CHEST_CONTENTS = ROOT / "assets/chest_contents.json.gz"
+ITEM_ENHANCEMENTS = ROOT / "assets/item_enhancements.json.gz"
+TRANSFORMATION_CARDS = ROOT / "assets/transformation_cards.json.gz"
 MAIN_GO = ROOT / "main.go"
 APP_JS = ROOT / "web/app.js"
 
@@ -60,8 +62,8 @@ ITEM_PRESENTATION = {
     "job1Name": "class-badge",
     "job2": "technical",
     "job2Name": "class-badge",
-    "minLevel": "rank-header-and-technical",
-    "maxLevel": "rank-header-and-technical",
+    "minLevel": "rank-property-and-technical",
+    "maxLevel": "rank-property-and-technical",
     "physicalDefense": "base-stat",
     "magicDefense": "base-stat",
     "attackRange": "base-stat",
@@ -229,7 +231,17 @@ def audit() -> dict:
     quest_rewards = load_gzip(QUEST_REWARDS)
     monster_details = load_gzip(MONSTER_DETAILS)
     chest_contents = load_gzip(CHEST_CONTENTS)
-    go_source = MAIN_GO.read_text(encoding="utf-8")
+    enhancements = load_gzip(ITEM_ENHANCEMENTS)
+    transformations = load_gzip(TRANSFORMATION_CARDS)
+    go_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            MAIN_GO,
+            ROOT / "server.go",
+            ROOT / "enhancements.go",
+            ROOT / "transformations.go",
+        )
+    )
     js = APP_JS.read_text(encoding="utf-8")
 
     item_keys = all_keys(game["items"])
@@ -337,6 +349,58 @@ def audit() -> dict:
         }
         - {1, 2}
     )
+
+    weapon_source_type_counts = collections.Counter()
+    weapon_source_type_issues = []
+    weapon_items_without_ability_supplement = []
+    weapon_middle_by_event = {
+        0: {12, 101},
+        1: {12, 102},
+        2: {12, 103},
+        3: {12, 104},
+        4: {12, 105},
+        5: {12, 106, 107},
+        6: {12, 101},
+    }
+    for item in game["items"]:
+        if item.get("category") != "Оружие/щит":
+            continue
+        item_id = str(item["id"])
+        patch = abilities.get("items", {}).get(item_id)
+        if patch is None:
+            weapon_items_without_ability_supplement.append(item["id"])
+            continue
+        if item.get("middleCategoryId") == 602:
+            if item.get("subcategory") != "Инструменты":
+                weapon_source_type_issues.append(
+                    f"{item['id']}: quest tool is not classified as Инструменты"
+                )
+            continue
+        event_type = int(patch.get("eventType", 0) or 0)
+        middle_category = int(item.get("middleCategoryId", 0) or 0)
+        allowed_middle = weapon_middle_by_event.get(event_type)
+        if allowed_middle is None or middle_category not in allowed_middle:
+            weapon_source_type_issues.append(
+                f"{item['id']}: eventType={event_type}, middleCategoryId={middle_category}"
+            )
+            continue
+        if event_type == 0:
+            presentation = "Мечи"
+        elif event_type == 1:
+            presentation = "Двуручные мечи"
+        elif event_type == 2:
+            presentation = "Сабли"
+        elif event_type == 3:
+            presentation = "Кинжалы"
+        elif event_type == 4:
+            presentation = "Ружья"
+        elif event_type == 5 and middle_category == 107:
+            presentation = "Скипетры"
+        elif event_type == 5:
+            presentation = "Посохи"
+        else:
+            presentation = "Щиты"
+        weapon_source_type_counts[presentation] += 1
 
     set_rows = []
     exact_duplicate_set_rows = 0
@@ -525,6 +589,59 @@ def audit() -> dict:
                 if output_id and output_id not in base_items_by_id:
                     chest_output_ids_missing.add(output_id)
 
+    enhancement_invalid_profiles = []
+    supported_enhancement_types = {1201, 1202, 1203, 1204, 1220}
+    for profile_id, rows in enhancements.get("profiles", {}).items():
+        try:
+            valid_profile_id = int(profile_id) > 0
+        except (TypeError, ValueError):
+            valid_profile_id = False
+        if not valid_profile_id or not isinstance(rows, list):
+            enhancement_invalid_profiles.append(str(profile_id))
+            continue
+        for row in rows:
+            values = row.get("values", []) if isinstance(row, dict) else []
+            if (
+                not isinstance(row, dict)
+                or not isinstance(row.get("equip"), int)
+                or not isinstance(row.get("type"), int)
+                or len(values) != 10
+                or not all(isinstance(value, (int, float)) for value in values)
+            ):
+                enhancement_invalid_profiles.append(str(profile_id))
+                break
+    enhancement_supported_rows = sum(
+        1
+        for rows in enhancements.get("profiles", {}).values()
+        for row in rows
+        if row.get("equip") == 0 and row.get("type") in supported_enhancement_types
+    )
+
+    transformation_invalid_cards = []
+    transformation_item_ids = set()
+    template_token_re = re.compile(r"%(?:\d+\$)?[a-zA-Z]|%%")
+    transformation_template_tokens = []
+    for card in transformations.get("cards", []):
+        item_id = card.get("itemId")
+        if (
+            not isinstance(item_id, int)
+            or item_id <= 0
+            or str(item_id) not in base_items_by_id
+            or item_id in transformation_item_ids
+            or not isinstance(card.get("monsterId"), int)
+            or card.get("monsterId", 0) <= 0
+        ):
+            transformation_invalid_cards.append(str(item_id))
+            continue
+        transformation_item_ids.add(item_id)
+        texts = [str(card.get("formEffectText", ""))]
+        texts.extend(
+            str(skill.get("effectText", "")) for skill in card.get("skills", [])
+        )
+        for text in texts:
+            if template_token_re.search(text):
+                transformation_template_tokens.append(f"{item_id}:{text}")
+
     checks.update(
         {
             "unknown_item_effect_types": unknown_item_effects,
@@ -565,6 +682,24 @@ def audit() -> dict:
             "chest_supplement_not_merged": "mergeChestContentSupplement()"
             not in go_source
             or "assets/chest_contents.json.gz" not in go_source,
+            "enhancement_schema_version": enhancements.get("schemaVersion"),
+            "enhancement_levels": enhancements.get("levels"),
+            "invalid_enhancement_profiles": sorted(set(enhancement_invalid_profiles)),
+            "enhancement_supported_rows_missing": enhancement_supported_rows == 0,
+            "enhancement_asset_not_merged": "loadEnhancementProfiles()" not in go_source
+            or "assets/item_enhancements.json.gz" not in go_source,
+            "transformation_schema_version": transformations.get("schemaVersion"),
+            "transformation_base_speed": transformations.get("basePlayerRunSpeed"),
+            "invalid_transformation_cards": sorted(set(transformation_invalid_cards)),
+            "transformation_template_tokens": transformation_template_tokens,
+            "transformation_asset_not_merged": "loadTransformationCards()"
+            not in go_source
+            or "assets/transformation_cards.json.gz" not in go_source,
+            "frontend_missing_enhancement_ui": "data-enhancement-level" not in js
+            or "itemEnhancementPrefixHTML" not in js
+            or "applyEnhancementLevel" not in js,
+            "frontend_missing_transformation_ui": "#transformation/" not in js
+            or "transformationBuffsTitle" not in js,
             "chest_source_ids_missing_from_game_data": sorted(
                 chest_source_ids_missing, key=int
             ),
@@ -592,6 +727,24 @@ def audit() -> dict:
                 re.search(
                     r"data\.bonuses\s*\|\|\s*\[\]\)\.map\(row\s*=>\s*\[row\.name,\s*row\.value\]\)",
                     js,
+                )
+            ),
+            "weapon_items_without_ability_supplement": sorted(
+                weapon_items_without_ability_supplement
+            ),
+            "weapon_source_type_issues": weapon_source_type_issues,
+            "weapon_source_presentation_mapping_absent": not all(
+                token in go_source
+                for token in (
+                    "switch item.EventType",
+                    'presented.Subcategory = "Мечи"',
+                    'presented.Subcategory = "Двуручные мечи"',
+                    'presented.Subcategory = "Сабли"',
+                    'presented.Subcategory = "Кинжалы"',
+                    'presented.Subcategory = "Ружья"',
+                    'presented.Subcategory = "Посохи"',
+                    'presented.Subcategory = "Скипетры"',
+                    'presented.Subcategory = "Щиты"',
                 )
             ),
         }
@@ -623,9 +776,16 @@ def audit() -> dict:
         "quest_reward_unsupported_targets",
         "chest_source_ids_missing_from_game_data",
         "invalid_chest_profiles",
+        "invalid_enhancement_profiles",
+        "enhancement_supported_rows_missing",
+        "invalid_transformation_cards",
+        "transformation_template_tokens",
         "unknown_make_skill_codes",
         "unknown_use_map_codes",
         "unknown_guild_use_codes",
+        "weapon_items_without_ability_supplement",
+        "weapon_source_type_issues",
+        "weapon_source_presentation_mapping_absent",
     )
     fatal = [name for name in fatal_keys if checks[name]]
     for name in (
@@ -635,6 +795,10 @@ def audit() -> dict:
         "recipe_supplement_not_merged",
         "quest_reward_supplement_not_merged",
         "chest_supplement_not_merged",
+        "enhancement_asset_not_merged",
+        "transformation_asset_not_merged",
+        "frontend_missing_enhancement_ui",
+        "frontend_missing_transformation_ui",
         "recipe_missing_material_fallback_absent",
         "chest_missing_item_fallback_absent",
     ):
@@ -642,6 +806,13 @@ def audit() -> dict:
             fatal.append(name)
     if checks["quest_reward_schema_version"] != 1:
         fatal.append("quest_reward_schema_version")
+    if checks["enhancement_schema_version"] != 1 or checks["enhancement_levels"] != 10:
+        fatal.append("enhancement_schema_or_levels")
+    if (
+        checks["transformation_schema_version"] != 1
+        or float(checks["transformation_base_speed"] or 0) <= 0
+    ):
+        fatal.append("transformation_schema_or_speed")
     if (
         checks["frontend_has_set_slice_limit"]
         or checks["frontend_uses_generic_properties_array"]
@@ -659,6 +830,15 @@ def audit() -> dict:
         "monsterDetailsSha256": hashlib.sha256(
             MONSTER_DETAILS.read_bytes()
         ).hexdigest(),
+        "itemEnhancementsSha256": hashlib.sha256(
+            ITEM_ENHANCEMENTS.read_bytes()
+        ).hexdigest(),
+        "transformationCardsSha256": hashlib.sha256(
+            TRANSFORMATION_CARDS.read_bytes()
+        ).hexdigest(),
+        "enhancementProfiles": len(enhancements.get("profiles", {})),
+        "enhancementSupportedRows": enhancement_supported_rows,
+        "transformationCards": len(transformations.get("cards", [])),
         "chestContentsSha256": hashlib.sha256(CHEST_CONTENTS.read_bytes()).hexdigest(),
         "items": len(game["items"]),
         "monsters": len(game["monsters"]),
@@ -724,6 +904,7 @@ def audit() -> dict:
         "restoredItemLimitUsageRules": ability_patch_field_counts.get("useMapType", 0),
         "restoredProfessionRules": ability_patch_field_counts.get("makeSkill", 0),
         "restoredGuildRules": ability_patch_field_counts.get("guildUse", 0),
+        "weaponSourceTypeCounts": dict(sorted(weapon_source_type_counts.items())),
         "preservedRawAbilityConflicts": len(abilities.get("conflictsPreserved", [])),
         "unknownItemEffectTypes": unknown_item_effects,
         "cardSlotTypes": dict(sorted(card_slot_types.items())),

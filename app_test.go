@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -177,6 +178,233 @@ func TestMonsterNameCatalogPlacesBlankNamesLast(t *testing.T) {
 	}
 }
 
+func TestWeaponPresentationUsesSourceWeaponSubtype(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+
+	type expectedPresentation struct {
+		subcategory string
+		typeLine    string
+	}
+	expectedFor := func(item *Item) (expectedPresentation, bool) {
+		if item.Category != "Оружие/щит" || item.MainCategoryID != 1 || item.MiddleCategoryID == 602 {
+			return expectedPresentation{}, false
+		}
+		switch item.EventType {
+		case 0:
+			return expectedPresentation{"Мечи", "[Оружие] Меч"}, true
+		case 1:
+			return expectedPresentation{"Двуручные мечи", "[Оружие] Двуручный меч"}, true
+		case 2:
+			return expectedPresentation{"Сабли", "[Оружие] Сабля"}, true
+		case 3:
+			return expectedPresentation{"Кинжалы", "[Оружие] Кинжал"}, true
+		case 4:
+			return expectedPresentation{"Ружья", "[Оружие] Ружьё"}, true
+		case 5:
+			if item.MiddleCategoryID == 107 {
+				return expectedPresentation{"Скипетры", "[Оружие] Скипетр"}, true
+			}
+			return expectedPresentation{"Посохи", "[Оружие] Посох"}, true
+		case 6:
+			return expectedPresentation{"Щиты", "[Оружие] Щит"}, true
+		default:
+			return expectedPresentation{}, false
+		}
+	}
+
+	counts := map[string]int{}
+	checked := 0
+	for index := range store.data.Items {
+		item := &store.data.Items[index]
+		expected, ok := expectedFor(item)
+		if !ok {
+			continue
+		}
+		checked++
+		presented := itemForPresentation(item)
+		if presented.Subcategory != expected.subcategory || presented.TypeLine != expected.typeLine {
+			t.Fatalf("item %d (%q), source subtype %d: presentation = %q / %q, want %q / %q", item.ID, item.Name, item.EventType, presented.Subcategory, presented.TypeLine, expected.subcategory, expected.typeLine)
+		}
+		counts[presented.Subcategory]++
+	}
+	if checked != 1830 {
+		t.Fatalf("verified weapon count = %d, want 1830", checked)
+	}
+	wantCounts := map[string]int{
+		"Мечи":           233,
+		"Двуручные мечи": 229,
+		"Сабли":          229,
+		"Кинжалы":        230,
+		"Ружья":          230,
+		"Посохи":         230,
+		"Скипетры":       228,
+		"Щиты":           221,
+	}
+	if !reflect.DeepEqual(counts, wantCounts) {
+		t.Fatalf("weapon presentation counts = %#v, want %#v", counts, wantCounts)
+	}
+
+	for subcategory, wantTotal := range wantCounts {
+		query := url.Values{
+			"category":    {"Оружие/щит"},
+			"subcategory": {subcategory},
+			"pageSize":    {"48"},
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/items?"+query.Encode(), nil)
+		recorder := httptest.NewRecorder()
+		handleItems(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s filter status=%d: %s", subcategory, recorder.Code, recorder.Body.String())
+		}
+		var payload struct {
+			Total   int `json:"total"`
+			Filters struct {
+				Subcategories []string `json:"subcategories"`
+			} `json:"filters"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Total != wantTotal {
+			t.Fatalf("%s filter total = %d, want %d", subcategory, payload.Total, wantTotal)
+		}
+		if slices.Contains(payload.Filters.Subcategories, "Парные клинки") {
+			t.Fatal("obsolete Парные клинки classification is still exposed")
+		}
+	}
+
+	cases := map[int]expectedPresentation{
+		1201:      {"Мечи", "[Оружие] Меч"},
+		10201:     {"Двуручные мечи", "[Оружие] Двуручный меч"},
+		20001:     {"Сабли", "[Оружие] Сабля"},
+		21252:     {"Сабли", "[Оружие] Сабля"},
+		31652:     {"Кинжалы", "[Оружие] Кинжал"},
+		42407:     {"Ружья", "[Оружие] Ружьё"},
+		145502001: {"Посохи", "[Оружие] Посох"},
+		145602001: {"Скипетры", "[Оружие] Скипетр"},
+		80008:     {"Щиты", "[Оружие] Щит"},
+		81411:     {"Сабли", "[Оружие] Сабля"},
+	}
+	for id, expected := range cases {
+		item := store.itemsByID[id]
+		if item == nil {
+			t.Fatalf("weapon %d is missing", id)
+		}
+		presented := itemForPresentation(item)
+		if presented.Subcategory != expected.subcategory || presented.TypeLine != expected.typeLine {
+			t.Fatalf("weapon %d presentation = %q / %q, want %q / %q", id, presented.Subcategory, presented.TypeLine, expected.subcategory, expected.typeLine)
+		}
+	}
+
+	tool := store.itemsByID[878004]
+	if tool == nil {
+		t.Fatal("mining tool 878004 is missing")
+	}
+	presentedTool := itemForPresentation(tool)
+	if presentedTool.Subcategory != "Инструменты" || presentedTool.TypeLine != "[Оружие] Инструмент" {
+		t.Fatalf("mining tool presentation changed unexpectedly: %q / %q", presentedTool.Subcategory, presentedTool.TypeLine)
+	}
+}
+
+func TestKaratSabersPresentationIsConsistentAcrossEndpoints(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+
+	item := store.itemsByID[81411]
+	if item == nil {
+		t.Fatal("karat sabers 81411 are missing")
+	}
+	if item.MiddleCategoryID != 103 || item.MiddleCategory != "Два клинка" || item.EventType != 2 || item.Category != "Оружие/щит" {
+		t.Fatalf("karat sabers raw source projection changed unexpectedly: middle=%d %q eventType=%d category=%q", item.MiddleCategoryID, item.MiddleCategory, item.EventType, item.Category)
+	}
+
+	detailRequest := httptest.NewRequest(http.MethodGet, "/api/items/81411?server=original", nil)
+	detailRecorder := httptest.NewRecorder()
+	handleItem(detailRecorder, detailRequest)
+	if detailRecorder.Code != http.StatusOK {
+		t.Fatalf("detail status=%d: %s", detailRecorder.Code, detailRecorder.Body.String())
+	}
+	var detail struct {
+		Item Item `json:"item"`
+	}
+	if err := json.Unmarshal(detailRecorder.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Item.Subcategory != "Сабли" || detail.Item.TypeLine != "[Оружие] Сабля" {
+		t.Fatalf("detail presentation = %q / %q", detail.Item.Subcategory, detail.Item.TypeLine)
+	}
+
+	recipeRequest := httptest.NewRequest(http.MethodGet, "/api/items/3000102?server=original", nil)
+	recipeRecorder := httptest.NewRecorder()
+	handleItem(recipeRecorder, recipeRequest)
+	if recipeRecorder.Code != http.StatusOK {
+		t.Fatalf("recipe detail status=%d: %s", recipeRecorder.Code, recipeRecorder.Body.String())
+	}
+	var recipeDetail struct {
+		RecipeProduct *struct {
+			Item Item `json:"item"`
+		} `json:"recipeProduct"`
+	}
+	if err := json.Unmarshal(recipeRecorder.Body.Bytes(), &recipeDetail); err != nil {
+		t.Fatal(err)
+	}
+	if recipeDetail.RecipeProduct == nil || recipeDetail.RecipeProduct.Item.ID != 81411 {
+		t.Fatal("karat saber recipe product was not resolved")
+	}
+	if recipeDetail.RecipeProduct.Item.Subcategory != "Сабли" || recipeDetail.RecipeProduct.Item.TypeLine != "[Оружие] Сабля" {
+		t.Fatalf("recipe product presentation = %q / %q", recipeDetail.RecipeProduct.Item.Subcategory, recipeDetail.RecipeProduct.Item.TypeLine)
+	}
+
+	query := url.Values{
+		"category":    {"Оружие/щит"},
+		"subcategory": {"Сабли"},
+		"q":           {"Собранный драгоценные мечи карата"},
+		"pageSize":    {"48"},
+	}
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/items?"+query.Encode(), nil)
+	listRecorder := httptest.NewRecorder()
+	handleItems(listRecorder, listRequest)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("saber filter status=%d: %s", listRecorder.Code, listRecorder.Body.String())
+	}
+	var list struct {
+		Items []Item `json:"items"`
+	}
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, candidate := range list.Items {
+		if candidate.ID == 81411 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("karat sabers are missing from the Сабли filter")
+	}
+
+	query.Set("subcategory", "Мечи")
+	wrongListRequest := httptest.NewRequest(http.MethodGet, "/api/items?"+query.Encode(), nil)
+	wrongListRecorder := httptest.NewRecorder()
+	handleItems(wrongListRecorder, wrongListRequest)
+	if wrongListRecorder.Code != http.StatusOK {
+		t.Fatalf("sword filter status=%d: %s", wrongListRecorder.Code, wrongListRecorder.Body.String())
+	}
+	list.Items = nil
+	if err := json.Unmarshal(wrongListRecorder.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range list.Items {
+		if candidate.ID == 81411 {
+			t.Fatal("karat sabers leak into the Мечи filter")
+		}
+	}
+}
+
 func TestDependentItemFiltersAreIgnoredWithoutCategory(t *testing.T) {
 	if err := ensureLoaded(); err != nil {
 		t.Fatal(err)
@@ -197,7 +425,7 @@ func TestDependentItemFiltersAreIgnoredWithoutCategory(t *testing.T) {
 	expected := 0
 	for index := range store.data.Items {
 		item := &store.data.Items[index]
-		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe || isTitleItem(item) {
+		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe || isTitleItem(item) || isTransformationItem(item.ID) {
 			continue
 		}
 		expected++
@@ -545,7 +773,7 @@ func TestItemInterfaceShowsAllSourcesGroupedByType(t *testing.T) {
 			t.Fatalf("source groups are not in requested order: %#v", positions)
 		}
 	}
-	for _, expected := range []string{"Квестовый дроп", "SOURCE_BATCH", "data-source-more", "data-world-source"} {
+	for _, expected := range []string{"Квестовый дроп", "SOURCE_BATCH", "data-source-more", "world-source-compact"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("source UI marker is missing: %s", expected)
 		}
@@ -1774,6 +2002,7 @@ func TestRecentlyViewedSanitizationAndProfileReload(t *testing.T) {
 	profile.RecentlyViewed = []recentViewEntry{
 		{Type: "monster", ID: 253, Name: "Монстр 253", Meta: "Босс · Уровень 25 · ID 253"},
 		{Type: "item", ID: 253, Name: "Предмет 253"},
+		{Type: "recipe", ID: 253, Name: "Рецепт 253"},
 		{Type: "monster", ID: 253, Name: "Дубликат"},
 		{Type: "unknown", ID: 10, Name: "Лишнее"},
 		{Type: "item", ID: -1, Name: "Неверный ID"},
@@ -1787,11 +2016,11 @@ func TestRecentlyViewedSanitizationAndProfileReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reloaded.RecentlyViewed) != 2 {
-		t.Fatalf("recently viewed entries=%d want=2: %#v", len(reloaded.RecentlyViewed), reloaded.RecentlyViewed)
+	if len(reloaded.RecentlyViewed) != 3 {
+		t.Fatalf("recently viewed entries=%d want=3: %#v", len(reloaded.RecentlyViewed), reloaded.RecentlyViewed)
 	}
-	if reloaded.RecentlyViewed[0].Type != "monster" || reloaded.RecentlyViewed[0].ID != 253 || reloaded.RecentlyViewed[1].Type != "item" || reloaded.RecentlyViewed[1].ID != 253 {
-		t.Fatalf("item and monster with same numeric ID were not preserved independently: %#v", reloaded.RecentlyViewed)
+	if reloaded.RecentlyViewed[0].Type != "monster" || reloaded.RecentlyViewed[0].ID != 253 || reloaded.RecentlyViewed[1].Type != "item" || reloaded.RecentlyViewed[1].ID != 253 || reloaded.RecentlyViewed[2].Type != "recipe" || reloaded.RecentlyViewed[2].ID != 253 {
+		t.Fatalf("recent-view types with same numeric ID were not preserved independently: %#v", reloaded.RecentlyViewed)
 	}
 	if reloaded.RecentlyViewed[0].Meta != "Босс · Уровень 25 · ID 253" {
 		t.Fatalf("recent-view metadata was not preserved: %#v", reloaded.RecentlyViewed[0])
@@ -2449,5 +2678,44 @@ func TestDesktopShutdownIsIdempotentAndFlushesProfile(t *testing.T) {
 	}
 	if len(loaded.Favorites) != 1 || loaded.Favorites[0] != "item:77" {
 		t.Fatalf("profile was not flushed: %#v", loaded.Favorites)
+	}
+}
+
+func TestRecipeUsedSkillsIgnoreUnpublishedMaterialItems(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := store.itemsByID[830056]; exists {
+		t.Fatal("test fixture 830056 unexpectedly exists in the published item database")
+	}
+	if _, exists := store.itemUsedSkills[830056]; exists {
+		t.Fatal("used-skill index retained an item that is absent from the published database")
+	}
+	if got := store.itemUsedSkills[81407]; !reflect.DeepEqual(got, []int{4}) {
+		t.Fatalf("used skills for item 81407=%v want=[4]", got)
+	}
+
+	materials := itemRecipeMaterials(893006)
+	if len(materials) == 0 {
+		t.Fatal("recipe 893006 has no materials")
+	}
+	unknownFound := false
+	knownFound := false
+	for _, material := range materials {
+		switch material.ItemID {
+		case 830056:
+			unknownFound = true
+			if material.Known {
+				t.Fatal("missing material 830056 was marked as linkable")
+			}
+		case 1030046:
+			knownFound = true
+			if !material.Known {
+				t.Fatal("published material 1030046 was marked unavailable")
+			}
+		}
+	}
+	if !unknownFound || !knownFound {
+		t.Fatalf("recipe 893006 edge-case materials missing: unknown=%v known=%v materials=%#v", unknownFound, knownFound, materials)
 	}
 }

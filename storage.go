@@ -235,7 +235,7 @@ func sanitizeProfile(profile userProfile) userProfile {
 	profile.MonsterFilters = map[string]string{}
 	profile.Favorites = sanitizeStringList(profile.Favorites, 5000, 80, func(value string) bool {
 		parts := strings.Split(value, ":")
-		if len(parts) != 2 || (parts[0] != "item" && parts[0] != "monster") {
+		if len(parts) != 2 || (parts[0] != "item" && parts[0] != "monster" && parts[0] != "title" && parts[0] != "transformation") {
 			return false
 		}
 		if parts[1] == "" || len(parts[1]) > 20 {
@@ -262,7 +262,7 @@ func sanitizeRecentViews(values []recentViewEntry, maxCount int) []recentViewEnt
 		entry.Type = strings.TrimSpace(entry.Type)
 		entry.Name = strings.TrimSpace(entry.Name)
 		entry.Meta = strings.TrimSpace(entry.Meta)
-		if (entry.Type != "item" && entry.Type != "monster") || entry.ID <= 0 || entry.Name == "" || len([]rune(entry.Name)) > 160 {
+		if (entry.Type != "item" && entry.Type != "recipe" && entry.Type != "monster" && entry.Type != "title" && entry.Type != "transformation") || entry.ID <= 0 || entry.Name == "" || len([]rune(entry.Name)) > 160 {
 			continue
 		}
 		if len([]rune(entry.Meta)) > 240 {
@@ -272,7 +272,7 @@ func sanitizeRecentViews(values []recentViewEntry, maxCount int) []recentViewEnt
 		if entry.Type == "monster" && entry.Server != "" && entry.Server != "kiss" && entry.Server != "original" {
 			continue
 		}
-		if entry.Type == "item" {
+		if entry.Type != "monster" {
 			entry.Server = ""
 		}
 		key := fmt.Sprintf("%s:%d:%s", entry.Type, entry.ID, entry.Server)

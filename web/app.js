@@ -1,12 +1,11 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.3';
+  const APP_VERSION = '2.0.4';
   const PAGE_SIZE = 24;
   const FAVORITES_PAGE_SIZE = 24;
   const SOURCE_BATCH = 20;
   const DROP_BATCH = 30;
-  const WORLD_SOURCE_BATCH = 50;
   const SEARCH_DEBOUNCE = 270;
   const REQUEST_TIMEOUT = 15000;
   const PROFILE_DEBOUNCE = 400;
@@ -22,19 +21,23 @@
   }
 
   function defaultItemFilters() {
-    return { q: '', category: '', subcategory: '', quality: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'name', page: 1 };
+    return { q: '', category: '', subcategory: '', quality: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'name', order: 'asc', page: 1 };
   }
 
   function defaultMonsterFilters() {
-    return { q: '', category: '', type: '', minLevel: '', maxLevel: '', sort: 'name', page: 1 };
+    return { q: '', category: '', type: '', minLevel: '', maxLevel: '', sort: 'name', order: 'asc', page: 1 };
   }
 
   function defaultRecipeFilters() {
-    return { q: '', type: '', quality: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'name', page: 1 };
+    return { q: '', type: '', quality: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'name', order: 'asc', page: 1 };
   }
 
   function defaultTitleFilters() {
-    return { q: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'level', page: 1 };
+    return { q: '', characteristic: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'level', order: 'asc', page: 1 };
+  }
+
+  function defaultTransformationFilters() {
+    return { q: '', characteristic: '', ally: '', quality: '', sort: 'name', order: 'asc', page: 1 };
   }
 
   function resetTransientCatalogFilters() {
@@ -42,6 +45,7 @@
     state.monsterFilters = defaultMonsterFilters();
     state.recipeFilters = defaultRecipeFilters();
     state.titleFilters = defaultTitleFilters();
+    state.transformationFilters = defaultTransformationFilters();
     localStorage.removeItem('iris-item-filters');
     localStorage.removeItem('iris-monster-filters');
   }
@@ -62,6 +66,8 @@
     monsterFilters: defaultMonsterFilters(),
     recipeFilters: defaultRecipeFilters(),
     titleFilters: defaultTitleFilters(),
+    transformationFilters: defaultTransformationFilters(),
+    itemEnhancement: null,
     routeController: null,
     catalogController: null,
     suggestionController: null,
@@ -70,7 +76,6 @@
     sourceSections: [],
     favoritePage: 1,
     monsterDrops: null,
-    monsterWorldDrops: null,
     updateInfo: { checked: false, checking: false, latestVersion: '', updateAvailable: false, releaseUrl: '' },
     vkNews: { checked: false, checking: false, available: false, stale: false, onlineRefreshAttempted: false, latestPostId: 0, latestPostUrl: '', latestPostText: '', publishedAt: '', sourceUpdatedAt: '' },
   };
@@ -110,6 +115,7 @@
     { route: 'monsters', label: 'Монстры', icon: 'monster' },
     { route: 'recipes', label: 'Рецепты', icon: 'recipe' },
     { route: 'titles', label: 'Титулы', icon: 'title' },
+    { route: 'transformations', label: 'Превращения', icon: 'transform' },
     { route: 'favorites', label: 'Избранное', icon: 'star' },
   ];
   const mobileItems = [
@@ -123,6 +129,7 @@
     monster: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8 4 4M17 8l3-4M6 10c0-3 2.7-5 6-5s6 2 6 5v5c0 3-2.7 5-6 5s-6-2-6-5v-5Z"/><path d="M9 12h.01M15 12h.01M9 16h6"/></svg>',
     recipe: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h10a2 2 0 0 1 2 2v16H8a2 2 0 0 1-2-2V3Z"/><path d="M6 17h12M10 8h4M10 12h5"/></svg>',
     title: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="5"/><path d="m8.5 12-1 9 4.5-2.5 4.5 2.5-1-9"/></svg>',
+    transform: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8a7 7 0 0 1 12-2l2 2"/><path d="M19 4v4h-4M19 16a7 7 0 0 1-12 2l-2-2"/><path d="M5 20v-4h4"/></svg>',
     star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3Z"/></svg>',
     search: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>',
     filter: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>',
@@ -187,8 +194,8 @@
 
   function isInternalAppRoute(route) {
     const path = String(route || '').split('?')[0];
-    return ['home', 'items', 'monsters', 'recipes', 'titles', 'favorites', 'search'].includes(path)
-      || /^(?:item|monster|recipe|title)\/\d+$/.test(path);
+    return ['home', 'items', 'monsters', 'recipes', 'titles', 'transformations', 'favorites', 'search'].includes(path)
+      || /^(?:item|monster|recipe|title|transformation)\/\d+$/.test(path);
   }
 
   function routeHistoryState(index, route) {
@@ -257,6 +264,7 @@
     if (path.startsWith('monster/')) return 'monsters';
     if (path.startsWith('recipe/')) return 'recipes';
     if (path.startsWith('title/')) return 'titles';
+    if (path.startsWith('transformation/')) return 'transformations';
     return path;
   }
 
@@ -440,7 +448,7 @@
   }
 
   function loadingPage(label = 'Загрузка данных') {
-    main.innerHTML = `<section class="page"><div class="state-message" aria-live="polite"><span class="spinner" aria-hidden="true"></span><h1>${escapeHTML(label)}</h1><p>Пожалуйста, подождите.</p></div></section>`;
+    main.innerHTML = `<section class="page"><div class="state-message" aria-live="polite"><span class="spinner" aria-hidden="true"></span><h1>${escapeHTML(label)}</h1><p>Подождите…</p></div></section>`;
   }
 
   function errorPage(error) {
@@ -480,10 +488,22 @@
     searchWidget.classList.toggle('home-search-widget', home);
   }
 
+  function recentViewedTypeIcon(type) {
+    return type === 'transformation' ? icons.transform : icons[type] || icons.info;
+  }
+
+  function recentViewedTypeLabel(type) {
+    if (type === 'item') return 'Предмет';
+    if (type === 'recipe') return 'Рецепт';
+    if (type === 'title') return 'Титул';
+    if (type === 'transformation') return 'Карта превращения';
+    return 'Монстр';
+  }
+
   function normalizedRecentViewedEntries() {
     if (!Array.isArray(state.recentlyViewed)) return [];
     return state.recentlyViewed.filter(entry => {
-      if (!entry || !['item', 'monster', 'title'].includes(entry.type) || Number(entry.id) <= 0 || !hasMeaningfulText(entry.name)) return false;
+      if (!entry || !['item', 'recipe', 'monster', 'title', 'transformation'].includes(entry.type) || Number(entry.id) <= 0 || !hasMeaningfulText(entry.name)) return false;
       if (entry.type === 'monster') return ['kiss', 'original'].includes(normalizeServerKey(entry.server || ''));
       return true;
     }).slice(0, RECENT_VIEWED_LIMIT);
@@ -497,7 +517,7 @@
     const numericID = Number(id);
     const cleanName = String(name || '').trim();
     const cleanMeta = String(meta || '').trim().slice(0, 240);
-    if (!['item', 'monster', 'title'].includes(type) || !Number.isInteger(numericID) || numericID <= 0 || !cleanName) return;
+    if (!['item', 'recipe', 'monster', 'title', 'transformation'].includes(type) || !Number.isInteger(numericID) || numericID <= 0 || !cleanName) return;
     const server = type === 'monster' ? state.server : '';
     const key = `${type}:${numericID}:${server}`;
     const next = [{ type, id: numericID, name: cleanName, ...(cleanMeta ? { meta: cleanMeta } : {}), ...(server ? { server } : {}) }, ...normalizedRecentViewedEntries().filter(entry => `${entry.type}:${entry.id}:${entry.type === 'monster' ? normalizeServerKey(entry.server) : ''}` !== key)].slice(0, RECENT_VIEWED_LIMIT);
@@ -518,8 +538,8 @@
     const viewed = recentViewedEntries().slice(0, 6);
     const serverLabel = serverName(activeServerMeta());
     const recentlyViewed = viewed.length
-      ? `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><div class="home-section-heading"><h2 id="viewedTitle">Недавно просмотренные</h2><button class="text-button compact-button" type="button" data-action="clear-recently-viewed" aria-label="Очистить недавно просмотренные">Очистить</button></div><div class="recent-viewed-list">${viewed.map(entry => `<a href="#${entry.type}/${entry.id}"><span class="recent-viewed-icon">${icons[entry.type]}</span><span>${entry.type === 'title' ? `<span class="title-name-line title-name-line--compact">${titleIndexBadge(entry.id)}<strong>${escapeHTML(entry.name)}</strong></span>` : `<strong>${escapeHTML(entry.name)}</strong>`}<small>${entry.type === 'item' ? 'Предмет' : entry.type === 'title' ? 'Титул' : 'Монстр'}</small></span>${icons.chevron}</a>`).join('')}</div></section>`
-      : `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><p class="home-start-hint">Здесь появятся открытые предметы, монстры и титулы.</p></section>`;
+      ? `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><div class="home-section-heading"><h2 id="viewedTitle">Недавно просмотренные</h2><button class="text-button compact-button" type="button" data-action="clear-recently-viewed" aria-label="Очистить недавно просмотренные">Очистить</button></div><div class="recent-viewed-list">${viewed.map(entry => `<a href="#${entry.type}/${entry.id}"><span class="recent-viewed-icon">${recentViewedTypeIcon(entry.type)}</span><span>${entry.type === 'title' ? `<span class="title-name-line title-name-line--compact">${titleIndexBadge(entry.id)}<strong>${escapeHTML(entry.name)}</strong></span>` : `<strong>${escapeHTML(entry.name)}</strong>`}<small>${escapeHTML(recentViewedTypeLabel(entry.type))}</small></span>${icons.chevron}</a>`).join('')}</div></section>`
+      : `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><p class="home-start-hint">Здесь появятся открытые предметы, рецепты, монстры, титулы и карты превращения.</p></section>`;
     const updateNotice = state.updateInfo.updateAvailable && state.updateInfo.latestVersion
       ? `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="https://github.com/fsibatov/iris-online-database/releases/latest" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`
       : '';
@@ -554,13 +574,13 @@
       <div class="home-primary">
         <p class="eyebrow">Iris Online</p>
         <h1>Поиск по Iris Online</h1>
-        <p>Предметы, монстры, титулы и ID. Рецепты — в отдельном разделе.</p>
+        <p>Ищите предметы, монстров, титулы и карты превращения по названию или ID. Рецепты — в отдельном разделе.</p>
         <div id="homeSearchHost" class="home-search-host"></div>
       </div>
       ${updateNotice}
       ${serverDifference}
       <div class="home-activity">${recentlyViewed}${resources}</div>
-      <p class="home-database-status">Текущий сервер: <strong data-home-server-name>${escapeHTML(serverLabel)}</strong> · игровые данные берутся только из локального пакета</p>
+      <p class="home-database-status">Текущий сервер: <strong data-home-server-name>${escapeHTML(serverLabel)}</strong> · данные хранятся на этом компьютере</p>
       ${vkNews}
     </section>`;
     positionSearchWidget(true);
@@ -612,13 +632,15 @@
     const subtitle = type === 'item'
       ? [record.typeLine, record.level ? `Ранг ${record.level}` : '', `ID ${record.id}`].filter(Boolean).join(' · ')
       : type === 'title'
-        ? ['Титул', record.level ? `Уровень ${record.level}` : 'Уровень не указан'].join(' · ')
-        : [record.category, record.typeName, `Уровень ${record.level}`].filter(Boolean).join(' · ');
+        ? ['Титул', record.level ? `Уровень ${record.level}` : ''].filter(Boolean).join(' · ')
+        : type === 'transformation'
+          ? ['Карта превращения', record.formName, `ID ${record.id}`].filter(Boolean).join(' · ')
+          : [record.category, record.typeName, `Уровень ${record.level}`].filter(Boolean).join(' · ');
     suggestionRoutes.push(route);
     const name = type === 'title'
       ? `<span class="title-name-line title-name-line--compact">${titleIndexBadge(record.index)}<strong>${highlight(record.name, query)}</strong></span>`
       : `<strong>${highlight(record.name, query)}</strong>`;
-    return `<div class="suggestion-option" id="suggestion-${index}" role="option" aria-selected="false" data-suggestion-index="${index}" data-suggestion="${escapeHTML(route)}"><span class="suggestion-type-icon">${icons[type]}</span><span>${name}<small>${escapeHTML(subtitle)}</small></span></div>`;
+    return `<div class="suggestion-option" id="suggestion-${index}" role="option" aria-selected="false" data-suggestion-index="${index}" data-suggestion="${escapeHTML(route)}"><span class="suggestion-type-icon">${recentViewedTypeIcon(type)}</span><span>${name}<small>${escapeHTML(subtitle)}</small></span></div>`;
   }
 
   function renderSuggestions(data, query) {
@@ -633,6 +655,9 @@
     }
     if (data.titles?.length) {
       groups.push(`<section class="suggestion-group" aria-label="Титулы"><h2>Титулы</h2>${data.titles.map(record => suggestionOption(record, 'title', query, index++)).join('')}</section>`);
+    }
+    if (data.transformations?.length) {
+      groups.push(`<section class="suggestion-group" aria-label="Карты превращения"><h2>Карты превращения</h2>${data.transformations.map(record => suggestionOption(record, 'transformation', query, index++)).join('')}</section>`);
     }
     suggestions.innerHTML = groups.length ? `${groups.join('')}<button class="suggestion-all" type="button" data-search-all>Показать все результаты для «${escapeHTML(query)}»</button>` : `<div class="suggestion-empty"><strong>Ничего не найдено</strong><span>Попробуйте ввести название иначе или укажите ID.</span></div>`;
     suggestions.hidden = false;
@@ -663,22 +688,23 @@
 
   async function searchPage(query, signal) {
     const params = value => new URLSearchParams({ q: value, page: '1', pageSize: '12', sort: 'name', server: state.server });
-    const [itemsData, monstersData, titlesData] = await Promise.all([
+    const [itemsData, monstersData, titlesData, transformationsData] = await Promise.all([
       api(`/api/items?${params(query)}`, { signal }),
       api(`/api/monsters?${params(query)}`, { signal }),
       api(`/api/titles?${params(query)}`, { signal }),
+      api(`/api/transformations?${params(query)}`, { signal }),
     ]);
-    const total = Number(itemsData.total || 0) + Number(monstersData.total || 0) + Number(titlesData.total || 0);
+    const total = Number(itemsData.total || 0) + Number(monstersData.total || 0) + Number(titlesData.total || 0) + Number(transformationsData.total || 0);
     main.innerHTML = `<section class="page search-results-page">
       ${pageHeader(`Результаты поиска`, total ? `По запросу «${query}» найдено: ${formatNumber(total)}.` : `По запросу «${query}» ничего не найдено.`)}
-      ${total ? `<div class="search-result-sections">${searchResultSection('Предметы', 'items', itemsData.items || [], itemsData.total, query)}${searchResultSection('Монстры', 'monsters', monstersData.monsters || [], monstersData.total, query)}${searchResultSection('Титулы', 'titles', titlesData.titles || [], titlesData.total, query)}</div>` : `<div class="state-message compact"><span class="state-symbol">0</span><h2>Нет совпадений</h2><p>Проверьте написание, используйте часть названия или ID.</p></div>`}
+      ${total ? `<div class="search-result-sections">${searchResultSection('Предметы', 'items', itemsData.items || [], itemsData.total, query)}${searchResultSection('Монстры', 'monsters', monstersData.monsters || [], monstersData.total, query)}${searchResultSection('Титулы', 'titles', titlesData.titles || [], titlesData.total, query)}${searchResultSection('Карты превращения', 'transformations', transformationsData.transformations || [], transformationsData.total, query)}</div>` : `<div class="state-message compact"><span class="state-symbol">0</span><h2>Нет совпадений</h2><p>Проверьте написание, используйте часть названия или ID.</p></div>`}
     </section>`;
     positionSearchWidget(false);
   }
 
   function searchResultSection(title, route, records, total, query) {
     if (!records.length) return '';
-    const rows = records.map(record => route === 'items' ? itemRow(record, query) : route === 'titles' ? titleRow(record, query) : monsterRow(record, query)).join('');
+    const rows = records.map(record => route === 'items' ? itemRow(record, query) : route === 'titles' ? titleRow(record, query) : route === 'transformations' ? transformationRow(record, query) : monsterRow(record, query)).join('');
     return `<section class="search-result-section"><header><h2>${title}</h2><a href="#${route}?q=${encodeURIComponent(query)}">Все результаты · ${formatNumber(total)}</a></header><div class="result-list">${rows}</div></section>`;
   }
 
@@ -686,6 +712,7 @@
     if (kind === 'items') return state.itemFilters;
     if (kind === 'recipes') return state.recipeFilters;
     if (kind === 'titles') return state.titleFilters;
+    if (kind === 'transformations') return state.transformationFilters;
     return state.monsterFilters;
   }
 
@@ -693,6 +720,7 @@
     if (kind === 'items') return 'Предметы';
     if (kind === 'recipes') return 'Рецепты';
     if (kind === 'titles') return 'Титулы';
+    if (kind === 'transformations') return 'Карты превращения';
     return 'Монстры';
   }
 
@@ -700,12 +728,13 @@
     if (kind === 'items') return data.items || [];
     if (kind === 'recipes') return data.recipes || [];
     if (kind === 'titles') return data.titles || [];
+    if (kind === 'transformations') return data.transformations || [];
     return data.monsters || [];
   }
 
   function normalizeDependentFilters(kind) {
     const filters = catalogFilters(kind);
-    if (kind === 'recipes' || kind === 'titles') return;
+    if (kind === 'recipes' || kind === 'titles' || kind === 'transformations') return;
     if (!filters.category) {
       if (kind === 'items') {
         filters.subcategory = '';
@@ -716,7 +745,7 @@
 
   function buildCatalogParams(kind) {
     const filters = catalogFilters(kind);
-    const params = new URLSearchParams({ page: String(filters.page), pageSize: String(PAGE_SIZE), sort: filters.sort, server: state.server });
+    const params = new URLSearchParams({ page: String(filters.page), pageSize: String(PAGE_SIZE), sort: filters.sort, order: filters.order || 'asc', server: state.server });
     Object.entries(filters).forEach(([key, value]) => {
       if (!['page', 'sort'].includes(key) && value !== '') params.set(key, value);
     });
@@ -740,11 +769,14 @@
     const filters = catalogFilters(kind);
     state.catalog = { kind, data };
     main.innerHTML = `<section class="page catalog-page" data-catalog-kind="${kind}">
-      ${pageHeader(catalogTitle(kind), kind === 'items' ? 'Каталог предметов Iris Online.' : kind === 'recipes' ? 'Рецепты Iris Online и материалы для изготовления.' : kind === 'titles' ? 'Каталог титулов Iris Online.' : 'Каталог монстров Iris Online.')}
+      ${pageHeader(catalogTitle(kind), kind === 'items' ? 'Каталог предметов Iris Online.' : kind === 'recipes' ? 'Рецепты Iris Online и материалы для изготовления.' : kind === 'titles' ? 'Каталог титулов Iris Online.' : kind === 'transformations' ? 'Карты превращения, формы и навыки.' : 'Каталог монстров Iris Online.')}
       <section class="catalog-controls" aria-label="Управление каталогом">
-        <label class="catalog-search"><span class="visually-hidden">Поиск в каталоге</span>${icons.search}<input type="search" data-catalog-search value="${escapeHTML(filters.q)}" placeholder="Поиск в каталоге"></label>
+        <label class="catalog-search"><span class="visually-hidden">Поиск в каталоге</span>${icons.search}<input type="search" data-catalog-search value="${escapeHTML(filters.q)}" placeholder="Поиск по каталогу"></label>
         <button class="secondary-button filter-button" type="button" data-action="open-filters">${icons.filter}<span>Фильтры</span><strong data-filter-count>${activeFilterCount(kind) || ''}</strong></button>
-        <label class="sort-control"><span class="visually-hidden">Сортировка</span><select class="control-select" data-catalog-sort aria-label="Сортировка">${sortOptions(kind, filters.sort)}</select></label>
+        <div class="sort-group" aria-label="Сортировка каталога">
+          <label class="sort-control"><span class="visually-hidden">Сортировать по</span><select class="control-select" data-catalog-sort aria-label="Сортировать по">${sortOptions(kind, filters.sort)}</select></label>
+          <label class="sort-order-control"><span class="visually-hidden">Порядок сортировки</span><select class="control-select" data-catalog-order aria-label="Порядок сортировки">${sortOrderOptions(filters.order)}</select></label>
+        </div>
         <div class="view-switch" role="group" aria-label="Вид каталога"><button type="button" data-view="list" class="${state.view === 'list' ? 'active' : ''}" aria-label="Компактный список">${icons.list}</button><button type="button" data-view="cards" class="${state.view === 'cards' ? 'active' : ''}" aria-label="Плитка">${icons.grid}</button></div>
       </section>
       <div class="active-filters" data-active-filters>${activeFilterChips(kind)}</div>
@@ -759,6 +791,12 @@
   function sortOptions(kind, selected) {
     if (kind === 'titles') {
       const options = [['level', 'По уровню'], ['name', 'По названию'], ['index', 'По индексу']];
+      if (state.titleFilters.characteristic) options.push(['characteristic', 'По характеристике']);
+      return options.map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('');
+    }
+    if (kind === 'transformations') {
+      const options = [['name', 'По названию'], ['speed', 'По скорости формы'], ['duration', 'По длительности']];
+      if (state.transformationFilters.characteristic) options.push(['characteristic', 'По эффекту']);
       return options.map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('');
     }
     const options = [
@@ -769,20 +807,75 @@
     return options.map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('');
   }
 
+  function sortOrderOptions(selected) {
+    const options = [['asc', 'По возрастанию'], ['desc', 'По убыванию']];
+    return options.map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('');
+  }
+
   function catalogResultsHTML(kind, data) {
     const records = catalogRecords(kind, data);
-    if (!records.length) return `<div class="state-message compact"><span class="state-symbol">0</span><h2>Ничего не найдено</h2><p>Измените поисковый запрос или сбросьте фильтры.</p><button class="secondary-button" type="button" data-action="reset-filters">Сбросить фильтры</button></div>`;
-    return `<div class="result-list ${state.view === 'cards' ? 'card-view' : ''}">${records.map(record => kind === 'items' ? itemRow(record, catalogFilters(kind).q) : kind === 'recipes' ? recipeRow(record, catalogFilters(kind).q) : kind === 'titles' ? titleRow(record, catalogFilters(kind).q) : monsterRow(record, catalogFilters(kind).q)).join('')}</div>`;
+    if (!records.length) return `<div class="state-message compact"><span class="state-symbol">0</span><h2>Ничего не найдено</h2><p>Попробуйте другой запрос или сбросьте фильтры.</p><button class="secondary-button" type="button" data-action="reset-filters">Сбросить фильтры</button></div>`;
+    return `<div class="result-list ${state.view === 'cards' ? 'card-view' : ''}">${records.map(record => kind === 'items' ? itemRow(record, catalogFilters(kind).q) : kind === 'recipes' ? recipeRow(record, catalogFilters(kind).q) : kind === 'titles' ? titleRow(record, catalogFilters(kind).q) : kind === 'transformations' ? transformationRow(record, catalogFilters(kind).q) : monsterRow(record, catalogFilters(kind).q)).join('')}</div>`;
+  }
+
+  function formatSignedCharacteristic(row) {
+    if (!row || !Number.isFinite(Number(row.value))) return '';
+    const value = Number(row.value);
+    const sign = value >= 0 ? '+' : '−';
+    const magnitude = decimalFormatter.format(Math.abs(value));
+    return `${row.name} ${sign}${magnitude}${row.percent ? '%' : ''}`;
   }
 
   function titleRow(title, query = '') {
     const key = `title:${title.index}`;
     const active = state.favorites.has(key);
-    const level = Number(title.level) > 0 ? `Уровень ${formatNumber(title.level)}` : 'Уровень не указан';
+    const level = Number(title.level) > 0 ? `Уровень ${formatNumber(title.level)}` : '';
+    const selected = state.titleFilters.characteristic;
+    const characteristic = selected ? (title.characteristics || []).find(row => row.key === selected) : null;
+    const characteristicLine = characteristic ? `<span class="result-tertiary"><span>${escapeHTML(formatSignedCharacteristic(characteristic))}</span></span>` : '';
     return `<article class="result-row title-result-row">
       <a class="result-main" href="#title/${Number(title.index)}" aria-label="Открыть титул: ${escapeHTML(title.name)}">
         <span class="result-icon">${icons.title}</span>
-        <span class="result-copy"><span class="title-name-line">${titleIndexBadge(title.index)}<strong>${highlight(title.name, query)}</strong></span><span class="result-secondary">${escapeHTML(level)}</span></span>
+        <span class="result-copy"><span class="title-name-line">${titleIndexBadge(title.index)}<strong>${highlight(title.name, query)}</strong></span>${level ? `<span class="result-secondary">${escapeHTML(level)}</span>` : ''}${characteristicLine}</span>
+        <span class="result-arrow">${icons.chevron}</span>
+      </a>
+      <button class="favorite-button ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
+    </article>`;
+  }
+
+  function transformationStatusHTML(statuses) {
+    const rows = Array.isArray(statuses) ? statuses : [];
+    const groups = [['buff', 'Бафф'], ['effect', 'Эффект'], ['debuff', 'Дебафф']];
+    return groups.map(([kind, label]) => {
+      const names = [...new Set(rows.filter(row => row?.kind === kind && hasMeaningfulText(row?.name)).map(row => String(row.name).trim()))];
+      if (!names.length) return '';
+      const shown = names.slice(0, 2);
+      const more = names.length - shown.length;
+      const moreText = more > 0 ? ` · ещё ${formatCount(more, 'эффект', 'эффекта', 'эффектов')}` : '';
+      const text = `${label}: ${shown.join(', ')}${moreText}`;
+      const fullText = `${label}: ${names.join(', ')}`;
+      return `<span class="transformation-status transformation-status--${kind}" title="${escapeHTML(fullText)}">${escapeHTML(text)}</span>`;
+    }).filter(Boolean).join('');
+  }
+
+  function transformationRow(card, query = '') {
+    const key = `transformation:${Number(card.id)}`;
+    const active = state.favorites.has(key);
+    const speed = Number(card.effectiveRunSpeed) || 0;
+    const delta = Number(card.speedDelta) || 0;
+    const deltaText = delta ? `${delta > 0 ? '+' : '−'}${formatNumber(Math.abs(delta))}` : 'без изменения';
+    const selected = state.transformationFilters.characteristic;
+    const selectedValue = Number(card.characteristicValue);
+    const selectedHasNumber = card.characteristicValue !== undefined && card.characteristicValue !== null && Number.isFinite(selectedValue) && selectedValue !== 0;
+    const selectedText = selected && card.characteristicMatched === true
+      ? selectedHasNumber
+        ? `${selected}: ${selectedValue > 0 ? '+' : '−'}${decimalFormatter.format(Math.abs(selectedValue))}${selected.endsWith(' (%)') ? '%' : ''}`
+        : selected
+      : '';
+    return `<article class="result-row transformation-result-row">
+      <a class="result-main" href="#transformation/${Number(card.id)}" aria-label="Открыть карту превращения: ${escapeHTML(card.name)}">
+        <span class="result-icon">${icons.transform}</span>
+        <span class="result-copy"><strong>${highlight(card.name, query)}</strong><span class="result-secondary">${escapeHTML([card.formName, speed ? `Скорость ${formatNumber(speed)} (${deltaText})` : ''].filter(Boolean).join(' · '))}</span><span class="result-tertiary">${qualityBadge(card.quality, card.qualityId)}${transformationStatusHTML(card.skillStatuses)}${selectedText ? `<span>${escapeHTML(selectedText)}</span>` : ''}</span></span>
         <span class="result-arrow">${icons.chevron}</span>
       </a>
       <button class="favorite-button ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
@@ -814,7 +907,7 @@
       ? `${MAKE_SKILL_NAMES[makeSkill] || `Профессия ${makeSkill}`} (${formatNumber(masteryLevel)})`
       : '';
     const secondary = [recipe.subcategory || recipe.typeLine, masteryRequirement].filter(Boolean).join(' · ');
-    const materialsLine = materialPreview.length ? `${materialPreview.join(' · ')}${remaining ? ` · ещё ${remaining}` : ''}` : 'Материалы не указаны';
+    const materialsLine = materialPreview.length ? `${materialPreview.join(' · ')}${remaining ? ` · ещё ${remaining}` : ''}` : '';
     const sourceName = String(recipe.sourcePreview?.name || '').trim();
     const sourceType = String(recipe.sourcePreview?.type || 'Источник').trim();
     const sourceCount = Math.max(0, Number(recipe.sourceCount) || 0);
@@ -822,7 +915,7 @@
     return `<article class="result-row recipe-result-row">
       <a class="result-main" href="#recipe/${recipe.id}" aria-label="Открыть рецепт: ${escapeHTML(recipe.name)}">
         <span class="result-icon">${icons.recipe}</span>
-        <span class="result-copy"><strong>${highlight(recipe.name, query)}</strong><span class="result-secondary">${escapeHTML(secondary)}</span><span class="result-tertiary">${qualityBadge(recipe.quality, recipe.qualityId)}<span class="recipe-material-preview">${escapeHTML(materialsLine)}</span></span>${sourceLine ? `<span class="recipe-source-preview">${escapeHTML(sourceLine)}</span>` : ''}</span>
+        <span class="result-copy"><strong>${highlight(recipe.name, query)}</strong><span class="result-secondary">${escapeHTML(secondary)}</span><span class="result-tertiary">${qualityBadge(recipe.quality, recipe.qualityId)}${materialsLine ? `<span class="recipe-material-preview">${escapeHTML(materialsLine)}</span>` : ''}</span>${sourceLine ? `<span class="recipe-source-preview">${escapeHTML(sourceLine)}</span>` : ''}</span>
         <span class="result-arrow">${icons.chevron}</span>
       </a>
       <button class="favorite-button ${state.favorites.has(`item:${recipe.id}`) ? 'active' : ''}" type="button" data-favorite="item:${recipe.id}" aria-label="${state.favorites.has(`item:${recipe.id}`) ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
@@ -833,7 +926,7 @@
     const key = `monster:${monster.id}`;
     const active = state.favorites.has(key);
     const secondary = [monster.category, monster.typeName, `Уровень ${monster.level}`].filter(Boolean).join(' · ');
-    const tertiary = [monster.aggressive ? '<span class="meta-label warning-label">Агрессивный</span>' : '', primaryMonsterStat(monster) ? `<span>${escapeHTML(primaryMonsterStat(monster))}</span>` : ''].filter(Boolean).join('');
+    const tertiary = [monster.aggressive ? '<span class="meta-label monster-nature monster-nature--aggressive">Агрессивный</span>' : '<span class="meta-label monster-nature monster-nature--friendly">Дружелюбный</span>', primaryMonsterStat(monster) ? `<span>${escapeHTML(primaryMonsterStat(monster))}</span>` : ''].filter(Boolean).join('');
     return `<article class="result-row">
       <a class="result-main" href="#monster/${monster.id}" aria-label="Открыть монстра: ${escapeHTML(monster.name)}">
         <span class="result-icon">${icons.monster}</span>
@@ -865,8 +958,10 @@
       : kind === 'recipes'
         ? ['type', 'quality', 'knownSource', 'minLevel', 'maxLevel']
         : kind === 'titles'
-          ? ['knownSource', 'minLevel', 'maxLevel']
-          : ['category', 'type', 'minLevel', 'maxLevel'];
+          ? ['characteristic', 'knownSource', 'minLevel', 'maxLevel']
+          : kind === 'transformations'
+            ? ['characteristic', 'ally', 'quality']
+            : ['category', 'type', 'minLevel', 'maxLevel'];
     return keys.reduce((count, key) => count + (String(filters[key] || '').trim() ? 1 : 0), 0);
   }
 
@@ -877,20 +972,22 @@
       : kind === 'recipes'
         ? { type: 'Тип рецепта', quality: 'Редкость', knownSource: 'Известно, где получить', minLevel: 'Уровень мастерства от', maxLevel: 'Уровень мастерства до' }
         : kind === 'titles'
-          ? { knownSource: 'Известно, где получить', minLevel: 'Уровень от', maxLevel: 'Уровень до' }
-          : { category: 'Категория', type: 'Тип', minLevel: 'Уровень от', maxLevel: 'Уровень до' };
+          ? { characteristic: 'Характеристика', knownSource: 'Известно, где получить', minLevel: 'Уровень от', maxLevel: 'Уровень до' }
+          : kind === 'transformations'
+            ? { characteristic: 'Эффект', ally: 'Цель — союзник', quality: 'Редкость' }
+            : { category: 'Категория', type: 'Тип', minLevel: 'Уровень от', maxLevel: 'Уровень до' };
     const chips = Object.entries(labels).filter(([key]) => String(filters[key] || '').trim()).map(([key, label]) => {
-      const value = key === 'knownSource'
+      const value = key === 'knownSource' || key === 'ally'
         ? label
         : key.startsWith('min') || key.startsWith('max')
           ? `${label} ${filters[key]}`
           : key === 'quality'
             ? qualityDisplayLabel(filters[key])
-            : filters[key];
+            : `${label}: ${filters[key]}`;
       return `<button type="button" class="filter-chip" data-clear-filter="${key}" aria-label="Убрать фильтр: ${escapeHTML(value)}"><span>${escapeHTML(value)}</span>${icons.close}</button>`;
     });
     if (!chips.length) return '';
-    return `${chips.join('')}<button class="clear-all" type="button" data-action="reset-filters">Сбросить фильтры</button>`;
+    return `${chips.join('')}<button class="secondary-button clear-filters" type="button" data-action="reset-filters">Сбросить фильтры</button>`;
   }
 
   function optionList(options, selected, anyLabel) {
@@ -903,23 +1000,29 @@
 
   function renderFilterDrawer(kind, filterData) {
     const filters = catalogFilters(kind);
-    const dependentLocked = !['recipes', 'titles'].includes(kind) && !filters.category;
+    const dependentLocked = !['recipes', 'titles', 'transformations'].includes(kind) && !filters.category;
     filterDrawer.dataset.kind = kind;
     const fields = kind === 'titles'
-      ? `<label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только титулы, для которых в выбранной базе указан подтверждённый источник получения.</small></span></label>`
+      ? `<label class="field"><span>Характеристика</span><select class="control-select" name="characteristic">${optionList(filterData.characteristics, filters.characteristic, 'Любая')}</select></label>
+         <label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только титулы с указанным источником получения.</small></span></label>`
+      : kind === 'transformations'
+        ? `<label class="field"><span>Эффект</span><select class="control-select" name="characteristic">${optionList(filterData.characteristics, filters.characteristic, 'Любой')}</select><small>Эффекты формы и навыков.</small></label>
+           <label class="filter-checkbox"><input name="ally" type="checkbox" value="1" ${filters.ally === '1' ? 'checked' : ''}><span><strong>Цель — союзник</strong><small>Только карты с навыками, цель которых — союзник.</small></span></label>
+           <label class="field"><span>Редкость</span><select class="control-select" name="quality">${qualityOptionList(filterData.qualities, filters.quality, 'Любая')}</select></label>`
       : kind === 'recipes'
         ? `<label class="field"><span>Тип рецепта</span><select class="control-select" name="type">${optionList(filterData.types, filters.type, 'Любой')}</select></label>
            <label class="field"><span>Редкость</span><select class="control-select" name="quality">${qualityOptionList(filterData.qualities, filters.quality, 'Любая')}</select></label>
-           <label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только рецепты, для которых в выбранной базе указан источник получения.</small></span></label>`
+           <label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только рецепты с указанным источником получения.</small></span></label>`
         : `<label class="field"><span>Категория</span><select class="control-select" name="category">${optionList(filterData.categories, filters.category, 'Любая')}</select></label>
            ${kind === 'items'
-             ? `<label class="field"><span>Подкатегория</span><select class="control-select" name="subcategory" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.subcategories, filters.subcategory, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="field"><span>Редкость</span><select class="control-select" name="quality" ${dependentLocked ? 'disabled' : ''}>${qualityOptionList(filterData.qualities, filters.quality, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только предметы, для которых в выбранной базе указан источник получения.</small></span></label>`
+             ? `<label class="field"><span>Подкатегория</span><select class="control-select" name="subcategory" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.subcategories, filters.subcategory, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="field"><span>Редкость</span><select class="control-select" name="quality" ${dependentLocked ? 'disabled' : ''}>${qualityOptionList(filterData.qualities, filters.quality, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только предметы с указанным источником получения.</small></span></label>`
              : `<label class="field"><span>Тип монстра</span><select class="control-select" name="type" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.types, filters.type, 'Любой')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label>`}`;
+    const showRange = kind !== 'transformations';
     const minLabel = kind === 'monsters' || kind === 'titles' ? 'Уровень от' : kind === 'recipes' ? 'Уровень мастерства от' : 'Ранг от';
     const maxLabel = kind === 'monsters' || kind === 'titles' ? 'Уровень до' : kind === 'recipes' ? 'Уровень мастерства до' : 'Ранг до';
     filterDrawerBody.innerHTML = `<div class="drawer-fields">
       ${fields}
-      <div class="range-fields"><label class="field"><span>${minLabel}</span><input name="minLevel" type="number" inputmode="numeric" min="0" value="${escapeHTML(filters.minLevel)}"></label><label class="field"><span>${maxLabel}</span><input name="maxLevel" type="number" inputmode="numeric" min="0" value="${escapeHTML(filters.maxLevel)}"></label></div>
+      ${showRange ? `<div class="range-fields"><label class="field"><span>${minLabel}</span><input name="minLevel" type="number" inputmode="numeric" min="0" value="${escapeHTML(filters.minLevel)}"></label><label class="field"><span>${maxLabel}</span><input name="maxLevel" type="number" inputmode="numeric" min="0" value="${escapeHTML(filters.maxLevel)}"></label></div>` : ''}
     </div>`;
   }
 
@@ -988,7 +1091,7 @@
     } catch (error) {
       if (error?.name === 'AbortError') return;
       if (live) live.textContent = 'Не удалось обновить каталог.';
-      showToast('Не удалось обновить каталог');
+      showToast('Не удалось обновить каталог.');
     } finally {
       results?.removeAttribute('aria-busy');
     }
@@ -998,6 +1101,7 @@
     if (kind === 'monsters') state.monsterFilters = defaultMonsterFilters();
     else if (kind === 'recipes') state.recipeFilters = defaultRecipeFilters();
     else if (kind === 'titles') state.titleFilters = defaultTitleFilters();
+    else if (kind === 'transformations') state.transformationFilters = defaultTransformationFilters();
     else state.itemFilters = defaultItemFilters();
     const search = main.querySelector('[data-catalog-search]');
     if (search) search.value = '';
@@ -1012,7 +1116,7 @@
       button.classList.toggle('active', added);
       button.setAttribute('aria-label', added ? 'Удалить из избранного' : 'Добавить в избранное');
     }
-    showToast(added ? 'Добавлено в избранное' : 'Удалено из избранного');
+    showToast(added ? 'Добавлено в избранное.' : 'Удалено из избранного.');
     if (routeBase() === 'favorites') renderRoute();
   }
 
@@ -1120,8 +1224,18 @@
     return decimalFormatter.format(raw * 0.01);
   }
 
-  function itemPresentation(item, bonuses) {
+  function itemRankRequirement(item) {
+    const minimum = Number(item.minLevel || 0);
+    const maximum = Number(item.maxLevel || 0);
+    if (minimum > 1 && maximum > 0 && maximum < 100 && maximum !== minimum) return `${formatNumber(minimum)}–${formatNumber(maximum)}`;
+    if (minimum > 1) return `от ${formatNumber(minimum)} и выше`;
+    if (maximum > 0 && maximum < 100) return `до ${formatNumber(maximum)}`;
+    return '';
+  }
+
+  function itemPresentation(item, bonuses, usedSkillIDs = []) {
     const classes = uniqueTextValues([item.job1Name, item.job2Name]);
+    const usedSkills = uniqueTextValues((usedSkillIDs || []).map(id => MAKE_SKILL_NAMES[Number(id)] || ''));
     const baseStats = uniquePropertyRows([
       ['Физическая атака', compactRange(item.physicalMin, item.physicalMax)],
       ['Магическая атака', compactRange(item.magicMin, item.magicMax)],
@@ -1135,6 +1249,8 @@
     ]);
     const miscStats = uniquePropertyRows([
       ['Вес', hasPositiveStat(item.weight) ? formatNumber(item.weight) : ''],
+      [usedSkills.length > 1 ? 'Используемые умения' : 'Используемое умение', usedSkills.join(' / ')],
+      ['Ранг', itemRankRequirement(item)],
       ['Максимум в стопке', Number(item.maxStack) > 1 ? formatNumber(item.maxStack) : ''],
     ]);
     const knownBonusRows = (bonuses || []).filter(row => Array.isArray(row) || row?.known !== false);
@@ -1154,7 +1270,7 @@
     const restrictions = uniquePropertyRows([
       ['Раса', item.raceName],
       ['Пол', item.genderName],
-      ['Профессия', profession],
+      ['Требуемое умение', profession],
       ['Место использования', useMap],
       ['Гильдия', guildUse],
       ['Максимум в инвентаре', Number(item.maxInventory) > 0 ? formatNumber(item.maxInventory) : ''],
@@ -1164,11 +1280,16 @@
     if (Number(item.degradationIndex) > 0) actions.push({ text: 'Можно разобрать', tone: 'allowed' });
     if (Number(item.enhancedIndex) > 0) actions.push({ text: 'Можно перековать', tone: 'allowed' });
     if (isEquipmentItem(item)) {
-      const sealCount = Number(item.seal);
-      actions.push({
-        text: sealCount > 0 ? `Функция печати (${formatNumber(sealCount)})` : 'Запечатать невозможно',
-        tone: sealCount > 0 ? 'allowed' : 'denied',
-      });
+      const sealSet = Number(item.seal);
+      if (sealSet > 0) {
+        const printFunction = Number(item.printableFlag) > 0
+          ? 'Функция печати (без ограничений)'
+          : 'Функция печати (5 раз)';
+        actions.push({ text: printFunction, tone: 'allowed' });
+        actions.push({ text: `Требуется печатей: ${formatNumber(sealSet)}`, tone: 'allowed' });
+      } else {
+        actions.push({ text: 'Запечатать невозможно', tone: 'denied' });
+      }
     }
     if (Number(item.sellType) === 0) actions.push({ text: 'Нельзя продать персонажу', tone: 'denied' });
     const price = Number(item.sellType) === 1 && Number(item.price) > 0 ? ['Цена продажи', formatSalePrice(item.price)] : null;
@@ -1218,7 +1339,7 @@
       ['Вместимость — исходное значение', item.capacity],
       ['Тип продажи — код', item.sellType],
       ['Передача — код', item.exchange],
-      ['Запечатывание — код', item.seal],
+      ['Требуется печатей', item.seal],
       ['Комплект — ID', item.setIndex],
       ['Значок — ID', item.iconIndex],
       ['Раса — код', item.race],
@@ -1296,7 +1417,7 @@
     if (!rows?.length) return '';
     return rows.map(([label, value]) => {
       const rowModifier = modifier === 'bonus' && /^[-−]/.test(String(value).trim()) ? 'penalty' : modifier;
-      return `<div class="property-row property-row--${rowModifier}"><span class="property-name">${escapeHTML(label)}:</span><strong class="property-value">${escapeHTML(value)}</strong></div>`;
+      return `<div class="property-row property-row--${rowModifier}" data-property-label="${escapeHTML(label)}"><span class="property-name">${escapeHTML(label)}:</span><strong class="property-value">${escapeHTML(value)}</strong></div>`;
     }).join('');
   }
 
@@ -1330,7 +1451,10 @@
     const rows = materials.map(material => {
       const quantity = Math.max(1, Number(material.quantity) || 1);
       const label = hasMeaningfulText(material.item) ? material.item : `Предмет ID ${material.itemId}`;
-      return `<a href="#item/${Number(material.itemId)}"><span>${icons.item}</span><span class="recipe-material-label"><strong>${escapeHTML(label)}</strong><small>×${formatNumber(quantity)}</small></span></a>`;
+      const content = `<span>${icons.item}</span><span class="recipe-material-label"><strong>${escapeHTML(label)}</strong><small>×${formatNumber(quantity)}</small></span>`;
+      return material.known === false
+        ? `<div class="recipe-material recipe-material--unavailable" title="Предмет отсутствует в опубликованной базе">${content}</div>`
+        : `<a class="recipe-material" href="#item/${Number(material.itemId)}">${content}</a>`;
     }).join('');
     return `<section class="recipe-materials" aria-labelledby="recipeMaterialsTitle"><h2 id="recipeMaterialsTitle">Материалы рецепта</h2><div class="recipe-material-list">${rows}</div></section>`;
   }
@@ -1423,7 +1547,7 @@
   }
 
   function kvList(rows) {
-    if (!rows?.length) return '<p class="empty-copy">Нет данных.</p>';
+    if (!rows?.length) return '';
     return `<dl class="kv-list">${rows.map(([label, value]) => `<div><dt>${escapeHTML(label)}</dt><dd>${escapeHTML(value)}</dd></div>`).join('')}</dl>`;
   }
 
@@ -1448,22 +1572,73 @@
     return best ? [sourceName(best), bestLabel].filter(Boolean).join(' — ') : '';
   }
 
+  function enhancementBaseText(stat) {
+    return stat?.isRange === true
+      ? `${formatNumber(stat.baseMin)}–${formatNumber(stat.baseMax)}`
+      : formatNumber(stat?.base);
+  }
+
+  function enhancementBonusText(value) {
+    const bonus = Number(value) || 0;
+    if (!bonus) return '';
+    return `${bonus > 0 ? '+' : '−'}${formatNumber(Math.abs(bonus))}`;
+  }
+
+  function applyEnhancementLevel(enhancement, level) {
+    const levels = Array.isArray(enhancement?.levels) ? enhancement.levels : [];
+    const selected = levels.find(row => Number(row.level) === Number(level)) || levels[0];
+    if (!selected) return;
+    const selectedLevel = Number(selected.level) || 0;
+    const rows = [...main.querySelectorAll('.property-row[data-property-label]')];
+    (selected.stats || []).forEach(stat => {
+      const row = rows.find(candidate => candidate.dataset.propertyLabel === stat.name);
+      const value = row?.querySelector('.property-value');
+      if (!value) return;
+      const base = enhancementBaseText(stat);
+      const bonus = selectedLevel > 0 ? enhancementBonusText(stat.bonus) : '';
+      value.innerHTML = bonus
+        ? `${escapeHTML(base)} <span class="enhancement-inline-bonus">(${escapeHTML(bonus)})</span>`
+        : escapeHTML(base);
+    });
+    main.querySelectorAll('[data-enhancement-source-note]').forEach(note => {
+      note.hidden = selectedLevel <= 0;
+    });
+  }
+
+  function itemEnhancementPrefixHTML(enhancement) {
+    const levels = Array.isArray(enhancement?.levels) ? enhancement.levels : [];
+    if (!levels.length) return '';
+    const options = levels.map(level => `<option value="${Number(level.level)}">+${Number(level.level)}</option>`).join('');
+    return `<label class="enhancement-prefix" title="Усиление меняет только расчёт характеристик. Обычные источники относятся к предмету +0; исключение — сундуки, где усиление указано отдельно."><span>Усиление</span><select data-enhancement-level aria-label="Уровень усиления предмета">${options}</select></label>`;
+  }
+
+  function enhancementSourceNoteHTML(enhancement, drops) {
+    if (!Array.isArray(enhancement?.levels) || !enhancement.levels.length || !Array.isArray(drops) || !drops.length) return '';
+    const hasEnhancedChestVariant = drops.some(drop => drop?.source === 'Сундук'
+      && Array.isArray(drop.variants)
+      && drop.variants.some(variant => Number(variant?.enhanced) > 0));
+    const text = hasEnhancedChestVariant
+      ? 'Выбранное усиление используется только для расчёта характеристик. Обычные источники относятся к предмету +0; усиленный вариант возможен только там, где уровень явно указан у сундука.'
+      : 'Выбранное усиление используется только для расчёта характеристик. Источники относятся к предмету +0 и не означают выпадение уже усиленного предмета.';
+    return `<p class="enhancement-source-note" data-enhancement-source-note hidden>${icons.info}<span>${escapeHTML(text)}</span></p>`;
+  }
+
   function itemDetail(data, parentRoute = 'items') {
     const item = data.item;
-    trackRecentlyViewed('item', item.id, item.name, [item.typeLine || item.category, itemLevelSummary(item), `ID ${item.id}`].filter(Boolean).join(' · '));
+    const recipeContext = parentRoute === 'recipes';
+    trackRecentlyViewed(recipeContext ? 'recipe' : 'item', item.id, item.name, [item.typeLine || item.category, itemLevelSummary(item), `ID ${item.id}`].filter(Boolean).join(' · '));
     const key = `item:${item.id}`;
     const active = state.favorites.has(key);
     const setMembers = data.set?.items || [];
     const bonuses = Array.isArray(data.bonuses) ? data.bonuses : [];
-    const presentation = itemPresentation(item, bonuses);
+    const presentation = itemPresentation(item, bonuses, data.usedSkills);
     const description = meaningfulDescription(item.tooltip, item.name);
     const drops = [...(data.drops || [])];
     const sourceSummary = bestSourceSummary(drops);
     state.sourceSections = buildSourceSections(drops);
     state.monsterDrops = null;
-    state.monsterWorldDrops = null;
+    state.itemEnhancement = data.enhancement || null;
 
-    const recipeContext = parentRoute === 'recipes';
     if (recipeContext) presentation.bonusTexts = [];
     const detailRoute = recipeContext ? `recipe/${Number(item.id)}` : `item/${Number(item.id)}`;
     const recipeMasteryRequirement = recipeContext && Number(item.makeSkill) > 0
@@ -1472,19 +1647,86 @@
     main.innerHTML = `<section class="page detail-page" data-route="${detailRoute}">
       ${breadcrumb(recipeContext ? 'recipes' : 'items', recipeContext ? 'Рецепты' : 'Предметы')}
       <header class="detail-summary detail-summary--item">
-        <div class="detail-heading detail-heading--item"><h1>${escapeHTML(item.name)}</h1><p>${escapeHTML([item.typeLine || item.category, recipeContext ? recipeMasteryRequirement : itemLevelSummary(item)].filter(Boolean).join(' · '))}</p><div class="detail-labels">${qualityBadge(item.quality, item.qualityId)}${itemClassBadge(presentation.classes)}${itemSetBadge(setMembers.length)}</div></div>
+        <div class="detail-heading detail-heading--item"><div class="item-title-line">${!recipeContext ? itemEnhancementPrefixHTML(data.enhancement) : ''}<h1>${escapeHTML(item.name)}</h1></div><p>${escapeHTML([item.typeLine || item.category, recipeContext ? recipeMasteryRequirement : ''].filter(Boolean).join(' · '))}</p><div class="detail-labels">${qualityBadge(item.quality, item.qualityId)}${itemClassBadge(presentation.classes)}${itemSetBadge(setMembers.length)}</div></div>
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
       </header>
       ${gameProperties(presentation, recipeContext ? 'Характеристики рецепта' : 'Характеристики предмета', data.set ? setContent(item, data.set) : '')}
       ${recipeContext ? recipeProductHTML(data.recipeProduct, item) : ''}
       ${recipeContext ? recipeMaterialsHTML(data.recipe) : ''}
       ${chestContentsHTML(data.chest)}
-      ${recipeContext && drops.length === 1 ? `<section class="single-source-block" aria-labelledby="singleRecipeSourceTitle"><h2 id="singleRecipeSourceTitle">Источник получения</h2><div class="source-list">${sourceRow(drops[0])}</div>${questRewardScopeNote(drops)}</section>` : drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary)}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p></div><button class="secondary-button" type="button" data-open-details="item-sources">Показать все источники</button></section>` : ''}
+      ${recipeContext && drops.length === 1 ? `<section class="single-source-block" aria-labelledby="singleRecipeSourceTitle"><h2 id="singleRecipeSourceTitle">Источник получения</h2><div class="source-list">${sourceRow(drops[0])}</div>${questRewardScopeNote(drops)}</section>` : drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary)}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p>${!recipeContext ? enhancementSourceNoteHTML(data.enhancement, drops) : ''}</div><button class="secondary-button" type="button" data-open-details="item-sources">Показать все источники</button></section>` : ''}
       <section class="detail-accordions">
         ${drops.length > 1 || (!recipeContext && drops.length) ? accordion('Источники получения', formatCount(drops.length, 'вариант', 'варианта', 'вариантов'), sourcesContent(), false, 'item-sources') : ''}
         ${description ? accordion('Описание', '', `<p class="reading-text">${multilineHTML(description)}</p>`, false) : ''}
         ${accordion('Технические сведения', `ID ${item.id}`, `${kvList([...itemTechnicalRows(item), ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server]])}`, false)}
       </section>
+    </section>`;
+    positionSearchWidget(false);
+  }
+
+  function transformationBuffRows(card) {
+    const rows = [];
+    (card.formCharacteristics || []).filter(row => row.positive).forEach(row => rows.push({ source: 'Постоянно в форме', text: row.text }));
+    (card.skills || []).filter(skill => skill.isFriendlyBuff || skill.isSelfBuff).forEach(skill => {
+      if (!skill.effectText) return;
+      const source = Number(skill.applyType) === 3 ? `${skill.name} · цель: союзник` : skill.name;
+      rows.push({ source, text: skill.effectText, durationMs: skill.durationMs, cooldownMs: skill.cooldownMs });
+    });
+    return rows.filter(row => hasMeaningfulText(row.source) && hasMeaningfulText(row.text));
+  }
+
+  function transformationDetail(data) {
+    const card = data.card || {};
+    const id = Number(card.itemId);
+    if (!Number.isInteger(id) || id <= 0) { notFoundPage(); return; }
+    const key = `transformation:${id}`;
+    const active = state.favorites.has(key);
+    trackRecentlyViewed('transformation', id, card.name, [card.formName, `ID ${id}`].filter(Boolean).join(' · '));
+    const drops = [...(data.drops || [])];
+    state.sourceSections = buildSourceSections(drops);
+    state.monsterDrops = null;
+    state.itemEnhancement = null;
+    const baseSpeed = Number(data.basePlayerRunSpeed) || 450;
+    const speed = Number(card.effectiveRunSpeed) || 0;
+    const delta = Number(card.speedDelta) || 0;
+    const deltaPercent = Number(card.speedDeltaPercent) || 0;
+    const speedDeltaText = delta === 0 ? 'Без изменения' : `${delta > 0 ? '+' : '−'}${formatNumber(Math.abs(delta))} (${deltaPercent > 0 ? '+' : '−'}${decimalFormatter.format(Math.abs(deltaPercent))}%)`;
+    const buffRows = transformationBuffRows(card);
+    const skills = (Array.isArray(card.skills) ? card.skills : []).filter(skill => hasMeaningfulText(skill?.name));
+    const overviewRows = [
+      speed > 0 ? `<div><span>Скорость формы</span><strong>${formatNumber(speed)}</strong><small>Обычная скорость персонажа: ${formatNumber(baseSpeed)}</small></div>` : '',
+      speed > 0 ? `<div><span>Изменение скорости</span><strong class="${delta < 0 ? 'value-negative' : delta > 0 ? 'value-positive' : ''}">${escapeHTML(speedDeltaText)}</strong></div>` : '',
+      Number(card.durationMs) > 0 ? `<div><span>Длительность превращения</span><strong>${escapeHTML(formatDurationMilliseconds(card.durationMs))}</strong></div>` : '',
+    ].filter(Boolean).join('');
+    const overviewHTML = overviewRows ? `<section class="transformation-overview" aria-label="Характеристики формы">${overviewRows}</section>` : '';
+    const buffsHTML = buffRows.length ? `<section class="transformation-buffs" aria-labelledby="transformationBuffsTitle"><span class="eyebrow">Главное</span><h2 id="transformationBuffsTitle">Полезные эффекты</h2><div class="transformation-buff-list">${buffRows.map(row => `<div><strong>${escapeHTML(row.source)}</strong><p>${multilineHTML(row.text)}</p>${row.durationMs || row.cooldownMs ? `<small>${[row.durationMs ? `Длительность: ${formatDurationMilliseconds(row.durationMs)}` : '', row.cooldownMs ? `Перезарядка: ${formatDurationMilliseconds(row.cooldownMs)}` : ''].filter(Boolean).join(' · ')}</small>` : ''}</div>`).join('')}</div></section>` : '';
+    const skillCards = skills.map(skill => {
+      const target = hasMeaningfulText(skill.target) ? `<small>${escapeHTML(skill.target)}</small>` : '';
+      const effect = hasMeaningfulText(skill.effectText) ? `<p>${multilineHTML(skill.effectText)}</p>` : '';
+      const timingRows = [
+        Number(skill.cooldownMs) > 0 ? `<div><dt>Перезарядка</dt><dd>${escapeHTML(formatDurationMilliseconds(skill.cooldownMs))}</dd></div>` : '',
+        Number(skill.durationMs) > 0 ? `<div><dt>Длительность эффекта</dt><dd>${escapeHTML(formatDurationMilliseconds(skill.durationMs))}</dd></div>` : '',
+      ].filter(Boolean).join('');
+      const position = Number(skill.position) > 0 ? `<span class="skill-position">${formatNumber(skill.position)}</span>` : '';
+      return `<article><header>${position}<div><strong>${escapeHTML(skill.name)}</strong>${target}</div></header>${effect}${timingRows ? `<dl>${timingRows}</dl>` : ''}</article>`;
+    }).join('');
+    const skillsHTML = skillCards ? `<section class="transformation-skills" aria-labelledby="transformationSkillsTitle"><h2 id="transformationSkillsTitle">Навыки формы</h2><div class="transformation-skill-list">${skillCards}</div></section>` : '';
+    const sourceSummary = bestSourceSummary(drops);
+    const formName = hasMeaningfulText(card.formName) ? `<p>${escapeHTML(card.formName)}</p>` : '';
+    const technicalRows = [
+      ['ID предмета', formatNumber(id)],
+      ...(Number(card.monsterId) > 0 ? [['ID монстра формы', formatNumber(card.monsterId)]] : []),
+      ...(Number(card.runSpeed) > 0 ? [['Базовая скорость формы', formatNumber(card.runSpeed)]] : []),
+      ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server],
+    ];
+    main.innerHTML = `<section class="page detail-page transformation-detail" data-route="transformation/${id}">
+      ${breadcrumb('transformations', 'Карты превращения')}
+      <header class="detail-summary detail-summary--transformation"><span class="detail-icon">${icons.transform}</span><div class="detail-heading"><h1>${escapeHTML(card.name)}</h1>${formName}<div class="detail-labels">${qualityBadge(card.quality, card.qualityId)}</div></div><button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button></header>
+      ${overviewHTML}
+      ${buffsHTML}
+      ${skillsHTML}
+      ${drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary || 'Источник получения')}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p></div><button class="secondary-button" type="button" data-open-details="transformation-sources">Показать все источники</button></section>` : ''}
+      <section class="detail-accordions">${drops.length ? accordion('Источники получения', formatCount(drops.length, 'вариант', 'варианта', 'вариантов'), sourcesContent(), false, 'transformation-sources') : ''}${accordion('Технические сведения', `ID ${id}`, kvList(technicalRows), false)}</section>
     </section>`;
     positionSearchWidget(false);
   }
@@ -1498,7 +1740,7 @@
       return;
     }
     const level = Number(title.level) || 0;
-    const levelLabel = level > 0 ? `Уровень ${formatNumber(level)}` : 'Уровень не указан';
+    const levelLabel = level > 0 ? `Уровень ${formatNumber(level)}` : '';
     const effect = normalizeDisplayText(data.effect || '');
     const itemIDs = Array.isArray(data.itemIds)
       ? [...new Set(data.itemIds.map(value => Math.trunc(Number(value))).filter(value => Number.isInteger(value) && value > 0))]
@@ -1510,21 +1752,20 @@
     trackRecentlyViewed('title', index, name, levelLabel);
     state.sourceSections = buildSourceSections(drops);
     state.monsterDrops = null;
-    state.monsterWorldDrops = null;
 
     main.innerHTML = `<section class="page detail-page" data-route="title/${index}">
       ${breadcrumb('titles', 'Титулы')}
       <header class="detail-summary detail-summary--title">
-        <div class="detail-heading"><div class="title-heading-line">${titleIndexBadge(index, true)}<h1>${escapeHTML(name)}</h1></div><p>${escapeHTML(levelLabel)}</p></div>
+        <div class="detail-heading"><div class="title-heading-line">${titleIndexBadge(index, true)}<h1>${escapeHTML(name)}</h1></div>${levelLabel ? `<p>${escapeHTML(levelLabel)}</p>` : ''}</div>
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
       </header>
-      ${effect ? `<section class="title-effect-card" aria-labelledby="titleEffectTitle"><span class="eyebrow">Характеристики</span><h2 id="titleEffectTitle">Эффект титула</h2><p class="reading-text">${multilineHTML(effect)}</p></section>` : `<section class="title-effect-card title-effect-card--empty" aria-label="Эффект титула"><h2>Эффект титула</h2><p class="empty-copy">Для этого титула эффект в доступных игровых данных не указан.</p></section>`}
+      ${effect ? `<section class="title-effect-card" aria-labelledby="titleEffectTitle"><span class="eyebrow">Характеристики</span><h2 id="titleEffectTitle">Эффект титула</h2><p class="reading-text">${multilineHTML(effect)}</p></section>` : ''}
       ${drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary || 'Источник получения')}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p></div><button class="secondary-button" type="button" data-open-details="title-sources">Показать все источники</button></section>` : ''}
       <section class="detail-accordions">
         ${drops.length ? accordion('Источники получения', formatCount(drops.length, 'вариант', 'варианта', 'вариантов'), sourcesContent(), false, 'title-sources') : ''}
         ${accordion('Технические сведения', `Индекс ${formatTitleIndex(index)}`, kvList([
           ['Индекс титула', formatNumber(index)],
-          ['Уровень', level > 0 ? formatNumber(level) : 'Не указан'],
+          ...(level > 0 ? [['Уровень', formatNumber(level)]] : []),
           ...(itemIDs.length === 1 ? [['Связанный предмет — ID', formatNumber(itemIDs[0])]] : []),
           ...(itemIDs.length > 1 ? [['Связанные предметы — ID', itemIDs.map(formatNumber).join(', ')]] : []),
           ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server],
@@ -1642,7 +1883,8 @@
     const isQuestReward = drop.source === 'Награда за задание';
     const isQuestDrop = drop.source === 'Квестовый дроп' || drop.source === 'Квестовое выпадение';
     const isQuest = isQuestReward || isQuestDrop;
-    const baseDetails = isWorld ? [drop.context] : isChest ? [chestSourceDetails(drop)] : isQuest ? [drop.context] : [drop.slotTitle];
+    const worldContext = String(drop.context || '').replace(/^(Открытая локация|Инстанс)\s*·\s*/u, '');
+    const baseDetails = isWorld ? [worldContext] : isChest ? [chestSourceDetails(drop)] : isQuest ? [drop.context] : [drop.slotTitle];
     if (isQuest && Number(drop.questId) > 0) baseDetails.push(`ID задания: ${formatNumber(drop.questId)}`);
     if (isQuestReward && Number(drop.quantity) > 1) baseDetails.push(`Количество: ×${formatNumber(drop.quantity)}`);
     if (!isQuest && !isChest && drop.groupChanceKnown) {
@@ -1656,9 +1898,7 @@
     const icon = icons[isWorld ? 'home' : isQuest ? 'info' : isChest ? 'item' : 'monster'];
     const chance = chanceKnown ? `<span class="source-chance"><small>${chanceLabel}</small><strong>${formatChance(baseAttemptChance(drop))}</strong></span>` : '';
     const content = `<span class="source-icon">${icon}</span><span><strong>${escapeHTML(sourceName(drop))}</strong>${details ? `<small>${escapeHTML(details)}</small>` : ''}</span>${chance}`;
-    if (isWorld) {
-      return `<details class="world-source" data-world-source data-item-id="${Number(drop.itemId)}" data-source-line="${Number(drop.sourceLine)}" data-group-id="${Number(drop.groupId)}" data-choice-position="${Number(drop.choicePosition)}" data-item-position="${Number(drop.itemPosition)}"><summary class="source-row">${content}</summary><div class="world-source-results" data-world-source-host><p class="empty-copy">Откройте источник, чтобы показать подходящих монстров.</p></div></details>`;
-    }
+    if (isWorld) return `<div class="source-row world-source-compact">${content}</div>`;
     if (isChest && Number(drop.containerId) > 0) return `<a class="source-row" href="#item/${Number(drop.containerId)}">${content}</a>`;
     return drop.monsterId ? `<a class="source-row" href="#monster/${drop.monsterId}">${content}</a>` : `<div class="source-row">${content}</div>`;
   }
@@ -1682,47 +1922,6 @@
     return `<section class="source-section" data-source-section="${index}"><header><h3>${escapeHTML(section.title)}</h3><span>${formatNumber(section.rows.length)}</span></header><div class="source-list">${visible.map(sourceRow).join('')}</div>${section.shown < section.rows.length ? `<button class="secondary-button load-more" type="button" data-source-more="${index}">Показать ещё ${formatNumber(Math.min(SOURCE_BATCH, section.rows.length - section.shown))}</button>` : ''}</section>`;
   }
 
-  function renderWorldSourceRows(details) {
-    const host = details?.querySelector('[data-world-source-host]');
-    const monsters = Array.isArray(details?._worldMonsters) ? details._worldMonsters : [];
-    if (!host) return;
-    const shown = Math.min(monsters.length, Math.max(WORLD_SOURCE_BATCH, Number(details.dataset.worldShown) || WORLD_SOURCE_BATCH));
-    const rows = monsters.slice(0, shown).map(monster => `<a class="world-monster-row" href="#monster/${Number(monster.monsterId)}"><span>${icons.monster}</span><span><strong>${escapeHTML(monster.monster || `Монстр ID ${monster.monsterId}`)}</strong>${Number(monster.level) > 0 ? `<small>Уровень ${formatNumber(monster.level)}</small>` : ''}</span><span class="source-chance"><small>За одну основную попытку</small><strong>${formatChance(monster.chance)}</strong></span></a>`).join('');
-    const more = shown < monsters.length ? `<button class="secondary-button load-more" type="button" data-world-more>Показать ещё ${formatNumber(Math.min(WORLD_SOURCE_BATCH, monsters.length - shown))}</button>` : '';
-    const note = details.dataset.contextMatchKnown === 'false' ? '<p class="world-source-note">В опубликованных данных нет подтверждённой связи конкретного монстра с типом карты. Список отфильтрован по уровню и типу монстра; условие «Открытая локация / инстанс» сервер применяет отдельно.</p>' : '';
-    host.innerHTML = `${note}${monsters.length ? `<div class="world-monster-list">${rows}</div>${more}` : '<p class="empty-copy">Подходящие монстры по известным условиям не найдены.</p>'}`;
-  }
-
-  async function renderWorldSourceMonsters(details) {
-    if (!details || details.dataset.worldLoaded === 'true' || details.dataset.worldLoading === 'true') return;
-    const host = details.querySelector('[data-world-source-host]');
-    if (!host) return;
-    details.dataset.worldLoading = 'true';
-    host.innerHTML = '<p class="empty-copy">Загрузка подходящих монстров…</p>';
-    const params = new URLSearchParams({
-      server: state.server,
-      itemId: details.dataset.itemId || '',
-      sourceLine: details.dataset.sourceLine || '',
-      groupId: details.dataset.groupId || '',
-      choicePosition: details.dataset.choicePosition || '',
-      itemPosition: details.dataset.itemPosition || '',
-    });
-    try {
-      const data = await api(`/api/world-source-monsters?${params.toString()}`, { signal: state.routeController?.signal });
-      if (!details.isConnected) return;
-      details._worldMonsters = Array.isArray(data?.monsters) ? data.monsters : [];
-      details.dataset.worldShown = String(Math.min(WORLD_SOURCE_BATCH, details._worldMonsters.length));
-      details.dataset.contextMatchKnown = String(data?.contextMatchKnown !== false);
-      details.dataset.worldLoaded = 'true';
-      renderWorldSourceRows(details);
-    } catch (error) {
-      if (error?.name === 'AbortError') return;
-      if (details.isConnected) host.innerHTML = '<p class="empty-copy">Не удалось загрузить список монстров. Закройте источник и откройте его снова.</p>';
-    } finally {
-      delete details.dataset.worldLoading;
-    }
-  }
-
   function monsterDetail(data) {
     const monster = data.monster;
     trackRecentlyViewed('monster', monster.id, monster.name, [monster.category, monster.typeName, `Уровень ${monster.level}`, `ID ${monster.id}`].filter(Boolean).join(' · '));
@@ -1731,22 +1930,19 @@
     const presentation = monsterPresentation(monster);
     const description = meaningfulDescription(monster.note, monster.name);
     const slots = data.slots || [];
-    const worldRuleCount = Math.max(0, Number(data.worldRuleCount) || 0);
     state.monsterDrops = { slots, groups: [], shellRendered: false };
-    state.monsterWorldDrops = { monsterId: Number(monster.id), count: worldRuleCount, slots: [], groups: [], loaded: false, loading: false, shellRendered: false };
     const topDrops = topMonsterDrops(slots, 6);
     main.innerHTML = `<section class="page detail-page" data-route="monster/${Number(monster.id)}">
       ${breadcrumb('monsters', 'Монстры')}
       <header class="detail-summary">
         <span class="detail-icon">${icons.monster}</span>
-        <div class="detail-heading"><h1>${escapeHTML(monster.name)}</h1><p>${escapeHTML([monster.category, monster.typeName, `Уровень ${monster.level}`].filter(Boolean).join(' · '))}</p><div class="detail-labels">${monster.aggressive ? '<span class="meta-label warning-label">Агрессивный</span>' : '<span class="meta-label">Неагрессивный</span>'}</div></div>
+        <div class="detail-heading"><h1>${escapeHTML(monster.name)}</h1><p>${escapeHTML([monster.category, monster.typeName, `Уровень ${monster.level}`].filter(Boolean).join(' · '))}</p><div class="detail-labels">${monster.aggressive ? '<span class="meta-label monster-nature monster-nature--aggressive">Агрессивный</span>' : '<span class="meta-label monster-nature monster-nature--friendly">Дружелюбный</span>'}</div></div>
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
       </header>
       ${gameProperties(presentation, 'Характеристики монстра')}
       ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Предметы с наибольшим шансом</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}" aria-label="${escapeHTML(drop.item)} — ${formatChance(drop.chance)}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small aria-hidden="true">— ${formatChance(drop.chance)}</small></a>`).join('')}</div></section>` : ''}
       <section class="detail-accordions">
         ${slots.length ? accordion('Обычная добыча', formatCount(slots.length, 'вариант', 'варианта', 'вариантов'), `<div data-monster-drops-host><p class="empty-copy">Список загрузится после открытия раздела.</p></div>`, false, 'monster-drops lazy-monster-drops') : ''}
-        ${worldRuleCount ? accordion('Мировая добыча', `${formatCount(worldRuleCount, 'правило', 'правила', 'правил')} по уровню и типу`, `<div data-monster-world-drops-host><p class="empty-copy">Список загрузится после открытия раздела.</p></div>`, false, 'monster-world-drops lazy-monster-world-drops') : ''}
         ${description ? accordion('Описание', '', `<p class="reading-text">${multilineHTML(description)}</p>`, false) : ''}
         ${accordion('Технические сведения', `ID ${monster.id}`, `${kvList([...monsterTechnicalRows(monster), ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server]])}`, false)}
       </section>
@@ -1811,84 +2007,10 @@
     host.innerHTML = `${rows}<div class="lazy-list-status" aria-live="polite">Показано ${formatNumber(group.shown)} из ${formatNumber(items.length)}</div>${remaining > 0 ? `<div class="lazy-list-actions"><button class="secondary-button" type="button" data-drop-more="${groupIndex}">Показать ещё ${formatNumber(Math.min(DROP_BATCH, remaining))}</button><button class="text-button" type="button" data-drop-all="${groupIndex}">Показать всё</button></div>` : ''}`;
   }
 
-  function renderMonsterWorldDropSlots() {
-    const model = state.monsterWorldDrops;
-    const host = main.querySelector('[data-monster-world-drops-host]');
-    if (!model || !host) return;
-    const meta = activeServerMeta();
-    const dates = `<div class="data-inline"><strong>Актуальность данных</strong><span>Состав групп: ${formatSourceDate(meta.dropListsUpdatedAt)}</span><span>Мировая добыча: ${formatSourceDate(meta.worldDropsUpdatedAt)}</span></div>`;
-    const note = '<p class="world-source-note">Правила ниже подходят монстру по уровню и типу. Для мировой добычи сервер также учитывает тип локации. В опубликованных данных нет надёжной связи каждого монстра с открытой локацией или инстансом, поэтому список показывает подходящие правила, а не подтверждённую карту.</p>';
-    if (!model.slots.length) {
-      host.innerHTML = `${dates}${note}<p class="empty-copy">Подходящие правила мировой добычи не найдены.</p>`;
-      model.shellRendered = true;
-      return;
-    }
-    model.groups = [];
-    const slotsHTML = model.slots.map((slot, slotIndex) => {
-      const groups = (slot.choices || []).map(choice => {
-        const groupIndex = model.groups.length;
-        model.groups.push({ choice, shown: 0, rendered: false });
-        const count = (choice.items || []).length;
-        return `<details class="drop-choice" data-monster-world-drop-group="${groupIndex}" data-group-id="${Number(choice.groupId) || 0}"><summary><span><strong>${escapeHTML(choice.title || `Вариант ${groupIndex + 1}`)}</strong><small>Шанс группы: ${formatChance(choice.baseSelectionChance)} · ${formatCount(count, 'предмет', 'предмета', 'предметов')}</small></span>${icons.chevron}</summary><div class="drop-items" data-monster-world-drop-group-host="${groupIndex}"><p class="empty-copy">Откройте вариант, чтобы показать предметы.</p></div></details>`;
-      }).join('');
-      const extraAttempts = [
-        slot.addAttempt1Count ? `${formatCount(slot.addAttempt1Count, 'дополнительная попытка', 'дополнительные попытки', 'дополнительных попыток')} при ${formatChance(slot.addAttempt1Rate)}` : '',
-        slot.addAttempt2Count ? `${formatCount(slot.addAttempt2Count, 'дополнительная попытка', 'дополнительные попытки', 'дополнительных попыток')} при ${formatChance(slot.addAttempt2Rate)}` : '',
-      ].filter(Boolean).join(' · ');
-      return `<section class="drop-slot"><header><div><h3>${escapeHTML(slot.context || `Правило ${slotIndex + 1}`)}</h3><p>Основная попытка: 1${extraAttempts ? ` · ${extraAttempts}` : ''}</p></div></header><div>${groups || '<p class="empty-copy">Варианты не найдены.</p>'}</div></section>`;
-    }).join('');
-    host.innerHTML = `${dates}${note}<button class="text-button" type="button" data-dialog="chance">${icons.info}<span>Как рассчитывается шанс</span></button><div class="drop-slots">${slotsHTML}</div>`;
-    model.shellRendered = true;
-  }
-
-  async function renderMonsterWorldDropShell() {
-    const model = state.monsterWorldDrops;
-    const host = main.querySelector('[data-monster-world-drops-host]');
-    if (!model || !host || model.loading) return;
-    if (model.loaded) {
-      if (!model.shellRendered) renderMonsterWorldDropSlots();
-      return;
-    }
-    model.loading = true;
-    host.innerHTML = '<p class="empty-copy">Загрузка мировой добычи…</p>';
-    const params = new URLSearchParams({ server: state.server, monsterId: String(model.monsterId) });
-    try {
-      const data = await api(`/api/monster-world-drops?${params.toString()}`, { signal: state.routeController?.signal });
-      if (!host.isConnected || state.monsterWorldDrops !== model) return;
-      model.slots = Array.isArray(data?.slots) ? data.slots : [];
-      model.loaded = true;
-      model.shellRendered = false;
-      renderMonsterWorldDropSlots();
-    } catch (error) {
-      if (error?.name === 'AbortError') return;
-      if (host.isConnected) host.innerHTML = '<p class="empty-copy">Не удалось загрузить мировую добычу. Закройте раздел и откройте его снова.</p>';
-    } finally {
-      model.loading = false;
-    }
-  }
-
-  function renderMonsterWorldDropGroup(groupIndex, showAll = false) {
-    const group = state.monsterWorldDrops?.groups?.[groupIndex];
-    const host = main.querySelector(`[data-monster-world-drop-group-host="${groupIndex}"]`);
-    if (!group || !host) return;
-    const items = group.choice.items || [];
-    if (showAll) group.shown = items.length;
-    else if (!group.rendered) group.shown = Math.min(DROP_BATCH, items.length);
-    else group.shown = Math.min(items.length, group.shown + DROP_BATCH);
-    group.rendered = true;
-    if (!items.length) {
-      host.innerHTML = '<p class="empty-copy">Состав варианта не найден.</p>';
-      return;
-    }
-    const rows = items.slice(0, group.shown).map(item => `<a href="#item/${item.itemId}"><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`).join('');
-    const remaining = items.length - group.shown;
-    host.innerHTML = `${rows}<div class="lazy-list-status" aria-live="polite">Показано ${formatNumber(group.shown)} из ${formatNumber(items.length)}</div>${remaining > 0 ? `<div class="lazy-list-actions"><button class="secondary-button" type="button" data-monster-world-drop-more="${groupIndex}">Показать ещё ${formatNumber(Math.min(DROP_BATCH, remaining))}</button><button class="text-button" type="button" data-monster-world-drop-all="${groupIndex}">Показать всё</button></div>` : ''}`;
-  }
-
   async function favoritesPage(signal) {
     const keys = [...state.favorites];
     if (!keys.length) {
-      main.innerHTML = `<section class="page">${pageHeader('Избранное', 'Сохранённые предметы, монстры, рецепты и титулы.')}<div class="state-message compact"><span class="state-symbol">☆</span><h2>Избранное пусто</h2><p>Добавляйте предметы, монстров, рецепты и титулы кнопкой со звездой.</p><a class="primary-button" href="#items">Открыть предметы</a></div></section>`;
+      main.innerHTML = `<section class="page">${pageHeader('Избранное', 'Сохранённые предметы, монстры, рецепты, титулы и карты превращения.')}<div class="state-message compact"><span class="state-symbol">☆</span><h2>Избранное пусто</h2><p>Добавляйте предметы, монстров, рецепты, титулы и карты превращения кнопкой со звездой.</p><a class="primary-button" href="#items">Открыть предметы</a></div></section>`;
       positionSearchWidget(false);
       return;
     }
@@ -1906,7 +2028,7 @@
       scheduleProfileSave(0);
     }
     state.favoritePage = Math.max(1, Number(data.page || 1));
-    const rows = (data.rows || []).map(row => row.kind === 'monster' ? monsterRow(row) : row.kind === 'recipe' ? recipeRow(row) : row.kind === 'title' ? titleRow(row) : itemRow(row));
+    const rows = (data.rows || []).map(row => row.kind === 'monster' ? monsterRow(row) : row.kind === 'recipe' ? recipeRow(row) : row.kind === 'title' ? titleRow(row) : row.kind === 'transformation' ? transformationRow(row) : itemRow(row));
     const missing = Number(data.missing || 0);
     main.innerHTML = `<section class="page">${pageHeader('Избранное', `В избранном: ${formatNumber(data.total)}.`)}${missing ? `<p class="muted-copy">Не удалось показать ${formatCount(missing, 'запись', 'записи', 'записей')}. Эти записи остаются сохранёнными в профиле.</p>` : ''}<div class="result-list">${rows.join('')}</div>${pagination(data.page, data.pages, 'favorite-page')}</section>`;
     positionSearchWidget(false);
@@ -1926,8 +2048,9 @@
       (visibleDetail.dataset.route?.startsWith('item/') && targetPath.startsWith('item/'))
       || (visibleDetail.dataset.route?.startsWith('recipe/') && targetPath.startsWith('recipe/'))
       || (visibleDetail.dataset.route?.startsWith('title/') && targetPath.startsWith('title/'))
+      || (visibleDetail.dataset.route?.startsWith('transformation/') && targetPath.startsWith('transformation/'))
     ));
-    const preserveCatalogPage = Boolean(visibleCatalog && ['items', 'monsters', 'recipes', 'titles'].includes(targetPath));
+    const preserveCatalogPage = Boolean(visibleCatalog && ['items', 'monsters', 'recipes', 'titles', 'transformations'].includes(targetPath));
     const preservePageTransition = Boolean(visiblePage && !preserveItemDetail && !preserveCatalogPage && targetPath !== 'home');
     const preserveVisiblePage = preserveItemDetail || preserveCatalogPage || preservePageTransition;
     const visibleRoute = visibleDetail?.dataset.route || visibleCatalog?.dataset.catalogKind || previousRoute;
@@ -1938,7 +2061,7 @@
     if (!preserveItemDetail) {
       state.sourceSections = [];
       state.monsterDrops = null;
-      state.monsterWorldDrops = null;
+        state.itemEnhancement = null;
     }
     if (preserveVisiblePage && visiblePage) {
       visiblePage.setAttribute('aria-busy', 'true');
@@ -1962,7 +2085,7 @@
       const [path, queryString = ''] = raw.split('?');
       const params = new URLSearchParams(queryString);
       if (path === 'home') homePage();
-      else if (path === 'items' || path === 'monsters' || path === 'recipes' || path === 'titles') {
+      else if (path === 'items' || path === 'monsters' || path === 'recipes' || path === 'titles' || path === 'transformations') {
         const filters = catalogFilters(path);
         if (params.has('q')) filters.q = params.get('q') || '';
         const routePage = Number.parseInt(params.get('page') || '1', 10);
@@ -1978,7 +2101,15 @@
         const id = path.slice(5);
         const data = await api(`/api/items/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
         if (controller.signal.aborted || requestId !== state.requestId) return;
-        if (Number(data.titleIndex) > 0) {
+        if (Number(data.transformationItemId) > 0) {
+          const transformationRoute = `transformation/${Number(data.transformationItemId)}`;
+          state.route = transformationRoute;
+          replaceRouteHash(transformationRoute);
+          renderNavigation();
+          const transformationData = await api(`/api/transformations/${Number(data.transformationItemId)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
+          if (controller.signal.aborted || requestId !== state.requestId) return;
+          transformationDetail(transformationData);
+        } else if (Number(data.titleIndex) > 0) {
           const titleRoute = `title/${Number(data.titleIndex)}`;
           state.route = titleRoute;
           replaceRouteHash(titleRoute);
@@ -2009,6 +2140,11 @@
         const data = await api(`/api/titles/${encodeURIComponent(index)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
         if (controller.signal.aborted || requestId !== state.requestId) return;
         titleDetail(data);
+      } else if (path.startsWith('transformation/')) {
+        const id = path.slice(15);
+        const data = await api(`/api/transformations/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
+        if (controller.signal.aborted || requestId !== state.requestId) return;
+        transformationDetail(data);
       } else if (path === 'favorites') await favoritesPage(controller.signal);
       else notFoundPage();
       if (!controller.signal.aborted && requestId === state.requestId) main.focus({ preventScroll: true });
@@ -2120,7 +2256,7 @@
         releaseUrl: String(result?.releaseUrl || ''),
       };
       if (state.updateInfo.updateAvailable && state.updateInfo.latestVersion) {
-        if (notify || !force) showToast(`Доступна новая версия ${state.updateInfo.latestVersion}`);
+        if (notify || !force) showToast(`Доступна новая версия ${state.updateInfo.latestVersion}.`);
       } else if (notify && state.updateInfo.checked) {
         showToast('Установлена актуальная версия.');
       } else if (notify && !state.updateInfo.checked) {
@@ -2153,7 +2289,7 @@
     const postUrl = String(state.vkNews.latestPostUrl || '').trim();
     const text = vkNewsPreviewText(state.vkNews.latestPostText);
     if (!postId || !postUrl) return vkNewsFallbackHTML('Не удалось определить последнюю запись. Нажмите «Проверить новую запись», чтобы повторить попытку.');
-    if (!text) return vkNewsFallbackHTML('Подготовленное превью записи пусто. Нажмите «Проверить новую запись», чтобы повторить попытку.');
+    if (!text) return vkNewsFallbackHTML('Текст записи недоступен. Нажмите «Проверить новую запись», чтобы повторить попытку.');
     const publishedLabel = formatVkNewsDate(state.vkNews.publishedAt);
     const checkedLabel = formatVkNewsDate(state.vkNews.sourceUpdatedAt);
     const dateLabel = publishedLabel ? ` · ${publishedLabel}` : checkedLabel ? ` · проверено ${checkedLabel}` : '';
@@ -2199,6 +2335,7 @@
       return;
     }
     if (force) state.vkNews.onlineRefreshAttempted = true;
+    const previousPostId = Number(state.vkNews.latestPostId || 0);
     state.vkNews.checking = true;
     renderVkNews();
     try {
@@ -2219,8 +2356,10 @@
         const message = !state.vkNews.available
           ? 'Не удалось получить последнюю запись ВКонтакте.'
           : state.vkNews.stale
-            ? 'Сеть недоступна: показана сохранённая запись ВКонтакте.'
-            : 'Последняя запись ВКонтакте обновлена.';
+            ? 'Не удалось проверить обновление: показана сохранённая запись ВКонтакте.'
+            : previousPostId > 0 && state.vkNews.latestPostId === previousPostId
+              ? 'Новых записей ВКонтакте нет.'
+              : 'Последняя запись ВКонтакте обновлена.';
         showToast(message);
       }
     } catch (_) {
@@ -2242,7 +2381,7 @@
     closeMoreMenu();
     if (type === 'about') {
       infoDialogTitle.textContent = 'О приложении';
-      infoDialogBody.innerHTML = `<p>Iris Online Database — локальная база данных о предметах, монстрах, титулах, рецептах и источниках получения.</p><dl class="kv-list"><div><dt>Версия</dt><dd>${APP_VERSION}</dd></div><div><dt>Автор</dt><dd>Хоуп (Original)</dd></div><div><dt>Данные</dt><dd>Хранятся и обрабатываются локально на этом компьютере</dd></div><div><dt>Проверка обновлений</dt><dd>${updateStatusHTML()}</dd></div></dl><p class="muted-copy">Приложение обращается к GitHub для проверки версии и загрузки подготовленной копии последней публичной записи ВКонтакте. Само приложение напрямую к VK не подключается. Профиль, история, избранное и поисковые запросы в GitHub не отправляются.</p><div class="legal-notice"><p><strong>© 2026 Iris Online Database</strong></p><p>Iris Online Database — неофициальное фанатское приложение для Iris Online. Проект не связан с разработчиками, издателями или правообладателями игры. Все игровые материалы, названия, логотипы и товарные знаки принадлежат их соответствующим правообладателям.</p><p><a class="external-link" href="https://irisonline.ru/" target="_blank" rel="noopener noreferrer" aria-label="Официальный сайт игры Iris Online — открыть в новой вкладке">Официальный сайт игры: irisonline.ru ${icons.external}</a></p><p><a class="external-link" href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external" aria-label="GitHub проекта Iris Online Database — открыть в новой вкладке">GitHub проекта ${icons.external}</a></p></div>`;
+      infoDialogBody.innerHTML = `<p>Iris Online Database — локальная база данных о предметах, монстрах, титулах, рецептах и источниках получения.</p><dl class="kv-list"><div><dt>Версия</dt><dd>${APP_VERSION}</dd></div><div><dt>Автор</dt><dd>Хоуп (Original)</dd></div><div><dt>Данные</dt><dd>Хранятся и обрабатываются локально на этом компьютере</dd></div><div><dt>Проверка обновлений</dt><dd>${updateStatusHTML()}</dd></div></dl><p class="muted-copy">Приложение обращается к GitHub, чтобы проверить версию и загрузить сохранённую копию последней публичной записи ВКонтакте. Напрямую к ВКонтакте оно не подключается. Профиль, история, избранное и поисковые запросы в GitHub не отправляются.</p><div class="legal-notice"><p><strong>© 2026 Iris Online Database</strong></p><p>Iris Online Database — неофициальное фанатское приложение для Iris Online. Проект не связан с разработчиками, издателями или правообладателями игры. Все игровые материалы, названия, логотипы и товарные знаки принадлежат их соответствующим правообладателям.</p><p><a class="external-link" href="https://irisonline.ru/" target="_blank" rel="noopener noreferrer" aria-label="Официальный сайт игры Iris Online — открыть в новой вкладке">Официальный сайт игры: irisonline.ru ${icons.external}</a></p><p><a class="external-link" href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external" aria-label="GitHub проекта Iris Online Database — открыть в новой вкладке">GitHub проекта ${icons.external}</a></p></div>`;
     } else if (type === 'data') {
       const meta = state.meta?.meta || {};
       const server = activeServerMeta();
@@ -2465,14 +2604,6 @@
       if (host) host.outerHTML = sourceSectionHTML(section, index);
       return;
     }
-    const worldMore = event.target.closest('[data-world-more]');
-    if (worldMore) {
-      const details = worldMore.closest('[data-world-source]');
-      if (!details || !Array.isArray(details._worldMonsters)) return;
-      details.dataset.worldShown = String(Math.min(details._worldMonsters.length, (Number(details.dataset.worldShown) || WORLD_SOURCE_BATCH) + WORLD_SOURCE_BATCH));
-      renderWorldSourceRows(details);
-      return;
-    }
     const dropMore = event.target.closest('[data-drop-more]');
     if (dropMore) {
       renderMonsterDropGroup(Number(dropMore.dataset.dropMore));
@@ -2483,16 +2614,6 @@
       renderMonsterDropGroup(Number(dropAll.dataset.dropAll), true);
       return;
     }
-    const monsterWorldDropMore = event.target.closest('[data-monster-world-drop-more]');
-    if (monsterWorldDropMore) {
-      renderMonsterWorldDropGroup(Number(monsterWorldDropMore.dataset.monsterWorldDropMore));
-      return;
-    }
-    const monsterWorldDropAll = event.target.closest('[data-monster-world-drop-all]');
-    if (monsterWorldDropAll) {
-      renderMonsterWorldDropGroup(Number(monsterWorldDropAll.dataset.monsterWorldDropAll), true);
-      return;
-    }
     const dialogButton = event.target.closest('[data-dialog]');
     if (dialogButton) openInfoDialog(dialogButton.dataset.dialog);
   });
@@ -2501,10 +2622,7 @@
     const details = event.target;
     if (!(details instanceof HTMLDetailsElement) || !details.open) return;
     if (details.matches('.lazy-monster-drops')) renderMonsterDropShell();
-    if (details.matches('.lazy-monster-world-drops')) renderMonsterWorldDropShell();
     if (details.matches('[data-drop-group]')) renderMonsterDropGroup(Number(details.dataset.dropGroup));
-    if (details.matches('[data-monster-world-drop-group]')) renderMonsterWorldDropGroup(Number(details.dataset.monsterWorldDropGroup));
-    if (details.matches('[data-world-source]')) renderWorldSourceMonsters(details);
   }, true);
 
   main.addEventListener('input', event => {
@@ -2525,9 +2643,20 @@
   });
 
   main.addEventListener('change', event => {
-    if (!event.target.matches('[data-catalog-sort]')) return;
+    if (event.target.matches('[data-enhancement-level]')) {
+      if (state.itemEnhancement) applyEnhancementLevel(state.itemEnhancement, Number(event.target.value));
+      return;
+    }
+    if (event.target.matches('[data-catalog-sort]')) {
+      const filters = catalogFilters(state.catalog.kind);
+      filters.sort = event.target.value;
+      filters.page = 1;
+      refreshCatalog();
+      return;
+    }
+    if (!event.target.matches('[data-catalog-order]')) return;
     const filters = catalogFilters(state.catalog.kind);
-    filters.sort = event.target.value;
+    filters.order = event.target.value;
     filters.page = 1;
     refreshCatalog();
   });
@@ -2537,13 +2666,19 @@
     if (!input || !state.catalog) return;
     const kind = state.catalog.kind;
     const filters = catalogFilters(kind);
+    const previousSort = filters.sort;
     filters[input.name] = input.type === 'checkbox' ? (input.checked ? '1' : '') : input.value;
+    if (input.name === 'characteristic' && !filters.characteristic && filters.sort === 'characteristic') filters.sort = kind === 'titles' ? 'level' : 'name';
+    if (input.name === 'characteristic' && filters.characteristic) {
+      if (previousSort !== 'characteristic') filters.order = 'desc';
+      filters.sort = 'characteristic';
+    }
     if (input.name === 'category') {
       if (kind === 'items') { filters.subcategory = ''; filters.quality = ''; }
       else if (kind === 'monsters') filters.type = '';
     }
     filters.page = 1;
-    refreshCatalog({ refreshFilters: input.name === 'category' });
+    refreshCatalog({ refreshFilters: input.name === 'category' || input.name === 'characteristic' });
   });
 
   filterDrawerBody.addEventListener('input', event => {
@@ -2602,7 +2737,7 @@
       if (homeServerName) homeServerName.textContent = serverLabel;
       showToast(`Выбран сервер ${serverLabel}. Данные обновлены.`);
       const activeRoute = routeBase();
-      if (['home', 'monsters', 'favorites', 'search'].includes(activeRoute) || state.route.startsWith('item/') || state.route.startsWith('recipe/') || state.route.startsWith('monster/') || state.route.startsWith('title/')) renderRoute();
+      if (['home', 'monsters', 'transformations', 'favorites', 'search'].includes(activeRoute) || state.route.startsWith('item/') || state.route.startsWith('recipe/') || state.route.startsWith('monster/') || state.route.startsWith('title/') || state.route.startsWith('transformation/')) renderRoute();
     }
   });
 
@@ -2622,7 +2757,7 @@
     if (typeof openExternal === 'function') {
       void openExternal(externalLink.href).catch(() => showToast('Не удалось открыть внешнюю ссылку.'));
     } else {
-      showToast('Внешняя ссылка заблокирована: desktop bridge недоступен.');
+      showToast('Не удалось открыть внешнюю ссылку.');
     }
     return true;
   }

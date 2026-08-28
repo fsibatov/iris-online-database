@@ -344,7 +344,7 @@ func TestItemsCatalogAndGlobalSearchExcludeRecipes(t *testing.T) {
 	expected := 0
 	for index := range store.data.Items {
 		item := &store.data.Items[index]
-		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe || isTitleItem(item) {
+		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe || isTitleItem(item) || isTransformationItem(item.ID) {
 			continue
 		}
 		expected++

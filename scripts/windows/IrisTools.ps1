@@ -1297,9 +1297,80 @@ function Clear-PythonGenerated {
     }
 }
 
-function Test-Release {
+function Repair-ReleaseSources {
     Assert-CleanTree
-    Test-WindowsTooling
+
+    Push-Location $Root
+    try {
+        $BeforeHead = (& git rev-parse HEAD | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $BeforeHead) { throw "Git HEAD could not be resolved before auto-fix." }
+        $RemoteMain = (& git rev-parse "origin/main" | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $RemoteMain) { throw "origin/main could not be resolved before auto-fix." }
+        & git merge-base --is-ancestor "origin/main" HEAD *> $null
+        if ($LASTEXITCODE -ne 0) { throw "Release HEAD is not based on the fetched origin/main." }
+
+        $GoFiles = @(Get-ChildItem -LiteralPath $Root -Filter "*.go" -File | ForEach-Object { $_.FullName })
+        if ($GoFiles.Count -gt 0) {
+            $GofmtArguments = @("-w", "--") + $GoFiles
+            Invoke-Checked "gofmt" $GofmtArguments 180
+        }
+        Invoke-Checked "go" @("mod", "tidy") 180
+
+        $RuffExecutable = Join-Path $AuditEnv "Scripts\ruff.exe"
+        Invoke-Checked $RuffExecutable @("check", "--fix", "--no-cache", ".") 300
+        Invoke-Checked $RuffExecutable @("format", "--no-cache", ".") 300
+
+        Clear-PythonGenerated
+        Clear-BuildGenerated
+
+        $Status = @(& git status "--porcelain=v1" "--untracked-files=all")
+        if ($LASTEXITCODE -ne 0) { throw "Git status failed after safe auto-fix." }
+        if ($Status.Count -eq 0) {
+            Write-Host "Safe auto-fix: no changes required." -ForegroundColor Green
+            return
+        }
+        if (@($Status | Where-Object { $_ -match '^\?\?' }).Count -gt 0) {
+            throw "Safe auto-fix produced unexpected untracked files; review is required."
+        }
+        if ($BeforeHead -eq $RemoteMain) {
+            throw "Safe auto-fix changed the already-published origin/main commit; automatic amendment is disabled."
+        }
+
+        Invoke-Checked "git" @("diff", "--check") 60
+        $Unformatted = (& gofmt -l -- $GoFiles)
+        if ($LASTEXITCODE -ne 0) { throw "gofmt verification failed after auto-fix." }
+        if ($Unformatted) { throw "Go source remains unformatted after auto-fix." }
+        Invoke-Checked "go" @("mod", "tidy", "-diff") 180
+        Invoke-Checked $RuffExecutable @("check", "--no-cache", ".") 300
+        Invoke-Checked $RuffExecutable @("format", "--check", "--no-cache", ".") 300
+
+        $ChangedFiles = @(& git diff --name-only)
+        if ($LASTEXITCODE -ne 0) { throw "Changed-file detection failed after safe auto-fix." }
+        if ($ChangedFiles.Count -gt 0) {
+            Write-Host ("Safe auto-fix changed: " + ($ChangedFiles -join ", ")) -ForegroundColor Yellow
+        }
+
+        Invoke-Checked "git" @("add", "--update") 60
+        & git diff --cached --quiet
+        if ($LASTEXITCODE -eq 0) { throw "Safe auto-fix reported changes but nothing was staged." }
+        if ($LASTEXITCODE -ne 1) { throw "Staged auto-fix verification failed." }
+        Invoke-Checked "git" @("-c", "commit.gpgSign=false", "commit", "--amend", "--no-edit") 120
+        Assert-CleanTree
+
+        $AfterHead = (& git rev-parse HEAD | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $AfterHead -or $AfterHead -eq $BeforeHead) {
+            throw "Safe auto-fix did not produce the expected amended release commit."
+        }
+        Write-Host "Safe auto-fix: applied and release commit amended." -ForegroundColor Green
+    } finally {
+        Pop-Location
+    }
+}
+
+function Test-Release {
+    param([switch]$SkipToolingCheck)
+    Assert-CleanTree
+    if (-not $SkipToolingCheck) { Test-WindowsTooling }
     Ensure-AuditEnvironment
 
     $SavedPythonPath = [Environment]::GetEnvironmentVariable("PYTHONPATH", "Process")
@@ -1458,15 +1529,26 @@ function Build-Release {
 }
 
 function Prepare-Release {
-    # No publishable artifact is created until the complete strict gate has
-    # succeeded and written a fingerprint for this exact HEAD/source tree.
-    Test-Release
+    # Fetch first so packaged release candidates can repair a deliberately
+    # thin local Git history before any VCS-aware Go command is executed.
+    Invoke-GitFetchMain
+    Test-WindowsTooling
+    Ensure-AuditEnvironment
+
+    # Only deterministic, tool-classified safe edits are automatic. The strict
+    # gate below is then rerun from a clean amended commit and still fails closed
+    # on tests, security findings, data issues, workflow errors or build failures.
+    Repair-ReleaseSources
+    Test-Release -SkipToolingCheck
     Build-Release
     Write-Host "PREPARE RELEASE: PASS" -ForegroundColor Green
 }
 
 function Invoke-GitFetchMain {
-    Invoke-Checked "git" @("fetch", "--prune", "origin", "main") 300
+    # Release candidates can intentionally contain a thin local Git object set.
+    # --refetch avoids negotiation through an incomplete local ancestry and
+    # repairs the fetched main history as if it were being obtained fresh.
+    Invoke-Checked "git" @("fetch", "--prune", "--refetch", "origin", "main") 300
 }
 
 function Assert-ReleaseSigningIdentity {

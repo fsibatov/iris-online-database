@@ -266,3 +266,42 @@ func TestWorldSourceEndpointRejectsMalformedAndDoesNotClaimMapMatch(t *testing.T
 }
 
 func itoa(value int) string { return strconv.Itoa(value) }
+
+func TestItemChangeServerSpecificOutputsRemainSeparated(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+	ids := func(chestID int, server string) map[int]bool {
+		result := map[int]bool{}
+		chest := chestContents(chestID, activeRuntime(server))
+		if chest == nil {
+			t.Fatalf("%s chest %d is missing", server, chestID)
+		}
+		for _, item := range chest.Items {
+			result[item.ItemID] = true
+		}
+		return result
+	}
+
+	kissEgg := ids(1200195, "kiss")
+	originalEgg := ids(1200195, "original")
+	for _, id := range []int{500000010, 500000011, 500000012, 500000013, 500000015} {
+		if !kissEgg[id] || originalEgg[id] {
+			t.Fatalf("egg output %d server split lost: kiss=%v original=%v", id, kissEgg[id], originalEgg[id])
+		}
+	}
+	for _, id := range []int{500000016, 500000017, 500000018, 500000019, 500000020} {
+		if !originalEgg[id] || kissEgg[id] {
+			t.Fatalf("egg output %d server split lost: kiss=%v original=%v", id, kissEgg[id], originalEgg[id])
+		}
+	}
+
+	kissGift := ids(1500014, "kiss")
+	originalGift := ids(1500014, "original")
+	if !kissGift[1500103] || originalGift[1500103] || !originalGift[1500125] || kissGift[1500125] {
+		t.Fatalf("level-75 gift server split lost: kiss=%v original=%v", kissGift, originalGift)
+	}
+	if !kissGift[1100055] || !originalGift[1100055] {
+		t.Fatal("shared level-75 gift output 1100055 is missing")
+	}
+}

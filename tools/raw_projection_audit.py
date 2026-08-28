@@ -359,15 +359,20 @@ def audit(
                 monster_mismatch[field] += 1
 
     recipe_mismatch = 0
+    recipe_used_skill_mismatch = 0
+    recipe_missing_material_ids = 0
+    recipe_used_skill_orphans = 0
     recipe_count = 0
     if item_recipes is not None and (resource / "item_mixed.txt").exists():
         with gzip.open(item_recipes, "rt", encoding="utf-8") as handle:
             recipe_asset = json.load(handle)
         source_recipes = {}
+        source_used_skills: dict[str, set[int]] = {}
         for parts in rows(resource / "item_mixed.txt"):
             if not parts or parts[0].strip().lower() != "mix" or len(parts) <= 24:
                 continue
             recipe_id = as_int(parts[7]) if len(parts) > 7 else None
+            skill_id = as_int(parts[1]) if len(parts) > 1 else None
             if not recipe_id:
                 continue
             materials = []
@@ -384,6 +389,10 @@ def audit(
                     materials.append(
                         {"itemId": material_id, "quantity": max(1, quantity or 1)}
                     )
+                    if skill_id and skill_id > 0:
+                        source_used_skills.setdefault(str(material_id), set()).add(
+                            skill_id
+                        )
             source_recipes[str(recipe_id)] = materials
         recipe_count = len(source_recipes)
         asset_recipes = recipe_asset.get("recipes", {})
@@ -391,6 +400,24 @@ def audit(
             1
             for key in set(source_recipes) | set(asset_recipes)
             if source_recipes.get(key) != asset_recipes.get(key)
+        )
+        expected_used_skills = {
+            key: sorted(values) for key, values in source_used_skills.items()
+        }
+        asset_used_skills = recipe_asset.get("usedSkills", {})
+        recipe_used_skill_mismatch = sum(
+            1
+            for key in set(expected_used_skills) | set(asset_used_skills)
+            if expected_used_skills.get(key) != asset_used_skills.get(key)
+        )
+        source_material_ids = {
+            material["itemId"]
+            for materials in source_recipes.values()
+            for material in materials
+        }
+        recipe_missing_material_ids = len(source_material_ids - set(items))
+        recipe_used_skill_orphans = sum(
+            1 for key in source_used_skills if int(key) not in items
         )
 
     return {
@@ -420,6 +447,9 @@ def audit(
         "monsterMismatches": dict(monster_mismatch),
         "recipeRows": recipe_count,
         "recipeMismatches": recipe_mismatch,
+        "recipeUsedSkillMismatches": recipe_used_skill_mismatch,
+        "recipeMaterialIDsMissingFromEmbedded": recipe_missing_material_ids,
+        "recipeUsedSkillOrphans": recipe_used_skill_orphans,
     }
 
 
@@ -473,6 +503,7 @@ def main():
             "monsterNoteMismatches",
             "rawItemWNonzeroRows",
             "recipeMismatches",
+            "recipeUsedSkillMismatches",
         )
     ):
         fatal = True

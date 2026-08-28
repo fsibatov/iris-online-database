@@ -127,6 +127,24 @@ class DataCompletenessTests(unittest.TestCase):
 
         self.assertEqual(self.result["chestOutputIDsMissingFromGameData"], 24)
 
+    def test_enhancement_and_transformation_assets_are_complete(self):
+        self.assertEqual(self.result["enhancementProfiles"], 66)
+        self.assertEqual(self.result["enhancementSupportedRows"], 13)
+        self.assertEqual(self.result["transformationCards"], 265)
+        self.assertEqual(
+            self.result["itemEnhancementsSha256"],
+            "be2718d8f785e30064512a6cdec709ff4dc04d5fc27f9e6a54560a54dbd3ea9d",
+        )
+        self.assertEqual(
+            self.result["transformationCardsSha256"],
+            "aa799cb6eec667f9f243a3df4e60ec6dd37389588b9312fcf511a04a4b254a62",
+        )
+        checks = self.result["checks"]
+        self.assertEqual(checks["invalid_enhancement_profiles"], [])
+        self.assertFalse(checks["frontend_missing_enhancement_ui"])
+        self.assertEqual(checks["invalid_transformation_cards"], [])
+        self.assertEqual(checks["transformation_template_tokens"], [])
+
     def test_item_rank_is_not_mislabeled_as_level(self):
         script = (ROOT / "web/app.js").read_text(encoding="utf-8")
         self.assertIn("`Ранг ${item.level}`", script)

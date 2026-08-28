@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -124,6 +125,43 @@ func TestCommunityCheckerPreservesLastKnownGoodOnFailure(t *testing.T) {
 	result := checker.Check(context.Background(), true)
 	if !result.Available || !result.Stale || result.LatestPostText != lastGood.LatestPostText {
 		t.Fatalf("last-known-good news was lost: %+v", result)
+	}
+}
+
+func TestCommunityCheckerFallsBackToGitHubContentsAPI(t *testing.T) {
+	raw := `{"schema":1,"community_url":"https://vk.ru/wall-59626511","post_id":62358,"post_url":"https://vk.ru/wall-59626511_62358","text":"Резервная проверка"}`
+	encoded := base64.StdEncoding.EncodeToString([]byte(raw))
+	primaryCalls := 0
+	fallbackCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/primary":
+			primaryCalls++
+			http.Error(w, "temporary failure", http.StatusBadGateway)
+		case "/fallback":
+			fallbackCalls++
+			if r.Header.Get("Accept") != "application/vnd.github+json" {
+				t.Fatalf("unexpected GitHub API Accept header: %q", r.Header.Get("Accept"))
+			}
+			fmt.Fprintf(w, `{"encoding":"base64","content":%q}`, encoded)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	checker := &communityChecker{
+		client:      server.Client(),
+		newsURL:     server.URL + "/primary",
+		fallbackURL: server.URL + "/fallback",
+		result:      communityStatusResult{CommunityURL: vkCommunityPageURL},
+	}
+	result := checker.Check(context.Background(), true)
+	if !result.Available || result.Stale || result.LatestPostID != 62358 {
+		t.Fatalf("GitHub API fallback was not used: %+v", result)
+	}
+	if primaryCalls != 1 || fallbackCalls != 1 {
+		t.Fatalf("unexpected request counts: primary=%d fallback=%d", primaryCalls, fallbackCalls)
 	}
 }
 

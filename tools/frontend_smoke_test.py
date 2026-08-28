@@ -127,11 +127,94 @@ RUNE_ITEM = {
     "drops": [],
 }
 
+ENHANCED_ITEM = {
+    "item": {
+        "id": 2003,
+        "name": "Тестовый усиленный посох",
+        "category": "Оружие",
+        "typeLine": "Посох",
+        "quality": "Редкое",
+        "qualityId": 4,
+        "physicalMin": 10,
+        "physicalMax": 20,
+        "enhancedIndex": 1,
+        "sellType": 0,
+    },
+    "bonuses": [],
+    "drops": [],
+    "enhancement": {
+        "profileId": 1,
+        "maxLevel": 10,
+        "levels": [
+            {
+                "level": level,
+                "label": "Без усиления" if level == 0 else f"+{level}",
+                "stats": [
+                    {
+                        "type": 1201,
+                        "name": "Физическая атака",
+                        "baseMin": 10,
+                        "baseMax": 20,
+                        "bonus": level,
+                        "percent": level,
+                        "isRange": True,
+                    }
+                ],
+            }
+            for level in range(11)
+        ],
+    },
+}
+
 TITLE = {
     "title": {"index": 991, "name": "Антагонист I", "level": 1},
     "effect": "+1 к тестовой характеристике",
     "drops": [],
     "itemIds": [1550112],
+}
+
+TRANSFORMATION_EMPTY = {
+    "card": {
+        "itemId": 3001,
+        "name": "Карта пустой формы",
+        "formName": "Тестовая форма",
+        "quality": "Не указано",
+        "qualityId": 0,
+        "monsterId": 4001,
+        "runSpeed": 450,
+        "effectiveRunSpeed": 450,
+        "speedDelta": 0,
+        "speedDeltaPercent": 0,
+        "durationMs": 0,
+        "formCharacteristics": [],
+        "skills": [],
+    },
+    "basePlayerRunSpeed": 450,
+    "drops": [],
+}
+
+TRANSFORMATION_CATALOG = {
+    "transformations": [
+        {
+            "id": 1021022,
+            "itemId": 1021022,
+            "name": "Карта превращения нииля",
+            "formName": "Превращение в Нииля",
+            "quality": "Необычное",
+            "qualityId": 3,
+            "effectiveRunSpeed": 460,
+            "speedDelta": 10,
+            "speedDeltaPercent": 2.2,
+            "skillStatuses": [
+                {"kind": "effect", "name": "Волна исцеления"},
+                {"kind": "effect", "name": "Снятие отрицательных эффектов"},
+            ],
+        }
+    ],
+    "total": 1,
+    "page": 1,
+    "pages": 1,
+    "filters": {"characteristics": [], "qualities": ["Необычное"]},
 }
 
 
@@ -220,8 +303,17 @@ class FixtureHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/items/2002":
             self.send_json(RUNE_ITEM)
             return
+        if parsed.path == "/api/items/2003":
+            self.send_json(ENHANCED_ITEM)
+            return
         if parsed.path == "/api/titles/991":
             self.send_json(TITLE)
+            return
+        if parsed.path == "/api/transformations/3001":
+            self.send_json(TRANSFORMATION_EMPTY)
+            return
+        if parsed.path == "/api/transformations":
+            self.send_json(TRANSFORMATION_CATALOG)
             return
         self.serve_asset(parsed.path)
 
@@ -329,6 +421,13 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 require(
                     page.locator(".vk-news-card img[onerror]").count() == 0,
                     "remote news text was not escaped",
+                )
+                page.get_by_role("button", name="Проверить новую запись").click()
+                page.wait_for_timeout(250)
+                toast_text = page.locator("#toast").inner_text().strip()
+                require(
+                    toast_text == "Новых записей ВКонтакте нет.",
+                    f"unchanged VK refresh has misleading status text: {toast_text!r}",
                 )
                 require(
                     not page.evaluate(
@@ -494,6 +593,80 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
             )
             page.set_viewport_size({"width": 1280, "height": 900})
 
+            page.evaluate("location.hash = 'item/2003'")
+            page.wait_for_selector('.detail-page[data-route="item/2003"]')
+            enhancement = page.locator("[data-enhancement-level]")
+            require(enhancement.count() == 1, "enhancement level selector is missing")
+            require(
+                enhancement.locator('option[value="10"]').inner_text().strip() == "+10",
+                "+10 enhancement option is malformed",
+            )
+            enhancement_width = enhancement.evaluate(
+                "node => node.getBoundingClientRect().width"
+            )
+            require(
+                enhancement_width >= 80,
+                f"enhancement level selector is too narrow: {enhancement_width}",
+            )
+            enhancement.select_option("10")
+            require(
+                enhancement.input_value() == "10", "+10 enhancement is not selectable"
+            )
+            page.set_viewport_size({"width": 320, "height": 780})
+            page.wait_for_timeout(50)
+            require(
+                not page.evaluate(
+                    "document.documentElement.scrollWidth > document.documentElement.clientWidth"
+                ),
+                "enhancement selector introduced horizontal overflow at 320px",
+            )
+            page.set_viewport_size({"width": 1280, "height": 900})
+
+            page.evaluate("location.hash = 'transformations'")
+            page.wait_for_selector('.catalog-page[data-catalog-kind="transformations"]')
+            niil = page.locator(
+                ".transformation-result-row", has_text="Карта превращения нииля"
+            )
+            require(niil.count() == 1, "Niil transformation preview is missing")
+            require(
+                niil.locator(".transformation-status--effect").inner_text().strip()
+                == "Эффект: Волна исцеления, Снятие отрицательных эффектов",
+                "Niil utility effects are missing from the transformation preview",
+            )
+
+            page.evaluate("location.hash = 'transformation/3001'")
+            page.wait_for_selector('.detail-page[data-route="transformation/3001"]')
+            require(
+                page.get_by_role("heading", name="Карта пустой формы").count() == 1,
+                "transformation detail fixture did not render",
+            )
+            require(
+                page.locator(".transformation-buffs").count() == 0,
+                "empty beneficial-effects section is still rendered",
+            )
+            require(
+                page.locator(".transformation-skills").count() == 0,
+                "empty transformation-skills section is still rendered",
+            )
+            require(
+                page.get_by_text("Полезные эффекты", exact=True).count() == 0,
+                "empty beneficial-effects heading remains visible",
+            )
+            require(
+                page.locator(".transformation-detail .empty-copy").count() == 0,
+                "transformation detail still renders an empty-data placeholder",
+            )
+            for narrow_width in (320, 380):
+                page.set_viewport_size({"width": narrow_width, "height": 780})
+                page.wait_for_timeout(50)
+                require(
+                    not page.evaluate(
+                        "document.documentElement.scrollWidth > document.documentElement.clientWidth"
+                    ),
+                    f"transformation detail has horizontal overflow at {narrow_width}px",
+                )
+            page.set_viewport_size({"width": 1280, "height": 900})
+
             page.evaluate("location.hash = 'monster/42'")
             page.wait_for_selector('.detail-page[data-route="monster/42"]')
             rows = page.locator(".drop-preview-list a")
@@ -541,6 +714,12 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 page.locator(".vk-news-stale", has_text="Сохранённая копия").count()
                 == 1,
                 "stale VK preview is not disclosed",
+            )
+            toast_text = page.locator("#toast").inner_text().strip()
+            require(
+                toast_text
+                == "Не удалось проверить обновление: показана сохранённая запись ВКонтакте.",
+                f"stale VK refresh has misleading status text: {toast_text!r}",
             )
 
             page.keyboard.press("/")

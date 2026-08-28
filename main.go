@@ -275,6 +275,7 @@ type ItemRecipeMaterial struct {
 	ItemID   int    `json:"itemId"`
 	Item     string `json:"item"`
 	Quantity int    `json:"quantity"`
+	Known    bool   `json:"known"`
 }
 
 type itemRecipeMaterialSource struct {
@@ -285,6 +286,7 @@ type itemRecipeMaterialSource struct {
 type itemRecipeSupplement struct {
 	SchemaVersion int                                   `json:"schemaVersion"`
 	Recipes       map[string][]itemRecipeMaterialSource `json:"recipes"`
+	UsedSkills    map[string][]int                      `json:"usedSkills"`
 }
 
 type questRewardSource struct {
@@ -585,6 +587,7 @@ type appStore struct {
 	monsterTypeNames map[int]string
 	categoryItems    map[string]int
 	itemRecipes      map[int][]itemRecipeMaterialSource
+	itemUsedSkills   map[int][]int
 	questRewards     map[int][]questRewardSource
 	chestProfiles    map[string]map[int]chestProfileSource
 	monsterPresence  map[string]map[int]struct{}
@@ -614,6 +617,14 @@ func ensureLoaded() error {
 			return
 		}
 		if err := mergeItemAbilitySupplement(); err != nil {
+			loadErr = err
+			return
+		}
+		if err := loadEnhancementProfiles(); err != nil {
+			loadErr = err
+			return
+		}
+		if err := loadTransformationCards(); err != nil {
 			loadErr = err
 			return
 		}
@@ -654,10 +665,11 @@ func ensureLoaded() error {
 		store.categoryItems = make(map[string]int)
 		for i := range store.data.Items {
 			item := &store.data.Items[i]
+			presented := itemForPresentation(item)
 			store.itemsByID[item.ID] = item
 			store.itemNames[item.ID] = item.Name
-			store.itemSearch[i] = newSearchDocument(fmt.Sprintf("%d %s %s %s %s %s", item.ID, item.Name, item.TypeLine, item.Category, item.Subcategory, item.Quality))
-			if _, isRecipe := store.itemRecipes[item.ID]; !isRecipe && !isTitleItem(item) {
+			store.itemSearch[i] = newSearchDocument(fmt.Sprintf("%d %s %s %s %s %s", item.ID, item.Name, presented.TypeLine, item.Category, presented.Subcategory, item.Quality))
+			if _, isRecipe := store.itemRecipes[item.ID]; !isRecipe && !isTitleItem(item) && !isTransformationItem(item.ID) {
 				store.categoryItems[item.Category]++
 			}
 		}
@@ -675,6 +687,46 @@ func ensureLoaded() error {
 		}
 	})
 	return loadErr
+}
+
+func itemForPresentation(item *Item) Item {
+	if item == nil {
+		return Item{}
+	}
+	presented := *item
+	if item.Category != "Оружие/щит" || item.MainCategoryID != 1 || item.MiddleCategoryID == 602 {
+		return presented
+	}
+
+	switch item.EventType {
+	case 0:
+		presented.Subcategory = "Мечи"
+		presented.TypeLine = "[Оружие] Меч"
+	case 1:
+		presented.Subcategory = "Двуручные мечи"
+		presented.TypeLine = "[Оружие] Двуручный меч"
+	case 2:
+		presented.Subcategory = "Сабли"
+		presented.TypeLine = "[Оружие] Сабля"
+	case 3:
+		presented.Subcategory = "Кинжалы"
+		presented.TypeLine = "[Оружие] Кинжал"
+	case 4:
+		presented.Subcategory = "Ружья"
+		presented.TypeLine = "[Оружие] Ружьё"
+	case 5:
+		if item.MiddleCategoryID == 107 {
+			presented.Subcategory = "Скипетры"
+			presented.TypeLine = "[Оружие] Скипетр"
+		} else {
+			presented.Subcategory = "Посохи"
+			presented.TypeLine = "[Оружие] Посох"
+		}
+	case 6:
+		presented.Subcategory = "Щиты"
+		presented.TypeLine = "[Оружие] Щит"
+	}
+	return presented
 }
 
 func mergeItemAbilitySupplement() error {
@@ -882,7 +934,7 @@ func mergeRecipeSupplement() error {
 	if err := json.NewDecoder(gz).Decode(&supplement); err != nil {
 		return fmt.Errorf("не удалось разобрать материалы рецептов: %w", err)
 	}
-	if supplement.SchemaVersion != 1 {
+	if supplement.SchemaVersion != 2 {
 		return fmt.Errorf("неподдерживаемая версия материалов рецептов: %d", supplement.SchemaVersion)
 	}
 	store.itemRecipes = make(map[int][]itemRecipeMaterialSource, len(supplement.Recipes))
@@ -892,6 +944,37 @@ func mergeRecipeSupplement() error {
 			return fmt.Errorf("некорректный ID рецепта: %q", key)
 		}
 		store.itemRecipes[id] = append([]itemRecipeMaterialSource(nil), materials...)
+	}
+
+	knownItems := make(map[int]struct{}, len(store.data.Items))
+	for index := range store.data.Items {
+		knownItems[store.data.Items[index].ID] = struct{}{}
+	}
+	store.itemUsedSkills = make(map[int][]int, len(supplement.UsedSkills))
+	for key, skillIDs := range supplement.UsedSkills {
+		id, err := strconv.Atoi(key)
+		if err != nil || id <= 0 {
+			return fmt.Errorf("некорректный ID предмета в используемых умениях: %q", key)
+		}
+		if _, ok := knownItems[id]; !ok {
+			continue
+		}
+		seen := make(map[int]struct{}, len(skillIDs))
+		clean := make([]int, 0, len(skillIDs))
+		for _, skillID := range skillIDs {
+			if skillID <= 0 {
+				continue
+			}
+			if _, ok := seen[skillID]; ok {
+				continue
+			}
+			seen[skillID] = struct{}{}
+			clean = append(clean, skillID)
+		}
+		sort.Ints(clean)
+		if len(clean) > 0 {
+			store.itemUsedSkills[id] = clean
+		}
 	}
 	return nil
 }
@@ -1088,11 +1171,12 @@ func itemRecipeMaterials(itemID int) []ItemRecipeMaterial {
 	}
 	result := make([]ItemRecipeMaterial, 0, len(source))
 	for _, material := range source {
+		_, known := store.itemsByID[material.ItemID]
 		name := store.itemNames[material.ItemID]
 		if strings.TrimSpace(name) == "" {
 			name = fmt.Sprintf("Неизвестный предмет (ID %d)", material.ItemID)
 		}
-		result = append(result, ItemRecipeMaterial{ItemID: material.ItemID, Item: name, Quantity: max(1, material.Quantity)})
+		result = append(result, ItemRecipeMaterial{ItemID: material.ItemID, Item: name, Quantity: max(1, material.Quantity), Known: known})
 	}
 	return result
 }
@@ -1954,6 +2038,60 @@ func limitedQueryValue(values url.Values, key string, maxRunes int) (string, boo
 	return value, true
 }
 
+func querySortOrder(values url.Values) (string, bool) {
+	order := strings.TrimSpace(values.Get("order"))
+	if order == "" {
+		return "asc", true
+	}
+	if order != "asc" && order != "desc" {
+		return "", false
+	}
+	return order, true
+}
+
+func orderedIntLess(left, right int, descending bool) (bool, bool) {
+	if left == right {
+		return false, false
+	}
+	if descending {
+		return left > right, true
+	}
+	return left < right, true
+}
+
+func orderedFloatLess(left, right float64, descending bool) (bool, bool) {
+	if math.Abs(left-right) <= 0.000001 {
+		return false, false
+	}
+	if descending {
+		return left > right, true
+	}
+	return left < right, true
+}
+
+func orderedKnownLevelLess(left, right int, descending bool) (bool, bool) {
+	if left == 0 || right == 0 {
+		if left != right {
+			return right == 0, true
+		}
+		return false, false
+	}
+	return orderedIntLess(left, right, descending)
+}
+
+func orderedCatalogNameLess(left, right string, descending bool) (bool, bool) {
+	leftTrimmed := strings.TrimSpace(left)
+	rightTrimmed := strings.TrimSpace(right)
+	if leftTrimmed == rightTrimmed {
+		return false, false
+	}
+	less := catalogNameLess(leftTrimmed, rightTrimmed)
+	if descending {
+		return !less, true
+	}
+	return less, true
+}
+
 func isTitleItem(item *Item) bool {
 	return item != nil && item.TitleIndex > 0
 }
@@ -2101,9 +2239,10 @@ func titleDropSources(title *Title, rt *runtimeData) []ItemDrop {
 
 func titleSummary(title *Title) map[string]any {
 	return map[string]any{
-		"index": title.Index,
-		"name":  title.Name,
-		"level": titleLevel(title),
+		"index":           title.Index,
+		"name":            title.Name,
+		"level":           titleLevel(title),
+		"characteristics": titleCharacteristics(title),
 	}
 }
 
@@ -2269,7 +2408,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if q == "" {
-		writeJSON(w, map[string]any{"items": []any{}, "monsters": []any{}, "titles": []any{}})
+		writeJSON(w, map[string]any{"items": []any{}, "monsters": []any{}, "titles": []any{}, "transformations": []any{}})
 		return
 	}
 	query := q
@@ -2280,7 +2419,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe {
 			continue
 		}
-		if isTitleItem(item) {
+		if isTitleItem(item) || isTransformationItem(item.ID) {
 			continue
 		}
 		if matchesSearch(store.itemSearch[i], query) {
@@ -2299,6 +2438,15 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	transformations := make([]map[string]any, 0, 4)
+	for i := range transformationCards {
+		if matchesSearch(transformationSearch[i], query) {
+			transformations = append(transformations, transformationSummary(&transformationCards[i], ""))
+			if len(transformations) == 4 {
+				break
+			}
+		}
+	}
 	monsters := make([]map[string]any, 0, 4)
 	for i := range store.data.Monsters {
 		if !monsterVisible(rt, store.data.Monsters[i].ID) {
@@ -2311,7 +2459,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, map[string]any{"items": items, "monsters": monsters, "titles": titles})
+	writeJSON(w, map[string]any{"items": items, "monsters": monsters, "titles": titles, "transformations": transformations})
 }
 
 func handleTitles(w http.ResponseWriter, r *http.Request) {
@@ -2325,9 +2473,24 @@ func handleTitles(w http.ResponseWriter, r *http.Request) {
 	}
 	qv := r.URL.Query()
 	query, queryOK := limitedQueryValue(qv, "q", 160)
-	if !queryOK {
-		http.Error(w, "Слишком длинный поисковый запрос.\n", http.StatusBadRequest)
+	characteristic, characteristicOK := limitedQueryValue(qv, "characteristic", 120)
+	if !queryOK || !characteristicOK {
+		http.Error(w, "Слишком длинное значение фильтра.\n", http.StatusBadRequest)
 		return
+	}
+	characteristicNames := allTitleCharacteristicNames()
+	if characteristic != "" {
+		valid := false
+		for _, candidate := range characteristicNames {
+			if candidate == characteristic {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			http.Error(w, "Неизвестная характеристика титула.\n", http.StatusBadRequest)
+			return
+		}
 	}
 	knownSource := qv.Get("knownSource")
 	if knownSource != "" && knownSource != "1" {
@@ -2339,11 +2502,17 @@ func handleTitles(w http.ResponseWriter, r *http.Request) {
 	if minLevel > 0 && maxLevel > 0 && minLevel > maxLevel {
 		minLevel, maxLevel = maxLevel, minLevel
 	}
-	sortMode, sortOK := limitedQueryValue(qv, "sort", 20)
-	if !sortOK || (sortMode != "" && sortMode != "level" && sortMode != "name" && sortMode != "index") {
+	sortMode, sortOK := limitedQueryValue(qv, "sort", 24)
+	if !sortOK || (sortMode != "" && sortMode != "level" && sortMode != "name" && sortMode != "index" && sortMode != "characteristic") {
 		http.Error(w, "Некорректный режим сортировки.\n", http.StatusBadRequest)
 		return
 	}
+	order, orderOK := querySortOrder(qv)
+	if !orderOK {
+		http.Error(w, "Некорректный порядок сортировки.\n", http.StatusBadRequest)
+		return
+	}
+	descending := order == "desc"
 	if sortMode == "" {
 		sortMode = "level"
 	}
@@ -2367,6 +2536,11 @@ func handleTitles(w http.ResponseWriter, r *http.Request) {
 		if knownSource == "1" && !titleHasKnownSource(title, rt) {
 			continue
 		}
+		if characteristic != "" {
+			if _, ok := titleCharacteristicValue(title, characteristic); !ok {
+				continue
+			}
+		}
 		if query != "" && !matchesSearch(store.titleSearch[index], query) {
 			continue
 		}
@@ -2376,21 +2550,25 @@ func handleTitles(w http.ResponseWriter, r *http.Request) {
 		left, right := filtered[i], filtered[j]
 		switch sortMode {
 		case "level":
-			leftLevel, rightLevel := titleLevel(left), titleLevel(right)
-			if leftLevel == 0 || rightLevel == 0 {
-				if leftLevel != rightLevel {
-					return rightLevel == 0
-				}
-			} else if leftLevel != rightLevel {
-				return leftLevel < rightLevel
+			if less, different := orderedKnownLevelLess(titleLevel(left), titleLevel(right), descending); different {
+				return less
 			}
 		case "name":
-			if left.Name != right.Name {
-				return catalogNameLess(left.Name, right.Name)
+			if less, different := orderedCatalogNameLess(left.Name, right.Name, descending); different {
+				return less
 			}
 		case "index":
-			if left.Index != right.Index {
-				return left.Index < right.Index
+			if less, different := orderedIntLess(left.Index, right.Index, descending); different {
+				return less
+			}
+		case "characteristic":
+			leftValue, leftOK := titleCharacteristicValue(left, characteristic)
+			rightValue, rightOK := titleCharacteristicValue(right, characteristic)
+			if leftOK != rightOK {
+				return leftOK
+			}
+			if less, different := orderedFloatLess(leftValue, rightValue, descending); different {
+				return less
 			}
 		}
 		if left.Name != right.Name {
@@ -2407,7 +2585,11 @@ func handleTitles(w http.ResponseWriter, r *http.Request) {
 	end := min(total, start+pageSize)
 	result := make([]map[string]any, 0, end-start)
 	for _, title := range filtered[start:end] {
-		result = append(result, titleSummary(title))
+		row := titleSummary(title)
+		if value, ok := titleCharacteristicValue(title, characteristic); ok {
+			row["characteristicValue"] = value
+		}
+		result = append(result, row)
 	}
 	writeJSON(w, map[string]any{
 		"titles":   result,
@@ -2415,7 +2597,7 @@ func handleTitles(w http.ResponseWriter, r *http.Request) {
 		"page":     page,
 		"pageSize": pageSize,
 		"pages":    max(1, (total+pageSize-1)/pageSize),
-		"filters":  map[string]any{},
+		"filters":  map[string]any{"characteristics": characteristicNames},
 	})
 }
 
@@ -2496,6 +2678,12 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Некорректный режим сортировки.\n", http.StatusBadRequest)
 		return
 	}
+	order, orderOK := querySortOrder(qv)
+	if !orderOK {
+		http.Error(w, "Некорректный порядок сортировки.\n", http.StatusBadRequest)
+		return
+	}
+	descending := order == "desc"
 	page := clampInt(parseInt(qv, "page", 1), 1, 100000)
 	pageSize := clampInt(parseInt(qv, "pageSize", 20), 8, 48)
 
@@ -2508,7 +2696,7 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe {
 			continue
 		}
-		if isTitleItem(item) {
+		if isTitleItem(item) || isTransformationItem(item.ID) {
 			continue
 		}
 		if scope == "weapons" && item.Category != "Оружие/щит" {
@@ -2523,13 +2711,14 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 		if category != "" && item.Category != category {
 			continue
 		}
-		subcategories[item.Subcategory] = true
+		presented := itemForPresentation(item)
+		subcategories[presented.Subcategory] = true
 		if qualityName := strings.TrimSpace(item.Quality); qualityName != "" {
 			if qualityID, ok := qualities[qualityName]; !ok || item.QualityID < qualityID {
 				qualities[qualityName] = item.QualityID
 			}
 		}
-		if subcategory != "" && item.Subcategory != subcategory {
+		if subcategory != "" && presented.Subcategory != subcategory {
 			continue
 		}
 		if quality != "" && item.Quality != quality {
@@ -2561,15 +2750,19 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if sortMode == "level" {
-			li, lj := itemLevel(filtered[i]), itemLevel(filtered[j])
-			if li != lj {
-				return li < lj
+			if less, different := orderedKnownLevelLess(itemLevel(filtered[i]), itemLevel(filtered[j]), descending); different {
+				return less
 			}
 		}
-		if sortMode == "rarity" && filtered[i].QualityID != filtered[j].QualityID {
-			return filtered[i].QualityID < filtered[j].QualityID
+		if sortMode == "rarity" {
+			if less, different := orderedIntLess(filtered[i].QualityID, filtered[j].QualityID, descending); different {
+				return less
+			}
 		}
-		return catalogNameLess(filtered[i].Name, filtered[j].Name)
+		if less, different := orderedCatalogNameLess(filtered[i].Name, filtered[j].Name, sortMode == "name" && descending); different {
+			return less
+		}
+		return filtered[i].ID < filtered[j].ID
 	})
 	total := len(filtered)
 	start := (page - 1) * pageSize
@@ -2712,6 +2905,12 @@ func handleRecipes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Некорректный режим сортировки.\n", http.StatusBadRequest)
 		return
 	}
+	order, orderOK := querySortOrder(qv)
+	if !orderOK {
+		http.Error(w, "Некорректный порядок сортировки.\n", http.StatusBadRequest)
+		return
+	}
+	descending := order == "desc"
 	page := clampInt(parseInt(qv, "page", 1), 1, 100000)
 	pageSize := clampInt(parseInt(qv, "pageSize", 20), 8, 48)
 
@@ -2774,15 +2973,19 @@ func handleRecipes(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if sortMode == "level" || sortMode == "mastery" {
-			li, lj := recipeMasteryLevel(filtered[i]), recipeMasteryLevel(filtered[j])
-			if li != lj {
-				return li < lj
+			if less, different := orderedKnownLevelLess(recipeMasteryLevel(filtered[i]), recipeMasteryLevel(filtered[j]), descending); different {
+				return less
 			}
 		}
-		if sortMode == "rarity" && filtered[i].QualityID != filtered[j].QualityID {
-			return filtered[i].QualityID < filtered[j].QualityID
+		if sortMode == "rarity" {
+			if less, different := orderedIntLess(filtered[i].QualityID, filtered[j].QualityID, descending); different {
+				return less
+			}
 		}
-		return catalogNameLess(filtered[i].Name, filtered[j].Name)
+		if less, different := orderedCatalogNameLess(filtered[i].Name, filtered[j].Name, sortMode == "name" && descending); different {
+			return less
+		}
+		return filtered[i].ID < filtered[j].ID
 	})
 	total := len(filtered)
 	start := (page - 1) * pageSize
@@ -2895,6 +3098,10 @@ func handleItem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"titleIndex": item.TitleIndex})
 		return
 	}
+	if isTransformationItem(item.ID) {
+		writeJSON(w, map[string]any{"transformationItemId": item.ID})
+		return
+	}
 	server := r.URL.Query().Get("server")
 	rt := activeRuntime(server)
 	var set *ItemSet
@@ -2906,17 +3113,19 @@ func handleItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	bonuses := itemBonuses(item)
+	presented := itemForPresentation(item)
 	var product map[string]any
 	if _, isRecipe := store.itemRecipes[id]; isRecipe {
 		if crafted := recipeProduct(item); crafted != nil {
+			presentedCrafted := itemForPresentation(crafted)
 			product = map[string]any{
-				"item":    crafted,
+				"item":    presentedCrafted,
 				"level":   itemLevel(crafted),
 				"bonuses": itemBonuses(crafted),
 			}
 		}
 	}
-	writeJSON(w, map[string]any{"item": item, "level": itemLevel(item), "bonuses": bonuses, "set": set, "recipe": itemRecipeMaterials(id), "recipeProduct": product, "chest": chestContents(id, rt), "drops": itemDropSources(id, rt)})
+	writeJSON(w, map[string]any{"item": presented, "level": itemLevel(item), "bonuses": bonuses, "usedSkills": store.itemUsedSkills[id], "set": set, "recipe": itemRecipeMaterials(id), "recipeProduct": product, "enhancement": itemEnhancement(item), "chest": chestContents(id, rt), "drops": itemDropSources(id, rt)})
 }
 
 func handleWorldSourceMonsters(w http.ResponseWriter, r *http.Request) {
@@ -3009,6 +3218,12 @@ func handleMonsters(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Некорректный режим сортировки.\n", http.StatusBadRequest)
 		return
 	}
+	order, orderOK := querySortOrder(qv)
+	if !orderOK {
+		http.Error(w, "Некорректный порядок сортировки.\n", http.StatusBadRequest)
+		return
+	}
+	descending := order == "desc"
 	page := clampInt(parseInt(qv, "page", 1), 1, 100000)
 	pageSize := clampInt(parseInt(qv, "pageSize", 20), 8, 48)
 	categories := map[string]bool{}
@@ -3046,10 +3261,15 @@ func handleMonsters(w http.ResponseWriter, r *http.Request) {
 				return leftNameClass < rightNameClass
 			}
 		}
-		if sortMode == "level" && filtered[i].Level != filtered[j].Level {
-			return filtered[i].Level < filtered[j].Level
+		if sortMode == "level" {
+			if less, different := orderedKnownLevelLess(filtered[i].Level, filtered[j].Level, descending); different {
+				return less
+			}
 		}
-		return catalogNameLess(filtered[i].Name, filtered[j].Name)
+		if less, different := orderedCatalogNameLess(filtered[i].Name, filtered[j].Name, sortMode == "name" && descending); different {
+			return less
+		}
+		return filtered[i].ID < filtered[j].ID
 	})
 	total := len(filtered)
 	start := (page - 1) * pageSize
@@ -3084,17 +3304,18 @@ func handleMonster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groups, slots := monsterDropView(mon, rt)
-	writeJSON(w, map[string]any{"monster": mon, "groups": groups, "slots": slots, "worldRuleCount": monsterWorldRuleCount(mon, rt)})
+	writeJSON(w, map[string]any{"monster": mon, "groups": groups, "slots": slots})
 }
 
 func itemSummary(item *Item) map[string]any {
+	presented := itemForPresentation(item)
 	setSize := 0
 	if item.SetIndex > 0 {
 		if set, ok := store.data.ItemSets[strconv.Itoa(item.SetIndex)]; ok {
 			setSize = len(set.Items)
 		}
 	}
-	return map[string]any{"id": item.ID, "name": item.Name, "typeLine": item.TypeLine, "category": item.Category, "subcategory": item.Subcategory, "quality": item.Quality, "qualityId": item.QualityID, "level": itemLevel(item), "description": strings.TrimSpace(item.Tooltip), "stats": itemStats(item), "setSize": setSize}
+	return map[string]any{"id": item.ID, "name": item.Name, "typeLine": presented.TypeLine, "category": item.Category, "subcategory": presented.Subcategory, "quality": item.Quality, "qualityId": item.QualityID, "level": itemLevel(item), "description": strings.TrimSpace(item.Tooltip), "stats": itemStats(item), "setSize": setSize}
 }
 
 func monsterSummary(mon *Monster) map[string]any {
@@ -3351,6 +3572,12 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 		switch parts[0] {
 		case "item":
 			if item := store.itemsByID[id]; item != nil {
+				if isTransformationItem(id) {
+					canonical := fmt.Sprintf("transformation:%d", id)
+					migratedKeys[key] = canonical
+					addReference("transformation", id)
+					continue
+				}
 				if isTitleItem(item) {
 					canonical := fmt.Sprintf("title:%d", item.TitleIndex)
 					migratedKeys[key] = canonical
@@ -3362,6 +3589,12 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 					kind = "recipe"
 				}
 				addReference(kind, id)
+			} else {
+				missing++
+			}
+		case "transformation":
+			if isTransformationItem(id) {
+				addReference("transformation", id)
 			} else {
 				missing++
 			}
@@ -3425,12 +3658,17 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 			row := monsterSummary(store.monstersByID[reference.id])
 			row["kind"] = "monster"
 			pageRows = append(pageRows, row)
+		case "transformation":
+			row := transformationSummary(transformationByItem[reference.id], "")
+			row["kind"] = "transformation"
+			pageRows = append(pageRows, row)
 		}
 	}
 	items := make([]map[string]any, 0, len(pageRows))
 	recipes := make([]map[string]any, 0, len(pageRows))
 	titles := make([]map[string]any, 0, len(pageRows))
 	monsters := make([]map[string]any, 0, len(pageRows))
+	transformations := make([]map[string]any, 0, len(pageRows))
 	for _, row := range pageRows {
 		switch row["kind"] {
 		case "item":
@@ -3441,20 +3679,23 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 			titles = append(titles, row)
 		case "monster":
 			monsters = append(monsters, row)
+		case "transformation":
+			transformations = append(transformations, row)
 		}
 	}
 	writeJSON(w, map[string]any{
-		"rows":         pageRows,
-		"items":        items,
-		"recipes":      recipes,
-		"titles":       titles,
-		"monsters":     monsters,
-		"total":        len(references),
-		"page":         page,
-		"pageSize":     pageSize,
-		"pages":        pages,
-		"missing":      missing,
-		"totalKeys":    len(seen),
-		"migratedKeys": migratedKeys,
+		"rows":            pageRows,
+		"items":           items,
+		"recipes":         recipes,
+		"titles":          titles,
+		"monsters":        monsters,
+		"transformations": transformations,
+		"total":           len(references),
+		"page":            page,
+		"pageSize":        pageSize,
+		"pages":           pages,
+		"missing":         missing,
+		"totalKeys":       len(seen),
+		"migratedKeys":    migratedKeys,
 	})
 }

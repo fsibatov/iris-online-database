@@ -189,7 +189,7 @@ class ReleaseHelperTests(unittest.TestCase):
             encoding="utf-8"
         )
         assert_clean_tree = windows.split("function Assert-CleanTree {", 1)[1].split(
-            "function Test-Release {", 1
+            "function Repair-ReleaseSources {", 1
         )[0]
         self.assertIn('$env:OS -eq "Windows_NT"', assert_clean_tree)
         self.assertIn("git config --local core.filemode false", assert_clean_tree)
@@ -622,7 +622,14 @@ class ReleaseHelperTests(unittest.TestCase):
         prepare = script.split("function Prepare-Release {", 1)[1].split(
             "function Invoke-GitFetchMain {", 1
         )[0]
+        self.assertLess(
+            prepare.index("Invoke-GitFetchMain"), prepare.index("Repair-ReleaseSources")
+        )
+        self.assertLess(
+            prepare.index("Repair-ReleaseSources"), prepare.index("Test-Release")
+        )
         self.assertLess(prepare.index("Test-Release"), prepare.index("Build-Release"))
+        self.assertIn("Test-Release -SkipToolingCheck", prepare)
         gate = script.split("function Test-Release {", 1)[1].split(
             "function Clear-BuildGenerated {", 1
         )[0]
@@ -651,6 +658,38 @@ class ReleaseHelperTests(unittest.TestCase):
             'release_fingerprint.py", "--write',
         ):
             self.assertIn(marker, gate)
+
+    def test_prepare_release_safe_autofix_is_deterministic_and_fail_closed(self):
+        script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
+            encoding="utf-8"
+        )
+        repair = script.split("function Repair-ReleaseSources {", 1)[1].split(
+            "function Test-Release {", 1
+        )[0]
+        for marker in (
+            'Invoke-Checked "gofmt" $GofmtArguments',
+            'Invoke-Checked "go" @("mod", "tidy")',
+            '@("check", "--fix", "--no-cache", ".")',
+            '@("format", "--no-cache", ".")',
+            'Invoke-Checked "go" @("mod", "tidy", "-diff")',
+            '@("check", "--no-cache", ".")',
+            '@("format", "--check", "--no-cache", ".")',
+            'git merge-base --is-ancestor "origin/main" HEAD',
+            "commit.gpgSign=false",
+            '"commit", "--amend", "--no-edit"',
+            "Assert-CleanTree",
+        ):
+            self.assertIn(marker, repair)
+        self.assertNotIn("--unsafe-fixes", repair)
+        self.assertIn("unexpected untracked files", repair)
+        self.assertIn("already-published origin/main", repair)
+        self.assertLess(
+            repair.index('check", "--fix"'), repair.index('check", "--no-cache"')
+        )
+        self.assertLess(
+            repair.index('format", "--no-cache"'),
+            repair.index('format", "--check"'),
+        )
 
     def test_release_tooling_is_windows_only_and_uses_verified_resolvers(self):
         for name in ("release-tools.sh", "release-gate.sh", "build-release.sh"):
@@ -764,9 +803,8 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertNotIn("Start-Process -FilePath $Executable.Source", script)
         self.assertIn("echo No vulnerabilities found. & exit /b 0", script)
         self.assertIn('-Arguments @("/d", "/s", "/c", "exit /b 7")', script)
-        self.assertRegex(
-            script, r"function Test-Release \{\s+Assert-CleanTree\s+Test-WindowsTooling"
-        )
+        self.assertIn("function Test-Release {", script)
+        self.assertIn("if (-not $SkipToolingCheck) { Test-WindowsTooling }", script)
         self.assertIn("[redacted-path]", script)
         self.assertIn("[redacted-token]", script)
         self.assertNotIn("Start-Job -ScriptBlock", script)
@@ -802,6 +840,8 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertNotIn("Write-Host $StdoutText.TrimEnd()", script)
         self.assertNotIn("Write-Host $StderrText.TrimEnd()", script)
         self.assertIn("fetching vulnerabilities: read tcp: wsarecv", script)
+        self.assertIn('"--refetch"', script)
+        self.assertNotIn('"--negotiation-tip=$OriginMain"', script)
         self.assertIn(
             "Vulnerability #1: GO-TEST-0001; see "
             "https://vuln.go.dev/ID/GO-TEST-0001.json",

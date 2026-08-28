@@ -13,6 +13,7 @@ class InterfaceDetailTests(unittest.TestCase):
         cls.html = (ROOT / "web/index.html").read_text(encoding="utf-8")
         cls.styles = (ROOT / "web/styles.css").read_text(encoding="utf-8")
         cls.server = (ROOT / "server.go").read_text(encoding="utf-8")
+        cls.enhancements = (ROOT / "enhancements.go").read_text(encoding="utf-8")
         cls.version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
     def test_item_presentation_has_separate_groups(self):
@@ -227,6 +228,13 @@ class InterfaceDetailTests(unittest.TestCase):
         self.assertIn("latestPostText", self.script)
         self.assertIn("function vkNewsPreviewText", self.script)
         self.assertIn("limit = 700", self.script)
+        self.assertIn(
+            "Не удалось проверить обновление: показана сохранённая запись ВКонтакте.",
+            self.script,
+        )
+        self.assertNotIn(
+            "Сеть недоступна: показана сохранённая запись ВКонтакте.", self.script
+        )
         self.assertIn("frame-src 'none'", self.server)
 
     def test_badges_center_internally_but_item_layout_stays_left_aligned(self):
@@ -283,20 +291,28 @@ class InterfaceDetailTests(unittest.TestCase):
         )
         subprocess.run(["node", "-e", probe], check=True)
 
-    def test_recently_viewed_supports_items_monsters_and_titles_in_profile(self):
-        self.assertIn("['item', 'monster', 'title'].includes(type)", self.script)
+    def test_recently_viewed_supports_all_detail_types_in_profile(self):
+        self.assertIn(
+            "['item', 'recipe', 'monster', 'title', 'transformation'].includes(type)",
+            self.script,
+        )
         self.assertIn("const key = `${type}:${numericID}:${server}`", self.script)
         self.assertIn("entry.type === 'monster'", self.script)
         self.assertIn("normalizeServerKey(entry.server)", self.script)
-        self.assertIn("trackRecentlyViewed('item', item.id, item.name,", self.script)
+        self.assertIn("recipeContext ? 'recipe' : 'item'", self.script)
         self.assertIn(
             "trackRecentlyViewed('monster', monster.id, monster.name,", self.script
         )
         self.assertIn(
             "trackRecentlyViewed('title', index, name, levelLabel)", self.script
         )
+        self.assertIn(
+            "trackRecentlyViewed('transformation', id, card.name,", self.script
+        )
         self.assertIn("recent-viewed-list", self.script)
         self.assertNotIn("recent-viewed-card", self.script)
+        self.assertIn("recentViewedTypeIcon(entry.type)", self.script)
+        self.assertIn("recentViewedTypeLabel(entry.type)", self.script)
         self.assertIn("recentlyViewed: normalizedRecentViewedEntries()", self.script)
         self.assertIn("profile.recentlyViewed", self.script)
         self.assertIn("localRecentlyViewed", self.script)
@@ -316,7 +332,7 @@ class InterfaceDetailTests(unittest.TestCase):
 
     def test_titles_are_clickable_level_aware_and_have_known_source_filter(self):
         self.assertIn(
-            "return { q: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'level', page: 1 };",
+            "return { q: '', characteristic: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'level', order: 'asc', page: 1 };",
             self.script,
         )
         self.assertIn('href="#title/${Number(title.index)}"', self.script)
@@ -324,7 +340,7 @@ class InterfaceDetailTests(unittest.TestCase):
         self.assertIn("['name', 'По названию']", self.script)
         self.assertIn("['index', 'По индексу']", self.script)
         self.assertIn(
-            "Только титулы, для которых в выбранной базе указан подтверждённый источник получения.",
+            "Только титулы с указанным источником получения.",
             self.script,
         )
         self.assertIn("kind === 'titles'", self.script)
@@ -375,7 +391,7 @@ class InterfaceDetailTests(unittest.TestCase):
 
     def test_server_switch_refreshes_server_specific_monster_views(self):
         self.assertIn(
-            "['home', 'monsters', 'favorites', 'search'].includes(activeRoute)",
+            "['home', 'monsters', 'transformations', 'favorites', 'search'].includes(activeRoute)",
             self.script,
         )
         self.assertIn("&server=${encodeURIComponent(state.server)}", self.script)
@@ -442,8 +458,11 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
 
     def test_selects_share_control_class(self):
         self.assertIn('class="control-select control-select--server"', self.html)
+        self.assertIn("По возрастанию", self.script)
+        self.assertIn("По убыванию", self.script)
         for name in (
             "data-catalog-sort",
+            "data-catalog-order",
             'name="category"',
             'name="subcategory"',
             'name="quality"',
@@ -496,7 +515,9 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         expected = [
             "Можно разобрать",
             "Можно перековать",
-            "Функция печати (",
+            "Функция печати (5 раз)",
+            "Функция печати (без ограничений)",
+            "Требуется печатей:",
             "Запечатать невозможно",
             "Нельзя продать персонажу",
         ]
@@ -505,12 +526,20 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         self.assertLess(positions[1], positions[2])
         self.assertLess(positions[2], positions[4])
         self.assertLess(positions[3], positions[4])
+        self.assertLess(positions[4], positions[6])
+        self.assertLess(positions[5], positions[6])
         self.assertNotIn("Печать доступна", block)
         self.assertNotIn("Можно запечатать", block)
+        self.assertIn("Number(item.printableFlag) > 0", block)
+        self.assertIn("? 'Функция печати (без ограничений)'", block)
+        self.assertIn(": 'Функция печати (5 раз)'", block)
         self.assertIn(
-            "sealCount > 0 ? `Функция печати (${formatNumber(sealCount)})` : 'Запечатать невозможно'",
-            block,
+            "actions.push({ text: `Требуется печатей: ${formatNumber(sealSet)}`", block
         )
+        self.assertIn("actions.push({ text: 'Запечатать невозможно'", block)
+        self.assertIn("formatNumber(sealSet)", block)
+        self.assertIn("['Требуется печатей', item.seal]", self.script)
+        self.assertNotIn("Запечатывание — код", self.script)
 
     def test_update_notice_does_not_rerender_home_or_destroy_search_input(self):
         start = self.script.index("async function checkForUpdates")
@@ -553,23 +582,160 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         self.assertIn("{ title: 'Сундуки', sources: ['Сундук'] }", self.script)
         self.assertIn(".chest-content-list", self.styles)
 
-    def test_world_sources_expand_lazily_without_claiming_map_mapping(self):
-        self.assertIn("data-world-source", self.script)
-        self.assertIn("renderWorldSourceMonsters(details)", self.script)
-        self.assertIn("/api/world-source-monsters", self.script)
-        self.assertIn("data?.contextMatchKnown !== false", self.script)
+    def test_world_sources_are_compact_and_only_shown_on_items(self):
+        self.assertIn("world-source-compact", self.script)
         self.assertIn(
-            "нет подтверждённой связи конкретного монстра с типом карты", self.script
+            'if (isWorld) return `<div class="source-row world-source-compact">',
+            self.script,
+        )
+        self.assertNotIn("/api/world-source-monsters?", self.script)
+        self.assertNotIn("data-world-source", self.script)
+
+    def test_monster_detail_does_not_show_world_drop_as_own_drop(self):
+        self.assertNotIn("lazy-monster-world-drops", self.script)
+        self.assertNotIn("/api/monster-world-drops?", self.script)
+        monster_start = self.script.index("function monsterDetail(data)")
+        monster_end = self.script.index(
+            "function renderMonsterDropShell()", monster_start
+        )
+        monster_block = self.script[monster_start:monster_end]
+        self.assertNotIn("Мировая добыча", monster_block)
+        self.assertIn("accordion('Обычная добыча'", monster_block)
+
+    def test_monster_nature_colors_are_exact(self):
+        self.assertIn(".monster-nature--aggressive {", self.styles)
+        self.assertIn("color: #d800f3;", self.styles)
+        self.assertIn(".monster-nature--friendly {", self.styles)
+        self.assertIn("color: #f0f000;", self.styles)
+        self.assertNotIn(
+            'html[data-theme="light"] .monster-nature--aggressive', self.styles
+        )
+        self.assertIn(">Агрессивный</span>", self.script)
+        self.assertIn(">Дружелюбный</span>", self.script)
+
+    def test_item_enhancement_levels_are_selectable_zero_through_ten(self):
+        self.assertIn("function itemEnhancementPrefixHTML(enhancement)", self.script)
+        self.assertIn("Без усиления", self.enhancements)
+        self.assertIn(
+            "for level := 0; level <= enhancementMaxLevel; level++", self.enhancements
+        )
+        self.assertIn("data-enhancement-level", self.script)
+        self.assertIn("Обычные источники относятся к предмету +0", self.script)
+        self.assertIn("уровень явно указан у сундука", self.script)
+        self.assertIn("function applyEnhancementLevel(enhancement, level)", self.script)
+        self.assertIn(
+            "function enhancementSourceNoteHTML(enhancement, drops)", self.script
+        )
+        self.assertIn("data-enhancement-source-note hidden", self.script)
+        self.assertIn("data-property-label", self.script)
+        self.assertIn("enhancement-inline-bonus", self.script)
+        self.assertIn(".enhancement-prefix", self.styles)
+        self.assertIn("width: 80px;", self.styles)
+        self.assertIn("min-width: 80px;", self.styles)
+        self.assertIn("padding: 0 20px 0 8px;", self.styles)
+        self.assertIn(
+            ".item-title-line > h1:first-child { grid-column: 1 / -1; }", self.styles
+        )
+        self.assertNotIn("item-enhancement", self.script)
+        self.assertNotIn("enhancement-note", self.script)
+        self.assertNotIn("data-enhancement-result", self.script)
+        self.assertNotIn("enhancement-level-summary", self.script)
+        self.assertNotIn("item_enhanced.txt", self.script)
+
+    def test_transformations_have_rarity_filter(self):
+        self.assertIn(
+            "return { q: '', characteristic: '', ally: '', quality: '', sort: 'name', order: 'asc', page: 1 };",
+            self.script,
+        )
+        self.assertIn("? ['characteristic', 'ally', 'quality']", self.script)
+        self.assertIn(
+            "{ characteristic: 'Эффект', ally: 'Цель — союзник', quality: 'Редкость' }",
+            self.script,
+        )
+        self.assertIn(
+            "name=\"quality\">${qualityOptionList(filterData.qualities, filters.quality, 'Любая')}",
+            self.script,
         )
 
-    def test_monster_world_drops_expand_lazily_without_claiming_location_mapping(self):
-        self.assertIn("lazy-monster-world-drops", self.script)
-        self.assertIn("renderMonsterWorldDropShell()", self.script)
-        self.assertIn("/api/monster-world-drops", self.script)
-        self.assertIn("по уровню и типу", self.script)
-        self.assertIn("тип локации", self.script)
-        self.assertIn("choicePosition", self.script)
-        self.assertIn(".world-monster-list", self.styles)
+    def test_transformations_have_separate_clickable_catalog_and_buff_focus(self):
+        self.assertIn(
+            "{ route: 'transformations', label: 'Превращения', icon: 'transform' }",
+            self.script,
+        )
+        self.assertIn('href="#transformation/${Number(card.id)}"', self.script)
+        self.assertIn("Эффекты формы и навыков.", self.script)
+        self.assertIn(
+            'id="transformationBuffsTitle">Полезные эффекты</h2>', self.script
+        )
+        self.assertIn("По эффекту", self.script)
+        self.assertNotIn("По выбранной характеристике", self.script)
+        self.assertIn("card.characteristicMatched === true", self.script)
+        self.assertIn("selectedValue !== 0", self.script)
+
+    def test_empty_detail_values_are_not_rendered_as_placeholders(self):
+        transformation = self.script[
+            self.script.index("function transformationDetail") : self.script.index(
+                "function titleDetail"
+            )
+        ]
+        self.assertIn("const overviewHTML = overviewRows ?", transformation)
+        self.assertIn("const buffsHTML = buffRows.length ?", transformation)
+        self.assertIn("const skillsHTML = skillCards ?", transformation)
+        self.assertIn("hasMeaningfulText(skill.target)", transformation)
+        self.assertIn("hasMeaningfulText(skill.effectText)", transformation)
+        self.assertIn("timingRows ? `<dl>${timingRows}</dl>` : ''", transformation)
+        self.assertIn(
+            "const formName = hasMeaningfulText(card.formName)", transformation
+        )
+        self.assertIn("Number(card.monsterId) > 0", transformation)
+        self.assertIn("Number(card.runSpeed) > 0", transformation)
+        self.assertNotIn("card.formName || 'Форма превращения'", transformation)
+        self.assertNotIn(
+            "В доступных данных полезные эффекты не найдены.", transformation
+        )
+        self.assertNotIn("Дополнительный эффект не указан.", transformation)
+        self.assertNotIn("'Не указана'", transformation)
+
+        title = self.script[
+            self.script.index("function titleDetail") : self.script.index(
+                "function effectLabel"
+            )
+        ]
+        self.assertIn("const levelLabel = level > 0", title)
+        self.assertIn(": '';", title)
+        self.assertNotIn("title-effect-card--empty", title)
+        self.assertNotIn("Эффект титула в доступных данных не указан.", title)
+        self.assertNotIn("'Не указан'", title)
+
+        self.assertNotIn("Материалы не указаны", self.script)
+        self.assertIn("if (!rows?.length) return '';", self.script)
+        self.assertNotIn(".title-effect-card--empty", self.styles)
+
+    def test_recently_viewed_and_suggestions_never_render_undefined_icons(self):
+        self.assertIn("function recentViewedTypeIcon(type)", self.script)
+        self.assertIn("recentViewedTypeIcon(entry.type)", self.script)
+        self.assertIn("recentViewedTypeIcon(type)", self.script)
+        self.assertNotIn("${icons[entry.type]}", self.script)
+        self.assertNotIn("${icons[type]}", self.script)
+        self.assertIn("recentViewedTypeLabel(entry.type)", self.script)
+        self.assertIn("recipeContext ? 'recipe' : 'item'", self.script)
+
+    def test_transformations_have_ally_skill_filter_and_plain_language(self):
+        self.assertIn('name="ally" type="checkbox" value="1"', self.script)
+        self.assertIn("Цель — союзник", self.script)
+        self.assertIn("Только карты с навыками, цель которых — союзник.", self.script)
+        self.assertIn("<dt>Перезарядка</dt>", self.script)
+        self.assertNotIn("Дополнительный эффект не указан.", self.script)
+        for obsolete in (
+            "Характеристика или бафф",
+            ">Баффы</h2>",
+            "Откат:",
+            "<dt>Откат</dt>",
+            "на себя/союзника",
+            "desktop bridge",
+            "Подготовленное превью записи пусто",
+        ):
+            self.assertNotIn(obsolete, self.script)
 
     def test_sources_use_requested_section_order(self):
         block = self.script[
@@ -593,6 +759,7 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         self.assertNotIn(">Сбросить</button>", self.html)
         self.assertNotIn("Сбросить всё", self.script)
         self.assertIn(">Сбросить фильтры</button>", self.html)
+        self.assertIn("secondary-button clear-filters", self.script)
         self.assertGreaterEqual(self.script.count("Сбросить фильтры"), 2)
 
     def test_about_shows_author_and_github(self):
@@ -635,7 +802,7 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
             ],
         )
         self.assertIn(
-            "Только рецепты, для которых в выбранной базе указан источник получения.",
+            "Только рецепты с указанным источником получения.",
             self.script,
         )
         self.assertIn("recipe-source-preview", self.script)
@@ -644,6 +811,9 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         self.assertIn("Уровень мастерства от", self.script)
         self.assertIn("Каллиграф", self.script)
         self.assertIn("recipe-material-label", self.script)
+        self.assertIn("material.known === false", self.script)
+        self.assertIn("recipe-material--unavailable", self.script)
+        self.assertIn("Предмет отсутствует в опубликованной базе", self.script)
         self.assertIn("grid-template-columns: 18px minmax(0, 1fr);", self.styles)
         self.assertIn("single-source-block", self.script)
         self.assertIn("drops.length === 1", self.script)

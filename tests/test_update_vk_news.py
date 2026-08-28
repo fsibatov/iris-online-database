@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools" / "update_vk_news.py"
@@ -23,6 +24,97 @@ class VKNewsUpdaterTests(unittest.TestCase):
             "wall-123_999999",
         ]
         self.assertEqual(module.latest_post_id(values), 62336)
+
+    def test_wall_probe_checks_all_variants_and_uses_highest_post(self):
+        class FakePage:
+            def __init__(self, name):
+                self.name = name
+                self.closed = False
+
+            def set_default_timeout(self, _value):
+                pass
+
+            def close(self):
+                self.closed = True
+
+        class FakeContext:
+            def __init__(self):
+                self.pages = []
+
+            def new_page(self):
+                page = FakePage(f"page-{len(self.pages)}")
+                self.pages.append(page)
+                return page
+
+        context = FakeContext()
+        visible = [[62356, 62357], [62358], [62357]]
+        html = [
+            ('<a href="/wall-59626511_62357">', ""),
+            ('<a href="/wall-59626511_62359">', ""),
+            ('<a href="/wall-59626511_62358">', ""),
+        ]
+        with (
+            mock.patch.object(module, "_navigate_page", return_value="") as navigate,
+            mock.patch.object(
+                module, "_visible_post_ids_from_page", side_effect=visible
+            ),
+            mock.patch.object(
+                module, "_request_html", side_effect=html
+            ) as request_html,
+        ):
+            found_id, wall_page, visible_ids, trusted, diagnostics = (
+                module._find_latest_wall_post(context)
+            )
+
+        self.assertEqual(found_id, 62359)
+        self.assertIsNone(wall_page)
+        self.assertEqual(visible_ids, [])
+        self.assertFalse(trusted)
+        self.assertEqual(diagnostics, [])
+        self.assertEqual(navigate.call_count, len(module.WALL_URLS))
+        self.assertEqual(request_html.call_count, len(module.WALL_URLS))
+        self.assertTrue(all(page.closed for page in context.pages))
+
+    def test_wall_probe_keeps_newest_visible_page_for_text_fallback(self):
+        class FakePage:
+            def __init__(self):
+                self.closed = False
+
+            def set_default_timeout(self, _value):
+                pass
+
+            def close(self):
+                self.closed = True
+
+        class FakeContext:
+            def __init__(self):
+                self.pages = []
+
+            def new_page(self):
+                page = FakePage()
+                self.pages.append(page)
+                return page
+
+        context = FakeContext()
+        visible = [[62356, 62357], [62358, 62360], [62359]]
+        with (
+            mock.patch.object(module, "_navigate_page", return_value=""),
+            mock.patch.object(
+                module, "_visible_post_ids_from_page", side_effect=visible
+            ),
+            mock.patch.object(module, "_request_html", return_value=("", "")),
+        ):
+            found_id, wall_page, visible_ids, trusted, _ = (
+                module._find_latest_wall_post(context)
+            )
+
+        self.assertEqual(found_id, 62360)
+        self.assertIs(wall_page, context.pages[1])
+        self.assertEqual(visible_ids, [62358, 62360])
+        self.assertTrue(trusted)
+        self.assertTrue(context.pages[0].closed)
+        self.assertFalse(context.pages[1].closed)
+        self.assertTrue(context.pages[2].closed)
 
     def test_normalize_text(self):
         self.assertEqual(

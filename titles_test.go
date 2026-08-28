@@ -348,3 +348,40 @@ func TestDuplicateTitleItemsAreAggregatedWithoutDuplicateSources(t *testing.T) {
 		}
 	}
 }
+
+func TestTitleCatalogSortOrderSupportsDescendingAndUnknownLevelsStayLast(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/titles?sort=level&order=desc&pageSize=48&page=1", nil)
+	rec := httptest.NewRecorder()
+	handleTitles(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Titles []struct {
+			Index int `json:"index"`
+			Level int `json:"level"`
+		} `json:"titles"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Titles) < 2 {
+		t.Fatalf("not enough titles for sort test: %d", len(payload.Titles))
+	}
+	last := payload.Titles[0].Level
+	for _, row := range payload.Titles[1:] {
+		if row.Level == 0 {
+			continue
+		}
+		if last == 0 {
+			t.Fatalf("known level appeared after unknown level: %+v", row)
+		}
+		if last < row.Level {
+			t.Fatalf("descending levels are broken: prev=%d current=%d", last, row.Level)
+		}
+		last = row.Level
+	}
+}

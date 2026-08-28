@@ -447,6 +447,66 @@ def _wait_for_post_text(page, fallback: str = "") -> str:
     return useful_text(fallback)
 
 
+def _find_latest_wall_post(context):
+    """Probe every public wall variant and keep the highest post identifier found."""
+    found_id = 0
+    wall_page = None
+    visible_wall_ids: list[int] = []
+    wall_snapshot_trusted = False
+    diagnostics: list[str] = []
+
+    for wall_url in WALL_URLS:
+        page = context.new_page()
+        page.set_default_timeout(5000)
+        navigation_error = _navigate_page(page, wall_url)
+        page_ids = _visible_post_ids_from_page(page)
+        page_id = page_ids[-1] if page_ids else 0
+        if navigation_error:
+            diagnostics.append(f"browser {wall_url.split('/')[2]}: {navigation_error}")
+
+        raw_html, request_error = _request_html(context, wall_url)
+        if request_error:
+            diagnostics.append(f"http {wall_url.split('/')[2]}: {request_error}")
+        http_id = latest_post_id([raw_html]) if raw_html else 0
+        candidate_id = max(page_id, http_id)
+
+        candidate_has_page = page_id > 0 and page_id == candidate_id
+        should_replace = candidate_id > found_id
+        should_adopt_equal_page = (
+            candidate_id > 0
+            and candidate_id == found_id
+            and candidate_has_page
+            and wall_page is None
+        )
+
+        if should_replace or should_adopt_equal_page:
+            if wall_page is not None and wall_page is not page:
+                wall_page.close()
+            found_id = candidate_id
+            if candidate_has_page:
+                wall_page = page
+                visible_wall_ids = page_ids
+                wall_snapshot_trusted = (
+                    not navigation_error
+                    and len(page_ids) >= MIN_VISIBLE_POSTS_FOR_ROLLBACK
+                )
+            else:
+                wall_page = None
+                visible_wall_ids = []
+                wall_snapshot_trusted = False
+                page.close()
+        elif page is not wall_page:
+            page.close()
+
+    return (
+        found_id,
+        wall_page,
+        visible_wall_ids,
+        wall_snapshot_trusted,
+        diagnostics,
+    )
+
+
 def scrape_latest_post() -> dict[str, object]:
     if sync_playwright is None:
         raise RuntimeError(
@@ -465,41 +525,15 @@ def scrape_latest_post() -> dict[str, object]:
             viewport={"width": 1280, "height": 900},
             user_agent=USER_AGENT,
         )
-        found_id = 0
-        wall_page = None
-        visible_wall_ids: list[int] = []
-        wall_snapshot_trusted = False
-        diagnostics: list[str] = []
 
         try:
-            for wall_url in WALL_URLS:
-                page = context.new_page()
-                page.set_default_timeout(5000)
-                navigation_error = _navigate_page(page, wall_url)
-                page_ids = _visible_post_ids_from_page(page)
-                found_id = page_ids[-1] if page_ids else 0
-                if navigation_error:
-                    diagnostics.append(
-                        f"browser {wall_url.split('/')[2]}: {navigation_error}"
-                    )
-                if found_id:
-                    wall_page = page
-                    visible_wall_ids = page_ids
-                    wall_snapshot_trusted = (
-                        not navigation_error
-                        and len(page_ids) >= MIN_VISIBLE_POSTS_FOR_ROLLBACK
-                    )
-                    break
-
-                page.close()
-                raw_html, request_error = _request_html(context, wall_url)
-                if request_error:
-                    diagnostics.append(
-                        f"http {wall_url.split('/')[2]}: {request_error}"
-                    )
-                found_id = latest_post_id([raw_html]) if raw_html else 0
-                if found_id:
-                    break
+            (
+                found_id,
+                wall_page,
+                visible_wall_ids,
+                wall_snapshot_trusted,
+                diagnostics,
+            ) = _find_latest_wall_post(context)
 
             if not found_id:
                 detail = "; ".join(diagnostics[-6:])

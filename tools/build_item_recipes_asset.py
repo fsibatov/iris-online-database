@@ -22,6 +22,7 @@ def safe_int(value: str) -> int | None:
 
 def build(item_mixed: Path) -> dict:
     recipes: dict[str, list[dict[str, int]]] = {}
+    used_skills: dict[int, set[int]] = {}
     for raw in item_mixed.read_text(encoding="cp1251", errors="replace").splitlines():
         if not raw or raw.startswith("//"):
             continue
@@ -29,6 +30,7 @@ def build(item_mixed: Path) -> dict:
         if len(parts) < 25 or parts[0].strip().lower() != "mix":
             continue
         recipe_id = safe_int(parts[7]) if len(parts) > 7 else None
+        skill_id = safe_int(parts[1]) if len(parts) > 1 else None
         if not recipe_id:
             continue
         ingredients: list[dict[str, int]] = []
@@ -48,8 +50,17 @@ def build(item_mixed: Path) -> dict:
                 ingredients.append(
                     {"itemId": item_id, "quantity": max(1, quantity or 1)}
                 )
+                if skill_id and skill_id > 0:
+                    used_skills.setdefault(item_id, set()).add(skill_id)
         recipes[str(recipe_id)] = ingredients
-    return {"schemaVersion": 1, "recipes": recipes}
+    return {
+        "schemaVersion": 2,
+        "recipes": recipes,
+        "usedSkills": {
+            str(item_id): sorted(skill_ids)
+            for item_id, skill_ids in sorted(used_skills.items())
+        },
+    }
 
 
 def main() -> None:
@@ -70,7 +81,8 @@ def main() -> None:
     ):
         gz.write(payload)
     print(
-        f"recipes={len(data['recipes'])} ingredients={sum(len(rows) for rows in data['recipes'].values())} output={args.output}"
+        f"recipes={len(data['recipes'])} ingredients={sum(len(rows) for rows in data['recipes'].values())} "
+        f"usedSkillItems={len(data['usedSkills'])} output={args.output}"
     )
 
 
