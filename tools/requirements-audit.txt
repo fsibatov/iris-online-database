@@ -4,4 +4,4 @@ pip==26.2.1
 pip-audit==2.10.1
 playwright==1.62.0
 pyyaml==6.0.3
-ruff==0.16.4
+ruff==0.16.5
