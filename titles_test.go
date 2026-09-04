@@ -67,7 +67,7 @@ func TestTitlesCatalogSortSearchAndUnknownLevelsLast(t *testing.T) {
 		Level int    `json:"level"`
 	}
 	for page := 1; ; page++ {
-		req := httptest.NewRequest(http.MethodGet, "/api/titles?sort=level&pageSize=48&page="+strconv.Itoa(page), nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/titles?sort=level&order=asc&pageSize=48&page="+strconv.Itoa(page), nil)
 		rec := httptest.NewRecorder()
 		handleTitles(rec, req)
 		if rec.Code != http.StatusOK {
@@ -108,7 +108,7 @@ func TestTitlesCatalogSortSearchAndUnknownLevelsLast(t *testing.T) {
 		lastLevel = title.Level
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/titles?q="+url.QueryEscape("Одиночка")+"&sort=name&pageSize=48", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/titles?q="+url.QueryEscape("Одиночка")+"&sort=name&order=asc&pageSize=48", nil)
 	rec := httptest.NewRecorder()
 	handleTitles(rec, req)
 	if rec.Code != http.StatusOK {

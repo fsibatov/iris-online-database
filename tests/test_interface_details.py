@@ -374,8 +374,8 @@ class InterfaceDetailTests(unittest.TestCase):
         )
         self.assertIn("font-variant-numeric: tabular-nums", self.styles)
         self.assertIn("qualityDisplayLabel", self.script)
-        self.assertIn("return 'Покупной'", self.script)
-        self.assertIn("return 'Ивентовый'", self.script)
+        self.assertIn("[0, 'Покупной']", self.script)
+        self.assertIn("[9, 'Ивентовый']", self.script)
         self.assertIn(".rarity-label.quality-event { color: #c9a0dc", self.styles)
         self.assertIn(".rarity-label.quality-shop { color: #ffcd00", self.styles)
 
@@ -478,7 +478,7 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
 
     def test_no_new_periodic_or_duplicate_event_mechanisms(self):
         self.assertEqual(self.script.count("setInterval("), 0)
-        self.assertLessEqual(self.script.count("setTimeout("), 8)
+        self.assertLessEqual(self.script.count("setTimeout("), 10)
         for registration in (
             "window.addEventListener('hashchange'",
             "window.addEventListener('beforeunload'",

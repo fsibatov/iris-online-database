@@ -151,7 +151,7 @@ func TestRecipesMasterySort(t *testing.T) {
 	if err := ensureLoaded(); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/recipes?page=1&pageSize=48&sort=mastery", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/recipes?page=1&pageSize=48&sort=mastery&order=asc", nil)
 	rec := httptest.NewRecorder()
 	handleRecipes(rec, req)
 	if rec.Code != http.StatusOK {

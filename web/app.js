@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.4';
+  const APP_VERSION = '2.0.5';
   const PAGE_SIZE = 24;
   const FAVORITES_PAGE_SIZE = 24;
   const SOURCE_BATCH = 20;
@@ -14,6 +14,10 @@
   const RECENT_VIEWED_KEY = 'iris-recently-viewed';
   const RECENT_VIEWED_LIMIT = 8;
   const ROUTE_HISTORY_STATE_KEY = '__irisRoute';
+  const BATTLEGROUND_NAMES = ['Противостояние', 'Захват флага', 'Горнило'];
+  const BATTLEGROUND_INTERVAL_MS = 30 * 60 * 1000;
+  const BATTLEGROUND_FIRST_START_MS = 3 * 60 * 1000;
+  const BATTLEGROUND_SERVER_OFFSET_MS = 3 * 60 * 60 * 1000;
   let routeHistoryIndex = 0;
 
   function safeJSON(value, fallback) {
@@ -76,7 +80,7 @@
     sourceSections: [],
     favoritePage: 1,
     monsterDrops: null,
-    updateInfo: { checked: false, checking: false, latestVersion: '', updateAvailable: false, releaseUrl: '' },
+    updateInfo: { checked: false, checking: false, stale: false, failure: '', retryAfterSeconds: 0, latestVersion: '', updateAvailable: false, releaseUrl: '' },
     vkNews: { checked: false, checking: false, available: false, stale: false, onlineRefreshAttempted: false, latestPostId: 0, latestPostUrl: '', latestPostText: '', publishedAt: '', sourceUpdatedAt: '' },
   };
 
@@ -91,6 +95,10 @@
   const globalSearch = document.getElementById('globalSearch');
   const suggestions = document.getElementById('searchSuggestions');
   const serverSelect = document.getElementById('serverSelect');
+  const battlegroundStatus = document.getElementById('battlegroundStatus');
+  const battlegroundName = document.getElementById('battlegroundName');
+  const battlegroundStart = document.getElementById('battlegroundStart');
+  const battlegroundCountdown = document.getElementById('battlegroundCountdown');
   const versionStatus = document.getElementById('versionStatus');
   const versionStatusText = document.getElementById('versionStatusText');
   const checkUpdatesButton = document.getElementById('checkUpdatesButton');
@@ -333,6 +341,36 @@
     return match ? `${match[3]}.${match[2]}.${match[1]}` : 'не указана';
   }
 
+  function battlegroundState(now = new Date()) {
+    const serverNow = now.getTime() + BATTLEGROUND_SERVER_OFFSET_MS;
+    const shifted = new Date(serverNow);
+    const dayStart = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
+    const firstStart = dayStart + BATTLEGROUND_FIRST_START_MS;
+    const slot = serverNow <= firstStart ? 0 : Math.ceil((serverNow - firstStart) / BATTLEGROUND_INTERVAL_MS);
+    const target = firstStart + slot * BATTLEGROUND_INTERVAL_MS;
+    const targetDate = new Date(target);
+    const remaining = Math.max(0, target - serverNow);
+    const minutes = Math.floor(remaining / 60000);
+    const seconds = Math.floor((remaining % 60000) / 1000);
+    const pad = value => String(value).padStart(2, '0');
+    return {
+      name: BATTLEGROUND_NAMES[slot % BATTLEGROUND_NAMES.length],
+      start: `${pad(targetDate.getUTCHours())}:${pad(targetDate.getUTCMinutes())}`,
+      countdown: `${pad(minutes)}:${pad(seconds)}`,
+    };
+  }
+
+  function renderBattlegroundStatus() {
+    if (!battlegroundStatus || !battlegroundName || !battlegroundStart || !battlegroundCountdown) return;
+    const next = battlegroundState();
+    battlegroundName.textContent = next.name;
+    battlegroundStart.textContent = next.start;
+    battlegroundCountdown.textContent = next.countdown;
+    const label = `Ближайшее состязание: ${next.name} в ${next.start} по времени сервера, через ${next.countdown}`;
+    battlegroundStatus.setAttribute('aria-label', label);
+    battlegroundStatus.title = label;
+  }
+
   function highlight(value, query) {
     const safe = escapeHTML(value);
     const q = String(query || '').trim();
@@ -341,19 +379,45 @@
     catch (_) { return safe; }
   }
 
+  const QUALITY_DISPLAY_LABELS_BY_ID = new Map([
+    [0, 'Покупной'],
+    [1, 'Низкий'],
+    [2, 'Обычный'],
+    [3, 'Магический'],
+    [4, 'Редкий'],
+    [5, 'Уникальный'],
+    [6, 'PvP'],
+    [7, 'Эпический'],
+    [8, 'Особый'],
+    [9, 'Ивентовый'],
+  ]);
+
+  const QUALITY_DISPLAY_LABELS_BY_SOURCE = new Map([
+    ['не указано', 'Покупной'],
+    ['низкое', 'Низкий'],
+    ['обычное', 'Обычный'],
+    ['необычное', 'Магический'],
+    ['редкое', 'Редкий'],
+    ['уникальное', 'Уникальный'],
+    ['pvp', 'PvP'],
+    ['эпическое', 'Эпический'],
+    ['особое', 'Особый'],
+    ['событийное', 'Ивентовый'],
+  ]);
+
   function qualityDisplayLabel(quality, qualityID = null) {
     const value = String(quality || '').trim();
+    const normalized = value.toLocaleLowerCase('ru-RU');
     const hasID = qualityID !== null && qualityID !== undefined && String(qualityID).trim() !== '';
     const id = hasID ? Number(qualityID) : Number.NaN;
-    if (id === 0 || value.toLocaleLowerCase('ru-RU') === 'не указано') return 'Покупной';
-    if (id === 9 || value.toLocaleLowerCase('ru-RU').includes('событийн')) return 'Ивентовый';
-    return value;
+    return QUALITY_DISPLAY_LABELS_BY_ID.get(id) || QUALITY_DISPLAY_LABELS_BY_SOURCE.get(normalized) || value;
   }
 
   function qualityClass(quality, qualityID = null) {
     const hasID = qualityID !== null && qualityID !== undefined && String(qualityID).trim() !== '';
     const id = hasID ? Number(qualityID) : Number.NaN;
     if (id === 0) return 'quality-shop';
+    if (id === 3) return 'quality-magic';
     if (id === 9) return 'quality-event';
     const value = String(quality || '').trim().toLowerCase();
     if (value.includes('уникаль')) return 'quality-unique';
@@ -541,7 +605,7 @@
       ? `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><div class="home-section-heading"><h2 id="viewedTitle">Недавно просмотренные</h2><button class="text-button compact-button" type="button" data-action="clear-recently-viewed" aria-label="Очистить недавно просмотренные">Очистить</button></div><div class="recent-viewed-list">${viewed.map(entry => `<a href="#${entry.type}/${entry.id}"><span class="recent-viewed-icon">${recentViewedTypeIcon(entry.type)}</span><span>${entry.type === 'title' ? `<span class="title-name-line title-name-line--compact">${titleIndexBadge(entry.id)}<strong>${escapeHTML(entry.name)}</strong></span>` : `<strong>${escapeHTML(entry.name)}</strong>`}<small>${escapeHTML(recentViewedTypeLabel(entry.type))}</small></span>${icons.chevron}</a>`).join('')}</div></section>`
       : `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><p class="home-start-hint">Здесь появятся открытые предметы, рецепты, монстры, титулы и карты превращения.</p></section>`;
     const updateNotice = state.updateInfo.updateAvailable && state.updateInfo.latestVersion
-      ? `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="https://github.com/fsibatov/iris-online-database/releases/latest" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`
+      ? `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="${escapeHTML(trustedUpdateReleaseURL())}" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`
       : '';
     const serverDifference = `<section class="home-server-difference home-compact-section" aria-labelledby="serverDifferenceTitle">
       <h2 id="serverDifferenceTitle">Сервер</h2>
@@ -585,7 +649,6 @@
     </section>`;
     positionSearchWidget(true);
     void checkVkNews();
-    requestAnimationFrame(() => globalSearch.focus({ preventScroll: true }));
   }
 
   function addHistory(query) {
@@ -2199,6 +2262,20 @@
     scheduleProfileSave(0);
   }
 
+  function trustedUpdateReleaseURL(info = state.updateInfo || {}) {
+    const fallback = 'https://github.com/fsibatov/iris-online-database/releases/latest';
+    const candidate = String(info.releaseUrl || '').trim();
+    if (!candidate) return fallback;
+    try {
+      const parsed = new URL(candidate);
+      const trustedPath = /^\/fsibatov\/iris-online-database\/releases\/tag\/v\d+\.\d+\.\d+$/.test(parsed.pathname);
+      if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com' || (parsed.port && parsed.port !== '443') || parsed.username || parsed.password || parsed.search || parsed.hash || !trustedPath) return fallback;
+      return parsed.href;
+    } catch {
+      return fallback;
+    }
+  }
+
   function refreshUpdateNotice() {
     const page = main.querySelector('.home-page');
     if (!page) return;
@@ -2206,44 +2283,124 @@
     if (!state.updateInfo.updateAvailable || !state.updateInfo.latestVersion) return;
     const activity = page.querySelector('.home-activity');
     if (!activity) return;
+    const releaseUrl = trustedUpdateReleaseURL();
     const host = document.createElement('div');
-    host.innerHTML = `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="https://github.com/fsibatov/iris-online-database/releases/latest" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`;
+    host.innerHTML = `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="${escapeHTML(releaseUrl)}" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`;
     activity.before(host.firstElementChild);
+  }
+
+  function updateFailureMessage(info = state.updateInfo || {}) {
+    const failure = String(info.failure || '');
+    if (failure === 'offline') return 'Нет подключения к интернету';
+    if (failure === 'network') return 'Нет доступа к GitHub';
+    if (failure === 'timeout') return 'GitHub не ответил вовремя';
+    if (failure === 'rate_limited') {
+      const seconds = Math.max(0, Number(info.retryAfterSeconds || 0));
+      if (seconds >= 60) return `GitHub ограничил частоту запросов. Повторите проверку примерно через ${Math.ceil(seconds / 60)} мин.`;
+      return 'GitHub временно ограничил частоту запросов';
+    }
+    if (failure === 'service_unavailable') return 'GitHub временно недоступен';
+    if (failure === 'invalid_response') return 'GitHub вернул некорректный ответ';
+    if (failure === 'configuration') return 'Проверка обновлений недоступна';
+    if (failure === 'canceled') return 'Проверка отменена';
+    return 'Проверка обновлений недоступна';
   }
 
   function updateStatusHTML() {
     const info = state.updateInfo || {};
+    if (info.failure && info.stale && info.checked) {
+      const known = info.updateAvailable && info.latestVersion
+        ? `Последняя успешная проверка: доступна версия ${escapeHTML(info.latestVersion)}`
+        : 'Последняя успешная проверка: установлена актуальная версия';
+      return `${known}. ${escapeHTML(updateFailureMessage(info))}.`;
+    }
     if (info.updateAvailable && info.latestVersion) {
-      return `Доступна версия ${escapeHTML(info.latestVersion)} · <a class="external-link" href="https://github.com/fsibatov/iris-online-database/releases/latest" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a>`;
+      const releaseUrl = trustedUpdateReleaseURL(info);
+      return `Доступна версия ${escapeHTML(info.latestVersion)} · <a class="external-link" href="${escapeHTML(releaseUrl)}" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a>`;
     }
     if (info.checked) return 'Установлена актуальная версия';
     if (info.checking) return 'Проверка…';
-    return 'Статус неизвестен';
+    if (info.failure) return escapeHTML(updateFailureMessage(info));
+    return 'Проверка ещё не выполнялась';
   }
 
   function renderVersionStatus() {
     if (!versionStatus || !versionStatusText || !checkUpdatesButton) return;
     const info = state.updateInfo || {};
     let status = 'unknown';
-    let text = 'Статус неизвестен';
+    let text = 'Не проверена';
+    let detail = text;
     if (info.checking) {
       status = 'checking';
       text = 'Проверка…';
+      detail = text;
+    } else if (info.failure) {
+      status = info.stale && info.checked ? 'stale' : 'error';
+      text = info.stale && info.checked ? 'Требует проверки' : 'Не проверена';
+      detail = updateFailureMessage(info);
+      if (info.stale && info.checked) detail = `${detail}. Показан результат последней успешной проверки`;
     } else if (info.checked && info.updateAvailable) {
       status = 'update';
       text = info.latestVersion ? `Доступно ${info.latestVersion}` : 'Есть обновление';
+      detail = text;
     } else if (info.checked) {
       status = 'current';
       text = 'Актуальная';
+      detail = text;
     }
     versionStatus.dataset.status = status;
     versionStatusText.textContent = text;
+    const label = `Версия ${APP_VERSION}. ${detail}`;
+    versionStatus.setAttribute('aria-label', label);
+    versionStatus.title = label;
     checkUpdatesButton.disabled = Boolean(info.checking);
     checkUpdatesButton.setAttribute('aria-busy', info.checking ? 'true' : 'false');
   }
 
+  let updateRetryTimer = 0;
+  let automaticUpdateRetries = 0;
+
+  function clearScheduledUpdateRetry() {
+    if (!updateRetryTimer) return;
+    clearTimeout(updateRetryTimer);
+    updateRetryTimer = 0;
+  }
+
+  function scheduleUpdateRetry() {
+    clearScheduledUpdateRetry();
+    const info = state.updateInfo || {};
+    if (!info.failure || (info.checked && !info.stale) || navigator.onLine === false || automaticUpdateRetries >= 1) return;
+    if (['configuration', 'invalid_response', 'canceled'].includes(info.failure)) return;
+    const requestedDelay = Math.max(0, Number(info.retryAfterSeconds || 0)) * 1000;
+    const delay = Math.max(30_000, Math.min(requestedDelay || 30_000, 24 * 60 * 60_000));
+    automaticUpdateRetries += 1;
+    updateRetryTimer = setTimeout(() => {
+      updateRetryTimer = 0;
+      void checkForUpdates({ force: true, notify: false });
+    }, delay);
+  }
+
   async function checkForUpdates({ force = false, notify = false } = {}) {
-    if (state.updateInfo.checking || (state.updateInfo.checked && !force)) return;
+    if (state.updateInfo.checking || (state.updateInfo.checked && !state.updateInfo.stale && !force)) return;
+    clearScheduledUpdateRetry();
+    if (navigator.onLine === false) {
+      const previous = state.updateInfo || {};
+      const hasKnownStatus = Boolean(previous.checked);
+      state.updateInfo = {
+        ...previous,
+        checked: hasKnownStatus,
+        checking: false,
+        stale: hasKnownStatus,
+        failure: 'offline',
+        retryAfterSeconds: 0,
+        latestVersion: hasKnownStatus ? String(previous.latestVersion || '') : '',
+        updateAvailable: hasKnownStatus && Boolean(previous.updateAvailable),
+        releaseUrl: hasKnownStatus ? String(previous.releaseUrl || '') : '',
+      };
+      renderVersionStatus();
+      if (notify) showToast('Нет подключения к интернету. Проверка обновлений не выполнена.');
+      return;
+    }
     state.updateInfo.checking = true;
     renderVersionStatus();
     try {
@@ -2251,20 +2408,39 @@
       state.updateInfo = {
         checked: Boolean(result?.checked),
         checking: false,
+        stale: Boolean(result?.stale),
+        failure: String(result?.failure || ''),
+        retryAfterSeconds: Math.max(0, Number(result?.retryAfterSeconds || 0)),
         latestVersion: String(result?.latestVersion || ''),
         updateAvailable: Boolean(result?.updateAvailable),
         releaseUrl: String(result?.releaseUrl || ''),
       };
-      if (state.updateInfo.updateAvailable && state.updateInfo.latestVersion) {
+      if (!state.updateInfo.failure && state.updateInfo.checked) automaticUpdateRetries = 0;
+      if (state.updateInfo.failure) {
+        if (notify) showToast(updateFailureMessage(state.updateInfo));
+        scheduleUpdateRetry();
+      } else if (state.updateInfo.updateAvailable && state.updateInfo.latestVersion) {
         if (notify || !force) showToast(`Доступна новая версия ${state.updateInfo.latestVersion}.`);
       } else if (notify && state.updateInfo.checked) {
         showToast('Установлена актуальная версия.');
-      } else if (notify && !state.updateInfo.checked) {
-        showToast('Не удалось проверить обновления.');
       }
-    } catch (_) {
-      state.updateInfo = { checked: false, checking: false, latestVersion: '', updateAvailable: false, releaseUrl: '' };
-      if (notify) showToast('Не удалось проверить обновления.');
+    } catch (error) {
+      const timedOut = error?.name === 'AbortError' || error?.name === 'TimeoutError';
+      const previous = state.updateInfo || {};
+      const hasKnownStatus = Boolean(previous.checked);
+      state.updateInfo = {
+        ...previous,
+        checked: hasKnownStatus,
+        checking: false,
+        stale: hasKnownStatus,
+        failure: timedOut ? 'timeout' : 'network',
+        retryAfterSeconds: 0,
+        latestVersion: hasKnownStatus ? String(previous.latestVersion || '') : '',
+        updateAvailable: hasKnownStatus && Boolean(previous.updateAvailable),
+        releaseUrl: hasKnownStatus ? String(previous.releaseUrl || '') : '',
+      };
+      if (notify) showToast(updateFailureMessage(state.updateInfo));
+      scheduleUpdateRetry();
     } finally {
       renderVersionStatus();
       if (routeBase() === 'home') refreshUpdateNotice();
@@ -2386,7 +2562,7 @@
       const meta = state.meta?.meta || {};
       const server = activeServerMeta();
       infoDialogTitle.textContent = 'Актуальность данных';
-      infoDialogBody.innerHTML = `<p>Здесь указаны даты обновления встроенных данных для выбранного сервера.</p><dl class="kv-list"><div><dt>Предметы и характеристики</dt><dd>${formatSourceDate(meta.dataUpdatedAt)}</dd></div><div><dt>Обычная добыча</dt><dd>${formatSourceDate(server.directDropsUpdatedAt)}</dd></div><div><dt>Состав групп</dt><dd>${formatSourceDate(server.dropListsUpdatedAt)}</dd></div><div><dt>Мировая добыча</dt><dd>${formatSourceDate(server.worldDropsUpdatedAt)}</dd></div></dl><p class="muted-copy">Названия и характеристики предметов берутся из общего справочника. Источники получения и состав монстров зависят от выбранного сервера.</p>`;
+      infoDialogBody.innerHTML = `<p>Здесь указаны даты обновления встроенных данных для выбранного сервера.</p><p class="data-sync-note"><strong>Важно:</strong> данные встроены в приложение и не синхронизируются автоматически с игровыми серверами Iris Online. После обновлений игры сведения могут временно отличаться от фактического состояния выбранного сервера.</p><dl class="kv-list"><div><dt>Предметы и характеристики</dt><dd>${formatSourceDate(meta.dataUpdatedAt)}</dd></div><div><dt>Обычная добыча</dt><dd>${formatSourceDate(server.directDropsUpdatedAt)}</dd></div><div><dt>Состав групп</dt><dd>${formatSourceDate(server.dropListsUpdatedAt)}</dd></div><div><dt>Мировая добыча</dt><dd>${formatSourceDate(server.worldDropsUpdatedAt)}</dd></div></dl><p class="muted-copy">Названия и характеристики предметов берутся из общего справочника. Источники получения и состав монстров зависят от выбранного сервера.</p>`;
     } else if (type === 'feedback') {
       infoDialogTitle.textContent = 'Пожелания и замечания';
       infoDialogBody.innerHTML = `<p>Откройте Google Таблицы и оставьте комментарий в подходящей ячейке.</p><p><a class="primary-button" target="_blank" rel="noopener noreferrer external" href="https://docs.google.com/spreadsheets/d/1OEKLkfWQPNXG5QXpn1C0JZKOsgxjlTkrE5ckikG4uf4/edit?gid=1073338359#gid=1073338359">Открыть Google Таблицы ${icons.external}</a></p>`;
@@ -2737,7 +2913,9 @@
       if (homeServerName) homeServerName.textContent = serverLabel;
       showToast(`Выбран сервер ${serverLabel}. Данные обновлены.`);
       const activeRoute = routeBase();
-      if (['home', 'monsters', 'transformations', 'favorites', 'search'].includes(activeRoute) || state.route.startsWith('item/') || state.route.startsWith('recipe/') || state.route.startsWith('monster/') || state.route.startsWith('title/') || state.route.startsWith('transformation/')) renderRoute();
+      if (['home', 'monsters', 'transformations', 'favorites', 'search'].includes(activeRoute) || state.route.startsWith('item/') || state.route.startsWith('recipe/') || state.route.startsWith('monster/') || state.route.startsWith('title/') || state.route.startsWith('transformation/')) {
+        void renderRoute().finally(() => serverSelect.focus({ preventScroll: true }));
+      }
     }
   });
 
@@ -2819,6 +2997,12 @@
   });
 
   initializeRouteHistory();
+  function scheduleBattlegroundStatus() {
+    renderBattlegroundStatus();
+    window.setTimeout(scheduleBattlegroundStatus, 1000 - (Date.now() % 1000));
+  }
+
+  scheduleBattlegroundStatus();
 
   (async () => {
     globalSearch.value = '';

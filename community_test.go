@@ -46,6 +46,25 @@ func TestCheckCommunityNewsJSONRejectsWrongPostURL(t *testing.T) {
 	}
 }
 
+func TestCheckCommunityNewsJSONRejectsNonCanonicalPostURLs(t *testing.T) {
+	for _, postURL := range []string{
+		"https://user@vk.ru/wall-59626511_62336",
+		"https://vk.ru:444/wall-59626511_62336",
+		"https://vk.ru/wall-59626511_62336?from=external",
+		"https://vk.ru/wall-59626511_62336#fragment",
+	} {
+		t.Run(postURL, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"schema":1,"post_id":62336,"post_url":%q,"text":"Новость"}`, postURL)
+			}))
+			defer server.Close()
+			if result := checkCommunityNewsJSON(context.Background(), server.Client(), server.URL, false); result.Available {
+				t.Fatalf("non-canonical post URL accepted: %+v", result)
+			}
+		})
+	}
+}
+
 func TestCheckCommunityNewsJSONRejectsEmptyPreview(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"schema":1,"post_id":62336,"post_url":"https://vk.ru/wall-59626511_62336","text":"  "}`)
@@ -140,8 +159,14 @@ func TestCommunityCheckerFallsBackToGitHubContentsAPI(t *testing.T) {
 			http.Error(w, "temporary failure", http.StatusBadGateway)
 		case "/fallback":
 			fallbackCalls++
+			if r.URL.Query().Get("refresh") != "" {
+				t.Fatalf("GitHub API fallback must not receive cache-buster query: %q", r.URL.RawQuery)
+			}
 			if r.Header.Get("Accept") != "application/vnd.github+json" {
 				t.Fatalf("unexpected GitHub API Accept header: %q", r.Header.Get("Accept"))
+			}
+			if r.Header.Get("X-GitHub-Api-Version") != "2026-03-10" {
+				t.Fatalf("unexpected GitHub API version: %q", r.Header.Get("X-GitHub-Api-Version"))
 			}
 			fmt.Fprintf(w, `{"encoding":"base64","content":%q}`, encoded)
 		default:

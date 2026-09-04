@@ -59,14 +59,16 @@ func newCommunityChecker() *communityChecker {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = 2
 	transport.MaxIdleConnsPerHost = 2
-	transport.IdleConnTimeout = 5 * time.Second
+	transport.IdleConnTimeout = 15 * time.Second
+	transport.ResponseHeaderTimeout = 5 * time.Second
+	transport.TLSHandshakeTimeout = 5 * time.Second
 	seed := embeddedCommunityNews()
 	return &communityChecker{
 		client: &http.Client{
 			Transport: transport,
 			Timeout:   7 * time.Second,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 3 {
+				if len(via) >= 3 || req.URL.Scheme != "https" || req.URL.User != nil || (req.URL.Port() != "" && req.URL.Port() != "443") {
 					return http.ErrUseLastResponse
 				}
 				host := strings.ToLower(req.URL.Hostname())
@@ -139,15 +141,17 @@ func communityNewsBody(ctx context.Context, client *http.Client, target string, 
 	}
 
 	requestURL := target
-	if parsed, err := url.Parse(target); err == nil {
-		query := parsed.Query()
-		refresh := time.Now().UTC().Truncate(time.Minute).Unix()
-		if force {
-			refresh = time.Now().UnixNano()
+	if !githubAPI {
+		if parsed, err := url.Parse(target); err == nil {
+			query := parsed.Query()
+			refresh := time.Now().UTC().Truncate(time.Minute).Unix()
+			if force {
+				refresh = time.Now().UnixNano()
+			}
+			query.Set("refresh", strconv.FormatInt(refresh, 10))
+			parsed.RawQuery = query.Encode()
+			requestURL = parsed.String()
 		}
-		query.Set("refresh", strconv.FormatInt(refresh, 10))
-		parsed.RawQuery = query.Encode()
-		requestURL = parsed.String()
 	}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
@@ -156,7 +160,7 @@ func communityNewsBody(ctx context.Context, client *http.Client, target string, 
 	}
 	if githubAPI {
 		request.Header.Set("Accept", "application/vnd.github+json")
-		request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		request.Header.Set("X-GitHub-Api-Version", "2026-03-10")
 	} else {
 		request.Header.Set("Accept", "application/json")
 	}
@@ -240,7 +244,10 @@ func decodeCommunityNews(body []byte) communityStatusResult {
 func validCommunityPostURL(value string, postID int64) bool {
 	value = strings.TrimSpace(value)
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "https" {
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Opaque != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	if port := parsed.Port(); port != "" && port != "443" {
 		return false
 	}
 	host := strings.ToLower(parsed.Hostname())

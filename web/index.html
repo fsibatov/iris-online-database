@@ -62,8 +62,14 @@
 
       <div class="section-tabs-row">
         <nav class="section-tabs" id="sectionTabs" aria-label="Основные разделы"></nav>
-        <div class="version-status" id="versionStatus" data-status="checking" aria-label="Версия и статус обновления">
-          <span class="version-status-number">Версия 2.0.4</span>
+        <div class="header-status-pill battleground-status" id="battlegroundStatus">
+          <span class="battleground-status-label">БГ</span>
+          <strong id="battlegroundName">—</strong>
+          <time id="battlegroundStart">--:--</time>
+          <span class="battleground-countdown" id="battlegroundCountdown">--:--</span>
+        </div>
+        <div class="header-status-pill version-status" id="versionStatus" data-status="checking" aria-label="Версия и статус обновления">
+          <span class="version-status-number"><span class="version-status-prefix">Версия </span><span class="version-status-prefix-short" aria-hidden="true">v</span>2.0.5</span>
           <span class="version-status-dot" aria-hidden="true"></span>
           <span class="version-status-text" id="versionStatusText">Проверка…</span>
           <button class="version-check-button" id="checkUpdatesButton" type="button" aria-label="Проверить обновления" title="Проверить обновления">
@@ -115,11 +121,11 @@
     </a>
     <button type="button" data-menu-action="data">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 10v6M12 7h.01"/></svg>
-      <span><strong>Актуальность данных</strong><small>Источники и даты обновления</small></span>
+      <span><strong>Актуальность данных</strong><small>Даты обновления и ограничения</small></span>
     </button>
     <button type="button" data-menu-action="about">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z"/><path d="M8 10h8M8 14h5"/></svg>
-      <span><strong>О приложении</strong><small>Версия 2.0.4</small></span>
+      <span><strong>О приложении</strong><small>Версия 2.0.5</small></span>
     </button>
   </div>
 

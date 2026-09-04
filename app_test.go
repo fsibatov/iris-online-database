@@ -109,7 +109,7 @@ func TestItemRaritySortRunsFromLowestQualityIDToHighest(t *testing.T) {
 	if err := ensureLoaded(); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/items?sort=rarity&page=1&pageSize=48", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/items?sort=rarity&order=asc&page=1&pageSize=48", nil)
 	recorder := httptest.NewRecorder()
 	handleItems(recorder, req)
 	if recorder.Code != http.StatusOK {
@@ -1354,9 +1354,19 @@ func TestTooltipCategoriesUseSourcePresentation(t *testing.T) {
 	}
 	script := string(data)
 	for _, expected := range []string{
-		"if (id === 0 || value.toLocaleLowerCase('ru-RU') === 'не указано') return 'Покупной';",
-		"if (id === 9 || value.toLocaleLowerCase('ru-RU').includes('событийн')) return 'Ивентовый';",
+		"const normalized = value.toLocaleLowerCase('ru-RU');",
+		"[0, 'Покупной']",
+		"[1, 'Низкий']",
+		"[2, 'Обычный']",
+		"[3, 'Магический']",
+		"[4, 'Редкий']",
+		"[5, 'Уникальный']",
+		"[6, 'PvP']",
+		"[7, 'Эпический']",
+		"[8, 'Особый']",
+		"[9, 'Ивентовый']",
 		"if (id === 0) return 'quality-shop';",
+		"if (id === 3) return 'quality-magic';",
 		"if (id === 9) return 'quality-event';",
 	} {
 		if !strings.Contains(script, expected) {
@@ -1365,6 +1375,29 @@ func TestTooltipCategoriesUseSourcePresentation(t *testing.T) {
 	}
 	if strings.Count(script, "qualityBadge(item.quality, item.qualityId)") != 2 {
 		t.Fatal("quality badge helper is not used with source tooltip color in both item card and item detail")
+	}
+}
+
+func TestCatalogSortOrderDefaultsToAscending(t *testing.T) {
+	tests := []struct {
+		query string
+		want  string
+		ok    bool
+	}{
+		{"", "asc", true},
+		{"order=desc", "desc", true},
+		{"order=asc", "asc", true},
+		{"order=sideways", "", false},
+	}
+	for _, test := range tests {
+		values, err := url.ParseQuery(test.query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, ok := querySortOrder(values)
+		if got != test.want || ok != test.ok {
+			t.Fatalf("query=%q order=%q ok=%v want order=%q ok=%v", test.query, got, ok, test.want, test.ok)
+		}
 	}
 }
 
