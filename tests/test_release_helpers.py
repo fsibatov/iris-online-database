@@ -1,7 +1,7 @@
-"""Regression tests for repository, build and release invariants."""
-
 from __future__ import annotations
 
+import ast
+import io
 import json
 import os
 import re
@@ -10,15 +10,18 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import Mock, patch
 
+import frontend_smoke_test
 from frontend_smoke_test import playwright_failure_category
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from release_fingerprint import FingerprintError, assert_release_tree, source_hash
 from release_targets import RELEASE_TARGETS
 from repository_audit import python_mode_violation
 from verify_executables import (
-    EXPECTED_METADATA_MARKERS,
     expected_metadata_markers,
     missing_metadata_categories,
 )
@@ -153,7 +156,13 @@ class ReleaseHelperTests(unittest.TestCase):
         )
         self.assertEqual(
             [(target.goarch, target.asset_suffix) for target in RELEASE_TARGETS],
-            [("amd64", "x64"), ("386", "x86"), ("arm64", "arm64")],
+            [
+                ("amd64", "x64"),
+                ("386", "x86"),
+                ("arm64", "arm64"),
+                ("amd64", "7-8.1-x64"),
+                ("386", "7-8.1-x86"),
+            ],
         )
         self.assertIn("scripts\\windows\\IrisTools.ps1", launcher)
         for marker in (
@@ -169,7 +178,7 @@ class ReleaseHelperTests(unittest.TestCase):
             self.assertIn(marker, windows)
         self.assertIn('$env:CGO_ENABLED = "0"', windows)
         self.assertIn(
-            '$EnvironmentNames = @("CGO_ENABLED", "GOAMD64", "GO386", "GOARM64")',
+            '$EnvironmentNames = @("CGO_ENABLED", "GOAMD64", "GO386", "GOARM64", "GOFLAGS")',
             windows,
         )
         self.assertIn('Remove-Item -Path "Env:$Name"', windows)
@@ -203,7 +212,9 @@ class ReleaseHelperTests(unittest.TestCase):
         )
 
     def test_release_metadata_diagnostic_identifies_cgo_without_raw_payload(self):
-        valid = "\n".join(marker for _category, marker in EXPECTED_METADATA_MARKERS)
+        valid = "\n".join(
+            marker for _category, marker in expected_metadata_markers("amd64")
+        )
         self.assertEqual(missing_metadata_categories(valid), [])
         cgo_enabled = valid.replace("CGO_ENABLED=0", "CGO_ENABLED=1")
         categories = missing_metadata_categories(cgo_enabled)
@@ -401,7 +412,9 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn('Tool = "Audit Python"', script)
         self.assertIn("$AuditEnvironmentReady = $false", script)
         self.assertIn("if (-not $AuditEnvironmentReady -and", script)
-        self.assertIn("Only now require a bootstrap Python 3.13", script)
+        self.assertIn(
+            "$BasePython = Find-Python313Executable -AuditEnvironmentCandidates", script
+        )
         self.assertLess(
             script.index("reused validated environment"),
             script.index("Find-Python313Executable -AuditEnvironmentCandidates"),
@@ -468,7 +481,7 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("^mod\\s+", script)
         self.assertIn("WAILS_METADATA_PARSE", script)
         self.assertIn("$WailsExecutable = Get-PinnedWailsExecutable", script)
-        self.assertIn("Invoke-Checked $WailsExecutable @(", script)
+        self.assertIn("Invoke-Checked $WailsExecutable $BuildArguments", script)
         self.assertNotIn('Get-VersionLine "wails" @("version")', script)
         self.assertNotIn('Invoke-Checked "wails" @(', script)
 
@@ -649,7 +662,7 @@ class ReleaseHelperTests(unittest.TestCase):
             'ruff.exe") @("check"',
             'ruff.exe") @("format"',
             'bandit.exe")',
-            'pip-audit.exe")',
+            "Invoke-PipAudit",
             "validate_workflows.py",
             'Invoke-Checked "node" @("--check", "web/app.js")',
             "data_presentation_audit.py",
@@ -714,6 +727,8 @@ class ReleaseHelperTests(unittest.TestCase):
                 "IrisOnlineDB-2.0.0-Windows-x64.exe",
                 "IrisOnlineDB-2.0.0-Windows-x86.exe",
                 "IrisOnlineDB-2.0.0-Windows-arm64.exe",
+                "IrisOnlineDB-2.0.0-Windows-7-8.1-x64.exe",
+                "IrisOnlineDB-2.0.0-Windows-7-8.1-x86.exe",
                 "SHA256SUMS.txt",
             ),
         )
@@ -798,7 +813,10 @@ class ReleaseHelperTests(unittest.TestCase):
         )
         self.assertLess(storage_primary, storage_retry)
         self.assertLess(storage_retry, canonical_fallback)
-        self.assertIn('-Arguments @("-db", $Database.URL, "./...")', script)
+        self.assertIn(
+            '-Arguments @("-db", $Database.URL, "-tags=desktop,wv2runtime.embed,production", "./...")',
+            script,
+        )
         self.assertIn("$DelaySeconds = 2", script)
         self.assertNotIn("Start-Process -FilePath $Executable.Source", script)
         self.assertIn("echo No vulnerabilities found. & exit /b 0", script)
@@ -937,10 +955,6 @@ class ReleaseHelperTests(unittest.TestCase):
                 (root / "linked.txt").symlink_to(target)
                 symlink_created = True
             except OSError as exc:
-                # Creating symlinks on Windows can require Developer Mode or the
-                # SeCreateSymbolicLinkPrivilege. The release gate must remain
-                # runnable by a normal non-elevated user. Manifest rejection is
-                # still tested even when this optional Windows privilege is absent.
                 if os.name != "nt" or getattr(exc, "winerror", None) != 1314:
                     raise
             result = self.run_audit(root)
@@ -998,6 +1012,129 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertEqual(category, "BROWSER_MISSING")
         self.assertNotIn(sensitive, category)
         self.assertNotIn("private-user", category)
+
+
+class FrontendSmokeDiagnosticsTests(unittest.TestCase):
+    def test_frontend_smoke_uses_csp_compatible_browser_waits(self):
+        source = (ROOT / "tools" / "frontend_smoke_test.py").read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                self.assertNotEqual(
+                    node.func.attr,
+                    "wait_for_function",
+                    f"Line {node.lineno}: wait_for_function evaluates strings and conflicts with the application's CSP; use locator waits",
+                )
+
+    def test_failure_keeps_browser_cause_stage_and_exit_code(self):
+        cases = (
+            (
+                PlaywrightTimeoutError(
+                    "Locator.wait_for: Timeout 30000ms exceeded.\n"
+                    "Call log:\n  waiting for moreButton to receive focus"
+                ),
+                "BROWSER_TIMEOUT",
+                1,
+            ),
+            (
+                PlaywrightError("Page.evaluate: TypeError: missing element"),
+                "BROWSER_RUNTIME",
+                1,
+            ),
+            (
+                PlaywrightError("Target page, context or browser has been closed"),
+                "BROWSER_CLOSED",
+                1,
+            ),
+            (
+                PlaywrightError("Executable doesn't exist at [browser]"),
+                "BROWSER_MISSING",
+                2,
+            ),
+            (
+                PlaywrightError("Host system is missing dependencies"),
+                "BROWSER_DEPENDENCIES",
+                2,
+            ),
+            (RuntimeError("opening a dialog shifts the page"), "REGRESSION", 1),
+        )
+        for error, category, expected_code in cases:
+            with self.subTest(category=category):
+                stage = "layout/hidden-scrollbars/dark/320px/dialog:about/close"
+
+                def fail(_base_url, state, failure=error, failure_stage=stage):
+                    state.stage = failure_stage
+                    state.page_state = {"route": "#item/2001", "focus": "BODY"}
+                    state.page_errors.append("TypeError: cannot focus missing element")
+                    raise failure
+
+                output = io.StringIO()
+                with (
+                    patch.object(frontend_smoke_test, "FixtureServer") as server_class,
+                    patch.object(frontend_smoke_test.threading, "Thread") as thread,
+                    patch.object(frontend_smoke_test, "exercise_frontend", fail),
+                    patch.object(sys, "argv", ["frontend_smoke_test.py"]),
+                    redirect_stdout(output),
+                ):
+                    server_class.return_value.server_address = ("127.0.0.1", 8765)
+                    code = frontend_smoke_test.main()
+                self.assertEqual(code, expected_code)
+                self.assertIn(f"[{category}]", output.getvalue())
+                self.assertIn(f"Stage: {stage}", output.getvalue())
+                self.assertIn(str(error), output.getvalue())
+                self.assertIn('"focus": "BODY"', output.getvalue())
+                self.assertIn("JavaScript: TypeError:", output.getvalue())
+                server_class.return_value.shutdown.assert_called_once_with()
+                server_class.return_value.server_close.assert_called_once_with()
+                thread.return_value.join.assert_called_once_with(timeout=5)
+
+    def test_browser_diagnostics_hide_user_paths_without_removing_the_call_log(self):
+        for path in (
+            r"C:\Users\Private User\AppData\Local\playwright\chrome.exe",
+            "/home/Private User/playwright/chrome",
+            "/Users/Private User/playwright/chrome",
+        ):
+            with self.subTest(path=path):
+                message = f"\x1b[31mExecutable doesn't exist at {path}\x1b[0m\nCall log:\n  browser launch"
+                details = frontend_smoke_test.failure_details(message)
+                self.assertNotIn("Private User", details)
+                self.assertNotIn("\x1b", details)
+                self.assertIn("Executable doesn't exist", details)
+                self.assertIn("Call log:\n  browser launch", details)
+                self.assertIn("chrome", details)
+
+    def test_news_refresh_waits_for_completion_and_propagates_timeout(self):
+        page = Mock()
+        button, ready = Mock(), Mock()
+        page.locator.side_effect = [button, ready]
+        ready.wait_for.side_effect = PlaywrightTimeoutError("refresh did not finish")
+        with self.assertRaisesRegex(PlaywrightTimeoutError, "refresh did not finish"):
+            frontend_smoke_test.refresh_news(page)
+        button.click.assert_called_once_with()
+        ready.wait_for.assert_called_once_with(state="visible")
+        page.wait_for_timeout.assert_not_called()
+
+    def test_failure_snapshot_does_not_replace_the_original_browser_failure(self):
+        state = frontend_smoke_test.FixtureState()
+        page = Mock()
+        page.evaluate.return_value = {"focus": "moreButton", "dialogOpen": False}
+        frontend_smoke_test.capture_failure_state(page, state)
+        self.assertEqual(state.page_state, page.evaluate.return_value)
+        page.evaluate.side_effect = PlaywrightError("browser has been closed")
+        frontend_smoke_test.capture_failure_state(page, state)
+        self.assertIsNone(state.page_state)
+
+    def test_page_errors_are_isolated_between_browser_contexts(self):
+        state = frontend_smoke_test.FixtureState()
+        first_context, second_context = Mock(), Mock()
+        first_page, first_errors = frontend_smoke_test.smoke_page(first_context, state)
+        second_page, second_errors = frontend_smoke_test.smoke_page(
+            second_context, state
+        )
+        first_page.on.call_args.args[1](PlaywrightError("first page failed"))
+        second_page.on.call_args.args[1](PlaywrightError("second page failed"))
+        self.assertEqual(first_errors, ["first page failed"])
+        self.assertEqual(second_errors, ["second page failed"])
+        self.assertIs(state.page_errors, second_errors)
 
 
 if __name__ == "__main__":

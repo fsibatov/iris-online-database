@@ -60,7 +60,7 @@ func resolveAppPaths() (appPaths, error) {
 	p.Logs = filepath.Join(p.LocalRoot, "Logs")
 	p.Updates = filepath.Join(p.LocalRoot, "Updates")
 	p.Versions = filepath.Join(p.LocalRoot, "Versions")
-	p.WebViewData = filepath.Join(p.LocalRoot, "WebView2")
+	p.WebViewData = filepath.Join(p.LocalRoot, webViewProfileDirectory)
 	p.PendingDelete = filepath.Join(p.LocalRoot, "pending-delete.json")
 	p.Profile = filepath.Join(p.UserData, "profile.json")
 	for _, dir := range []string{p.UserData, p.Backups, p.Cache, p.Temp, p.Logs, p.Updates, p.Versions, p.WebViewData} {

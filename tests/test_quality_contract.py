@@ -1,8 +1,8 @@
-import html
 import re
-import textwrap
 import unittest
 from pathlib import Path
+
+from validate_vk_candidate import IDENTITY_KEYS, compare, semantic_text
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -174,28 +174,26 @@ class QualityContractTests(unittest.TestCase):
         self.assertIn("POSIX_SHELL", self.workflow_validator)
 
     def test_vk_workflow_ignores_cosmetic_variants_of_same_post(self):
-        for marker in (
-            "def semantic_text(value):",
-            'BR_TAG.sub("\\n"',
-            "DECORATIVE_SYMBOL.sub",
-            "MARKUP.sub",
-            "same_identity and same_text",
-            "VK: без изменений",
-        ):
-            self.assertIn(marker, self.vk_workflow)
-        self.assertNotIn('"source_updated_at",\n          )', self.vk_workflow)
+        self.assertIn("tools\\validate_vk_candidate.py", self.vk_workflow)
+        self.assertIn("& python $ValidatorPath", self.vk_workflow)
+        self.assertIn("VK: без изменений", self.vk_workflow)
+        self.assertNotIn("source_updated_at", IDENTITY_KEYS)
+        current = {
+            "post_id": 10,
+            "post_url": "https://vk.ru/wall-59626511_10",
+            "text": "Новость",
+        }
+        candidate = {
+            **current,
+            "text": "⚡ **НОВОСТЬ**",
+            "source_updated_at": "2026-09-07",
+        }
+        self.assertEqual(compare(current, candidate), (10, "same"))
 
     def test_vk_semantic_comparison_treats_cosmetic_variants_as_equal(self):
-        start = self.vk_workflow.index("          BR_TAG = re.compile")
-        end = self.vk_workflow.index("          current_id = validate(current)")
-        code = textwrap.dedent(self.vk_workflow[start:end])
-        namespace = {"html": html, "re": re}
-        exec(code, namespace)
         plain = "Новый экспериментальный режим (Vulkan)\n* **Важно:** режим тестовый."
         rich = "⚡ Новый экспериментальный режим (Vulkan)<br><br>* ⚠ **Важно:** режим тестовый."
-        self.assertEqual(
-            namespace["semantic_text"](plain), namespace["semantic_text"](rich)
-        )
+        self.assertEqual(semantic_text(plain), semantic_text(rich))
 
     def test_project_rules_require_language_and_noise_review(self):
         self.assertIn("## Постоянные правила качества", self.contributing)

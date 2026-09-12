@@ -1,14 +1,3 @@
-"""Read-only validator and deterministic reference model for Iris Online drops.
-
-The model follows the relevant control flow in the supplied Drop.cpp and
-DropScript.cpp reference sources. It preserves row order, uses the server's
-1..1,000,000 roll scale, models base/additional attempts, cumulative group/item
-weights, neutral level penalty, time-restriction weight transforms, duplicate
-row prevention inside one rule cycle, field/instance gating and fallback/event
-attempt counts. It deliberately does not invent a final per-kill probability
-when runtime state is required.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -264,7 +253,7 @@ def parse_quest(path: Path | None) -> list[QuestDrop]:
 def quest_roll_selects(
     drop_rate_percent: int, roll_1_100: int, *, conditions_met: bool = True
 ) -> bool:
-    """Probability gate for one quest-drop row after active-quest lookup."""
+
     if not 1 <= roll_1_100 <= 100:
         raise ValueError("roll_1_100 must be in 1..100")
     if drop_rate_percent < 0:
@@ -297,7 +286,7 @@ def parse_restrictions(path: Path | None) -> dict[int, DropRestriction]:
 
 
 def parse_penalties(path: Path | None) -> dict[int, dict[int, float]]:
-    """Parse DropIncrease.txt into {0: field, 1: instance/theme} tables."""
+
     if path is None:
         return {}
     tokens = (
@@ -334,7 +323,7 @@ def parse_penalties(path: Path | None) -> dict[int, dict[int, float]]:
 
 
 def weighted_pick(entries: Sequence[WeightedEntry], roll: int) -> int | None:
-    """Server cumulative choice for a 1..1,000,000 roll."""
+
     if not 1 <= roll <= CHANCE_SCALE:
         raise ValueError(f"roll must be in 1..{CHANCE_SCALE}")
     cumulative = 0
@@ -347,7 +336,7 @@ def weighted_pick(entries: Sequence[WeightedEntry], roll: int) -> int | None:
 
 
 def effective_interval_weight(entries: Sequence[WeightedEntry], position: int) -> int:
-    """Reachable neutral weight for one ordered entry on the 1..scale roll."""
+
     if position < 0 or position >= len(entries):
         raise IndexError(position)
     before = sum(max(0, entry.weight) for entry in entries[:position])
@@ -356,7 +345,7 @@ def effective_interval_weight(entries: Sequence[WeightedEntry], position: int) -
 
 
 def additional_attempts(rule: DropRule, roll: int, *, world: bool = False) -> int:
-    """Return total attempts including the server's unconditional base attempt."""
+
     if not 1 <= roll <= CHANCE_SCALE:
         raise ValueError(f"roll must be in 1..{CHANCE_SCALE}")
     total_rate = rule.add1_rate + rule.add2_rate
@@ -371,7 +360,7 @@ def additional_attempts(rule: DropRule, roll: int, *, world: bool = False) -> in
 
 
 def event_attempts(drop_add_percent: int, roll_0_99: int) -> int:
-    """Drop.cpp fallback/event attempt count from mDropAddPer."""
+
     if drop_add_percent < 0:
         raise ValueError("drop_add_percent must be non-negative")
     if not 0 <= roll_0_99 <= 99:
@@ -383,7 +372,6 @@ def event_attempts(drop_add_percent: int, roll_0_99: int) -> int:
 
 
 def world_rule_applies(server_type_check: int, *, is_normal_map: bool) -> bool:
-    """Drop.cpp field/instance gate; it does not identify a concrete dungeon."""
 
     if server_type_check == 1 and not is_normal_map:
         return False
@@ -400,12 +388,7 @@ def reference_item_pick(
     period: str = "am",
     selected_rows: MutableSet[tuple[int, int]] | None = None,
 ) -> ItemPickResult:
-    """Reproduce the essential ordered item selection in DropMonItemSelect.
 
-    Runtime timestamps are represented by disabled_restricted_items. When a
-    restricted row is eligible, its AM/PM multiplier is applied to the whole
-    cumulative boundary exactly as CheckDropMonCantTime mutates rOutRate.
-    """
     if not 1 <= roll <= CHANCE_SCALE:
         raise ValueError(f"roll must be in 1..{CHANCE_SCALE}")
     if penalty < 0:

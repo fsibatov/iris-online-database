@@ -425,7 +425,7 @@ func TestDependentItemFiltersAreIgnoredWithoutCategory(t *testing.T) {
 	expected := 0
 	for index := range store.data.Items {
 		item := &store.data.Items[index]
-		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe || isTitleItem(item) || isTransformationItem(item.ID) {
+		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe || isTitleItem(item) || isTransformationItem(item.ID) || item.Subcategory == "---------" {
 			continue
 		}
 		expected++
@@ -2126,8 +2126,8 @@ func TestSearchStartsEmptyAndRecentlyViewedCanBeCleared(t *testing.T) {
 		"resetTransientCatalogFilters()",
 		"state.itemFilters = defaultItemFilters()",
 		"state.monsterFilters = defaultMonsterFilters()",
-		"localStorage.removeItem('iris-item-filters')",
-		"localStorage.removeItem('iris-monster-filters')",
+		"removeLocalValue('iris-item-filters')",
+		"removeLocalValue('iris-monster-filters')",
 		"itemFilters: {}",
 		"monsterFilters: {}",
 		"globalSearch.value = ''",

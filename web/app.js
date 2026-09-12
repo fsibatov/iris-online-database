@@ -1,7 +1,9 @@
+import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } from './profile.js';
+
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.5';
+  const APP_VERSION = '2.0.6';
   const PAGE_SIZE = 24;
   const FAVORITES_PAGE_SIZE = 24;
   const SOURCE_BATCH = 20;
@@ -18,6 +20,7 @@
   const BATTLEGROUND_INTERVAL_MS = 30 * 60 * 1000;
   const BATTLEGROUND_FIRST_START_MS = 3 * 60 * 1000;
   const BATTLEGROUND_SERVER_OFFSET_MS = 3 * 60 * 60 * 1000;
+  const routeScrollPositions = new Map();
   let routeHistoryIndex = 0;
 
   function safeJSON(value, fallback) {
@@ -50,21 +53,21 @@
     state.recipeFilters = defaultRecipeFilters();
     state.titleFilters = defaultTitleFilters();
     state.transformationFilters = defaultTransformationFilters();
-    localStorage.removeItem('iris-item-filters');
-    localStorage.removeItem('iris-monster-filters');
+    removeLocalValue('iris-item-filters');
+    removeLocalValue('iris-monster-filters');
   }
 
-  const legacyFavorites = safeJSON(localStorage.getItem('iris-favorites') || '[]', []);
+  const legacyFavorites = safeJSON(readLocalValue('iris-favorites') || '[]', []);
   const state = {
     meta: null,
     effectSpecs: {},
     route: 'home',
-    server: localStorage.getItem('iris-server') || 'kiss',
-    theme: localStorage.getItem('iris-theme') || 'dark',
-    view: localStorage.getItem('iris-view') || 'list',
+    server: readLocalValue('iris-server') || 'kiss',
+    theme: readLocalValue('iris-theme') || 'dark',
+    view: readLocalValue('iris-view') || 'list',
     favorites: new Set(Array.isArray(legacyFavorites) ? legacyFavorites : []),
     history: [],
-    recentlyViewed: safeJSON(localStorage.getItem(RECENT_VIEWED_KEY) || '[]', []),
+    recentlyViewed: safeJSON(readLocalValue(RECENT_VIEWED_KEY) || '[]', []),
     profileLoaded: false,
     itemFilters: defaultItemFilters(),
     monsterFilters: defaultMonsterFilters(),
@@ -90,14 +93,11 @@
   const main = document.getElementById('mainContent');
   const sectionTabs = document.getElementById('sectionTabs');
   const mobileNav = document.getElementById('mobileNav');
-  const headerSearchHost = document.getElementById('headerSearchHost');
-  const searchWidget = document.getElementById('searchWidget');
   const globalSearch = document.getElementById('globalSearch');
   const suggestions = document.getElementById('searchSuggestions');
   const serverSelect = document.getElementById('serverSelect');
   const battlegroundStatus = document.getElementById('battlegroundStatus');
   const battlegroundName = document.getElementById('battlegroundName');
-  const battlegroundStart = document.getElementById('battlegroundStart');
   const battlegroundCountdown = document.getElementById('battlegroundCountdown');
   const versionStatus = document.getElementById('versionStatus');
   const versionStatusText = document.getElementById('versionStatusText');
@@ -219,6 +219,7 @@
   }
 
   function initializeRouteHistory() {
+    window.history.scrollRestoration = 'manual';
     const entry = currentRouteHistoryEntry();
     if (entry) {
       routeHistoryIndex = entry.index;
@@ -229,6 +230,12 @@
     window.history.replaceState(routeHistoryState(0, route), '', `#${route}`);
   }
 
+  function rememberRouteScroll() {
+    routeScrollPositions.delete(routeHistoryIndex);
+    routeScrollPositions.set(routeHistoryIndex, Math.max(0, window.scrollY));
+    if (routeScrollPositions.size > 50) routeScrollPositions.delete(routeScrollPositions.keys().next().value);
+  }
+
   function navigateToRoute(value) {
     const route = normalizeRouteValue(value);
     if (!isInternalAppRoute(route)) return false;
@@ -236,13 +243,16 @@
       renderRoute();
       return true;
     }
+    rememberRouteScroll();
     routeHistoryIndex += 1;
+    routeScrollPositions.delete(routeHistoryIndex);
     window.history.pushState(routeHistoryState(routeHistoryIndex, route), '', `#${route}`);
     renderRoute();
     return true;
   }
 
   function handleRouteHashChange() {
+    rememberRouteScroll();
     const route = decodeRouteHash();
     const entry = currentRouteHistoryEntry();
     if (entry) routeHistoryIndex = entry.index;
@@ -343,32 +353,24 @@
 
   function battlegroundState(now = new Date()) {
     const serverNow = now.getTime() + BATTLEGROUND_SERVER_OFFSET_MS;
-    const shifted = new Date(serverNow);
-    const dayStart = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
-    const firstStart = dayStart + BATTLEGROUND_FIRST_START_MS;
-    const slot = serverNow <= firstStart ? 0 : Math.ceil((serverNow - firstStart) / BATTLEGROUND_INTERVAL_MS);
-    const target = firstStart + slot * BATTLEGROUND_INTERVAL_MS;
-    const targetDate = new Date(target);
-    const remaining = Math.max(0, target - serverNow);
+    const slot = Math.ceil((serverNow - BATTLEGROUND_FIRST_START_MS) / BATTLEGROUND_INTERVAL_MS);
+    const remaining = slot * BATTLEGROUND_INTERVAL_MS + BATTLEGROUND_FIRST_START_MS - serverNow;
     const minutes = Math.floor(remaining / 60000);
     const seconds = Math.floor((remaining % 60000) / 1000);
     const pad = value => String(value).padStart(2, '0');
     return {
-      name: BATTLEGROUND_NAMES[slot % BATTLEGROUND_NAMES.length],
-      start: `${pad(targetDate.getUTCHours())}:${pad(targetDate.getUTCMinutes())}`,
+      name: BATTLEGROUND_NAMES[((slot % BATTLEGROUND_NAMES.length) + BATTLEGROUND_NAMES.length) % BATTLEGROUND_NAMES.length],
       countdown: `${pad(minutes)}:${pad(seconds)}`,
     };
   }
 
   function renderBattlegroundStatus() {
-    if (!battlegroundStatus || !battlegroundName || !battlegroundStart || !battlegroundCountdown) return;
+    if (!battlegroundStatus || !battlegroundName || !battlegroundCountdown) return;
     const next = battlegroundState();
-    battlegroundName.textContent = next.name;
-    battlegroundStart.textContent = next.start;
-    battlegroundCountdown.textContent = next.countdown;
-    const label = `Ближайшее состязание: ${next.name} в ${next.start} по времени сервера, через ${next.countdown}`;
-    battlegroundStatus.setAttribute('aria-label', label);
-    battlegroundStatus.title = label;
+    if (battlegroundName.textContent !== next.name) battlegroundName.textContent = next.name;
+    if (battlegroundCountdown.textContent !== next.countdown) battlegroundCountdown.textContent = next.countdown;
+    const label = `${next.name}: до начала ${next.countdown}`;
+    if (battlegroundStatus.getAttribute('aria-label') !== label) battlegroundStatus.setAttribute('aria-label', label);
   }
 
   function highlight(value, query) {
@@ -546,12 +548,6 @@
     }).join('');
   }
 
-  function positionSearchWidget(home = false) {
-    const target = home ? document.getElementById('homeSearchHost') : headerSearchHost;
-    if (target && searchWidget.parentElement !== target) target.append(searchWidget);
-    searchWidget.classList.toggle('home-search-widget', home);
-  }
-
   function recentViewedTypeIcon(type) {
     return type === 'transformation' ? icons.transform : icons[type] || icons.info;
   }
@@ -586,13 +582,13 @@
     const key = `${type}:${numericID}:${server}`;
     const next = [{ type, id: numericID, name: cleanName, ...(cleanMeta ? { meta: cleanMeta } : {}), ...(server ? { server } : {}) }, ...normalizedRecentViewedEntries().filter(entry => `${entry.type}:${entry.id}:${entry.type === 'monster' ? normalizeServerKey(entry.server) : ''}` !== key)].slice(0, RECENT_VIEWED_LIMIT);
     state.recentlyViewed = next;
-    localStorage.setItem(RECENT_VIEWED_KEY, JSON.stringify(next));
+    writeLocalValue(RECENT_VIEWED_KEY, JSON.stringify(next));
     if (state.profileLoaded) scheduleProfileSave(0);
   }
 
   function clearRecentlyViewed() {
     state.recentlyViewed = [];
-    localStorage.setItem(RECENT_VIEWED_KEY, '[]');
+    writeLocalValue(RECENT_VIEWED_KEY, '[]');
     if (state.profileLoaded) scheduleProfileSave(0);
     if (routeBase() === 'home') homePage();
     showToast('Список недавно просмотренных очищен.');
@@ -636,10 +632,8 @@
     </section>`;
     main.innerHTML = `<section class="page home-page">
       <div class="home-primary">
-        <p class="eyebrow">Iris Online</p>
-        <h1>Поиск по Iris Online</h1>
+        <h1>База данных Iris Online</h1>
         <p>Ищите предметы, монстров, титулы и карты превращения по названию или ID. Рецепты — в отдельном разделе.</p>
-        <div id="homeSearchHost" class="home-search-host"></div>
       </div>
       ${updateNotice}
       ${serverDifference}
@@ -647,7 +641,6 @@
       <p class="home-database-status">Текущий сервер: <strong data-home-server-name>${escapeHTML(serverLabel)}</strong> · данные хранятся на этом компьютере</p>
       ${vkNews}
     </section>`;
-    positionSearchWidget(true);
     void checkVkNews();
   }
 
@@ -757,12 +750,12 @@
       api(`/api/titles?${params(query)}`, { signal }),
       api(`/api/transformations?${params(query)}`, { signal }),
     ]);
+    if (signal?.aborted) return;
     const total = Number(itemsData.total || 0) + Number(monstersData.total || 0) + Number(titlesData.total || 0) + Number(transformationsData.total || 0);
     main.innerHTML = `<section class="page search-results-page">
       ${pageHeader(`Результаты поиска`, total ? `По запросу «${query}» найдено: ${formatNumber(total)}.` : `По запросу «${query}» ничего не найдено.`)}
       ${total ? `<div class="search-result-sections">${searchResultSection('Предметы', 'items', itemsData.items || [], itemsData.total, query)}${searchResultSection('Монстры', 'monsters', monstersData.monsters || [], monstersData.total, query)}${searchResultSection('Титулы', 'titles', titlesData.titles || [], titlesData.total, query)}${searchResultSection('Карты превращения', 'transformations', transformationsData.transformations || [], transformationsData.total, query)}</div>` : `<div class="state-message compact"><span class="state-symbol">0</span><h2>Нет совпадений</h2><p>Проверьте написание, используйте часть названия или ID.</p></div>`}
     </section>`;
-    positionSearchWidget(false);
   }
 
   function searchResultSection(title, route, records, total, query) {
@@ -842,12 +835,10 @@
         </div>
         <div class="view-switch" role="group" aria-label="Вид каталога"><button type="button" data-view="list" class="${state.view === 'list' ? 'active' : ''}" aria-label="Компактный список">${icons.list}</button><button type="button" data-view="cards" class="${state.view === 'cards' ? 'active' : ''}" aria-label="Плитка">${icons.grid}</button></div>
       </section>
-      <div class="active-filters" data-active-filters>${activeFilterChips(kind)}</div>
-      <div class="catalog-status"><span data-catalog-count>Найдено: ${formatNumber(data.total)}</span><span class="catalog-live" aria-live="polite" data-catalog-live></span></div>
+      <div class="catalog-status"><span data-catalog-count>Найдено: ${formatNumber(data.total)}</span><div class="active-filters" data-active-filters>${activeFilterChips(kind)}</div><span class="visually-hidden" role="status" aria-live="polite" data-catalog-live></span></div>
       <div class="catalog-results" data-catalog-results aria-live="polite">${catalogResultsHTML(kind, data)}</div>
       <div data-catalog-pagination>${pagination(data.page, data.pages)}</div>
     </section>`;
-    positionSearchWidget(false);
     renderFilterDrawer(kind, data.filters || {});
   }
 
@@ -1078,8 +1069,8 @@
            <label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только рецепты с указанным источником получения.</small></span></label>`
         : `<label class="field"><span>Категория</span><select class="control-select" name="category">${optionList(filterData.categories, filters.category, 'Любая')}</select></label>
            ${kind === 'items'
-             ? `<label class="field"><span>Подкатегория</span><select class="control-select" name="subcategory" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.subcategories, filters.subcategory, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="field"><span>Редкость</span><select class="control-select" name="quality" ${dependentLocked ? 'disabled' : ''}>${qualityOptionList(filterData.qualities, filters.quality, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только предметы с указанным источником получения.</small></span></label>`
-             : `<label class="field"><span>Тип монстра</span><select class="control-select" name="type" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.types, filters.type, 'Любой')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label>`}`;
+             ? `<label class="field"><span>Подкатегория</span><select class="control-select" name="subcategory" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.subcategories, filters.subcategory, 'Любая')}</select>${dependentLocked ? '<small class="visually-hidden">Сначала выберите категорию.</small>' : ''}</label><label class="field"><span>Редкость</span><select class="control-select" name="quality" ${dependentLocked ? 'disabled' : ''}>${qualityOptionList(filterData.qualities, filters.quality, 'Любая')}</select>${dependentLocked ? '<small class="visually-hidden">Сначала выберите категорию.</small>' : ''}</label><label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только предметы с указанным источником получения.</small></span></label>`
+             : `<label class="field"><span>Тип монстра</span><select class="control-select" name="type" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.types, filters.type, 'Любой')}</select>${dependentLocked ? '<small class="visually-hidden">Сначала выберите категорию.</small>' : ''}</label>`}`;
     const showRange = kind !== 'transformations';
     const minLabel = kind === 'monsters' || kind === 'titles' ? 'Уровень от' : kind === 'recipes' ? 'Уровень мастерства от' : 'Ранг от';
     const maxLabel = kind === 'monsters' || kind === 'titles' ? 'Уровень до' : kind === 'recipes' ? 'Уровень мастерства до' : 'Ранг до';
@@ -1091,8 +1082,23 @@
 
   let filterReturnFocus = null;
   let dialogReturnFocus = null;
+
+  function setOverlayScrollLocked(locked) {
+    const root = document.documentElement;
+    if (root.classList.contains('overlay-open') === locked) return;
+    if (locked) {
+      const scrollbarWidth = Math.max(0, window.innerWidth - document.body.getBoundingClientRect().width);
+      root.style.setProperty('--overlay-scrollbar-width', `${scrollbarWidth}px`);
+      root.classList.add('overlay-open');
+    } else {
+      root.classList.remove('overlay-open');
+      root.style.removeProperty('--overlay-scrollbar-width');
+    }
+  }
+
   function setBackgroundInert(inert) {
-    [document.querySelector('.topbar'), main, document.querySelector('.mobile-nav')].forEach(element => {
+    setOverlayScrollLocked(inert || infoDialog.open);
+    [document.querySelector('.app-shell'), document.querySelector('.skip-link')].forEach(element => {
       if (!element) return;
       if (inert) element.setAttribute('inert', '');
       else element.removeAttribute('inert');
@@ -1104,18 +1110,16 @@
     filterReturnFocus = document.activeElement;
     filterDrawer.hidden = false;
     overlayBackdrop.hidden = false;
-    document.body.classList.add('overlay-open');
     setBackgroundInert(true);
-    requestAnimationFrame(() => filterDrawer.querySelector('select:not(:disabled), input, button')?.focus());
+    requestAnimationFrame(() => filterDrawer.querySelector('select:not(:disabled), input, button')?.focus({ preventScroll: true }));
   }
 
   function closeFilters() {
     if (filterDrawer.hidden) return;
     filterDrawer.hidden = true;
     overlayBackdrop.hidden = true;
-    document.body.classList.remove('overlay-open');
     setBackgroundInert(false);
-    filterReturnFocus?.focus?.();
+    filterReturnFocus?.focus?.({ preventScroll: true });
     filterReturnFocus = null;
   }
 
@@ -1128,6 +1132,7 @@
       state.route = route;
       replaceRouteHash(route);
     }
+    main.querySelector('.catalog-page')?.setAttribute('data-route', route);
     state.catalogController?.abort();
     const controller = new AbortController();
     state.catalogController = controller;
@@ -1148,7 +1153,11 @@
       if (chips) chips.innerHTML = activeFilterChips(catalog.kind);
       const filterCount = main.querySelector('[data-filter-count]');
       if (filterCount) filterCount.textContent = activeFilterCount(catalog.kind) || '';
-      if (refreshFilters) renderFilterDrawer(catalog.kind, data.filters || {});
+      if (refreshFilters) {
+        const activeField = filterDrawerBody.contains(document.activeElement) ? document.activeElement.name : '';
+        renderFilterDrawer(catalog.kind, data.filters || {});
+        if (activeField) filterDrawerBody.querySelector(`[name="${CSS.escape(activeField)}"]`)?.focus({ preventScroll: true });
+      }
       if (live && announce) live.textContent = `Показано ${formatNumber(catalogRecords(catalog.kind, data).length)} из ${formatNumber(data.total)}.`;
       scheduleProfileSave();
     } catch (error) {
@@ -1156,7 +1165,7 @@
       if (live) live.textContent = 'Не удалось обновить каталог.';
       showToast('Не удалось обновить каталог.');
     } finally {
-      results?.removeAttribute('aria-busy');
+      if (state.catalogController === controller) results?.removeAttribute('aria-busy');
     }
   }
 
@@ -1724,7 +1733,6 @@
         ${accordion('Технические сведения', `ID ${item.id}`, `${kvList([...itemTechnicalRows(item), ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server]])}`, false)}
       </section>
     </section>`;
-    positionSearchWidget(false);
   }
 
   function transformationBuffRows(card) {
@@ -1791,7 +1799,6 @@
       ${drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary || 'Источник получения')}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p></div><button class="secondary-button" type="button" data-open-details="transformation-sources">Показать все источники</button></section>` : ''}
       <section class="detail-accordions">${drops.length ? accordion('Источники получения', formatCount(drops.length, 'вариант', 'варианта', 'вариантов'), sourcesContent(), false, 'transformation-sources') : ''}${accordion('Технические сведения', `ID ${id}`, kvList(technicalRows), false)}</section>
     </section>`;
-    positionSearchWidget(false);
   }
 
   function titleDetail(data) {
@@ -1835,7 +1842,6 @@
         ]), false)}
       </section>
     </section>`;
-    positionSearchWidget(false);
   }
 
   function effectLabel(option) {
@@ -2010,7 +2016,6 @@
         ${accordion('Технические сведения', `ID ${monster.id}`, `${kvList([...monsterTechnicalRows(monster), ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server]])}`, false)}
       </section>
     </section>`;
-    positionSearchWidget(false);
   }
 
   function topMonsterDrops(slots, limit) {
@@ -2074,10 +2079,10 @@
     const keys = [...state.favorites];
     if (!keys.length) {
       main.innerHTML = `<section class="page">${pageHeader('Избранное', 'Сохранённые предметы, монстры, рецепты, титулы и карты превращения.')}<div class="state-message compact"><span class="state-symbol">☆</span><h2>Избранное пусто</h2><p>Добавляйте предметы, монстров, рецепты, титулы и карты превращения кнопкой со звездой.</p><a class="primary-button" href="#items">Открыть предметы</a></div></section>`;
-      positionSearchWidget(false);
       return;
     }
     const data = await api('/api/favorites', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys, server: state.server, page: state.favoritePage, pageSize: FAVORITES_PAGE_SIZE }) });
+    if (signal?.aborted) return;
     const migratedKeys = data.migratedKeys && typeof data.migratedKeys === 'object' ? data.migratedKeys : {};
     let favoritesMigrated = false;
     Object.entries(migratedKeys).forEach(([legacyKey, canonicalKey]) => {
@@ -2087,22 +2092,23 @@
       favoritesMigrated = true;
     });
     if (favoritesMigrated) {
-      localStorage.setItem('iris-favorites', JSON.stringify([...state.favorites]));
+      writeLocalValue('iris-favorites', JSON.stringify([...state.favorites]));
       scheduleProfileSave(0);
     }
     state.favoritePage = Math.max(1, Number(data.page || 1));
     const rows = (data.rows || []).map(row => row.kind === 'monster' ? monsterRow(row) : row.kind === 'recipe' ? recipeRow(row) : row.kind === 'title' ? titleRow(row) : row.kind === 'transformation' ? transformationRow(row) : itemRow(row));
     const missing = Number(data.missing || 0);
     main.innerHTML = `<section class="page">${pageHeader('Избранное', `В избранном: ${formatNumber(data.total)}.`)}${missing ? `<p class="muted-copy">Не удалось показать ${formatCount(missing, 'запись', 'записи', 'записей')}. Эти записи остаются сохранёнными в профиле.</p>` : ''}<div class="result-list">${rows.join('')}</div>${pagination(data.page, data.pages, 'favorite-page')}</section>`;
-    positionSearchWidget(false);
   }
 
-  async function renderRoute() {
+  async function renderRoute({ preservePage = true, retainOnError = true, resetScroll = false } = {}) {
     closeFilters();
     closeMoreMenu();
     closeSuggestions();
     const previousRoute = state.route;
     const raw = decodeRouteHash();
+    const scrollTop = resetScroll ? 0 : previousRoute === raw ? window.scrollY : routeScrollPositions.get(routeHistoryIndex) || 0;
+    const previousView = { catalog: state.catalog, sourceSections: state.sourceSections, monsterDrops: state.monsterDrops, itemEnhancement: state.itemEnhancement };
     const targetPath = raw.split('?')[0];
     const visiblePage = main.querySelector('.page');
     const visibleDetail = main.querySelector('.detail-page');
@@ -2114,9 +2120,9 @@
       || (visibleDetail.dataset.route?.startsWith('transformation/') && targetPath.startsWith('transformation/'))
     ));
     const preserveCatalogPage = Boolean(visibleCatalog && ['items', 'monsters', 'recipes', 'titles', 'transformations'].includes(targetPath));
-    const preservePageTransition = Boolean(visiblePage && !preserveItemDetail && !preserveCatalogPage && targetPath !== 'home');
-    const preserveVisiblePage = preserveItemDetail || preserveCatalogPage || preservePageTransition;
-    const visibleRoute = visibleDetail?.dataset.route || visibleCatalog?.dataset.catalogKind || previousRoute;
+    const preservePageTransition = Boolean(visiblePage && !preserveItemDetail && !preserveCatalogPage);
+    const preserveVisiblePage = preservePage && (preserveItemDetail || preserveCatalogPage || preservePageTransition);
+    const visibleRoute = visiblePage?.dataset.route || previousRoute;
 
     state.routeController?.abort();
     state.catalogController?.abort();
@@ -2124,7 +2130,7 @@
     if (!preserveItemDetail) {
       state.sourceSections = [];
       state.monsterDrops = null;
-        state.itemEnhancement = null;
+      state.itemEnhancement = null;
     }
     if (preserveVisiblePage && visiblePage) {
       visiblePage.setAttribute('aria-busy', 'true');
@@ -2191,8 +2197,8 @@
         const id = path.slice(7);
         const data = await api(`/api/items/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
         if (controller.signal.aborted || requestId !== state.requestId) return;
-        if (!Array.isArray(data.recipe) || !data.recipe.length) { notFoundPage(); return; }
-        itemDetail(data, 'recipes');
+        if (!Array.isArray(data.recipe) || !data.recipe.length) notFoundPage();
+        else itemDetail(data, 'recipes');
       } else if (path.startsWith('monster/')) {
         const id = path.slice(8);
         const data = await api(`/api/monsters/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
@@ -2210,11 +2216,16 @@
         transformationDetail(data);
       } else if (path === 'favorites') await favoritesPage(controller.signal);
       else notFoundPage();
-      if (!controller.signal.aborted && requestId === state.requestId) main.focus({ preventScroll: true });
+      if (!controller.signal.aborted && requestId === state.requestId) {
+        main.querySelector('.page')?.setAttribute('data-route', state.route);
+        window.scrollTo({ top: scrollTop, behavior: 'auto' });
+        main.focus({ preventScroll: true });
+      }
     } catch (error) {
       if (error?.name === 'AbortError') return;
       if (requestId !== state.requestId) return;
-      if (preserveVisiblePage) {
+      if (preserveVisiblePage && retainOnError) {
+        Object.assign(state, previousView);
         visiblePage?.removeAttribute('aria-busy');
         visiblePage?.removeAttribute('inert');
         state.route = visibleRoute;
@@ -2253,7 +2264,7 @@
   function toggleTheme() {
     state.theme = state.theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = state.theme;
-    localStorage.setItem('iris-theme', state.theme);
+    writeLocalValue('iris-theme', state.theme);
     updateThemeChrome();
     if (routeBase() === 'home' && state.vkNews.available) {
       state.vkNews.refreshToken += 1;
@@ -2336,13 +2347,13 @@
       detail = text;
     } else if (info.failure) {
       status = info.stale && info.checked ? 'stale' : 'error';
-      text = info.stale && info.checked ? 'Требует проверки' : 'Не проверена';
+      text = info.stale && info.checked ? 'Проверить' : 'Не проверена';
       detail = updateFailureMessage(info);
       if (info.stale && info.checked) detail = `${detail}. Показан результат последней успешной проверки`;
     } else if (info.checked && info.updateAvailable) {
       status = 'update';
-      text = info.latestVersion ? `Доступно ${info.latestVersion}` : 'Есть обновление';
-      detail = text;
+      text = 'Обновление';
+      detail = info.latestVersion ? `Доступна версия ${info.latestVersion}` : 'Есть обновление';
     } else if (info.checked) {
       status = 'current';
       text = 'Актуальная';
@@ -2352,7 +2363,6 @@
     versionStatusText.textContent = text;
     const label = `Версия ${APP_VERSION}. ${detail}`;
     versionStatus.setAttribute('aria-label', label);
-    versionStatus.title = label;
     checkUpdatesButton.disabled = Boolean(info.checking);
     checkUpdatesButton.setAttribute('aria-busy', info.checking ? 'true' : 'false');
   }
@@ -2570,8 +2580,13 @@
       infoDialogTitle.textContent = 'Как рассчитывается шанс выпадения';
       infoDialogBody.innerHTML = `<p><strong>Выпадение с монстров.</strong> Игра делает два последовательных выбора.</p><ol class="chance-steps"><li><strong>Шанс группы.</strong> Сначала игра определяет, сработала ли нужная группа наград.</li><li><strong>Если группа выбрана.</strong> Затем игра выбирает конкретный предмет внутри этой группы.</li><li><strong>Шанс за одну основную попытку.</strong> Это итоговая вероятность того, что оба выбора сработают подряд.</li></ol><p><strong>Пример:</strong> шанс группы 0,0042%, а предмета внутри неё 0,0833%. Тогда шанс предмета за одну основную попытку составляет около 0,0000035% — примерно 1 из 28,6 млн.</p><p class="muted-copy">Это не обязательно итоговый шанс получить предмет за одно убийство. На сервере могут быть дополнительные попытки, ограничения по уровню и времени и другие модификаторы.</p><p><strong>Сундуки.</strong> При открытии сначала определяется набор наград, затем из него выбирается указанное количество предметов. «Шанс при открытии» показывает вероятность получить этот предмет хотя бы один раз за одно открытие. Если точный процент нельзя подтвердить по имеющимся данным, приложение показывает содержимое без процента.</p>`;
     }
-    infoDialog.showModal();
-    requestAnimationFrame(() => infoDialog.querySelector('[data-close-dialog]')?.focus());
+    setOverlayScrollLocked(true);
+    try {
+      infoDialog.showModal();
+    } finally {
+      setOverlayScrollLocked(infoDialog.open || !filterDrawer.hidden);
+    }
+    requestAnimationFrame(() => infoDialog.querySelector('[data-close-dialog]')?.focus({ preventScroll: true }));
   }
 
   let profileTimer;
@@ -2579,6 +2594,8 @@
   let profileDirty = false;
   let profileSaving = false;
   let profileRevision = 0;
+  let profileFailures = 0;
+  let profileFailureStatus = 0;
   let lastVisibilitySave = 0;
 
   function profilePayload() {
@@ -2594,45 +2611,65 @@
     };
   }
 
+  function showProfileSaveFailure(failed) {
+    const notice = document.getElementById('profileSaveNotice');
+    if (notice) notice.hidden = !failed;
+  }
+
   function persistPendingProfile(payload = profilePayload()) {
-    try {
-      localStorage.setItem(PROFILE_PENDING_KEY, JSON.stringify({ revision: profileRevision, savedAt: Date.now(), profile: payload }));
-    } catch (_) {}
+    const saved = writeLocalValue(PROFILE_PENDING_KEY, JSON.stringify({ revision: profileRevision, savedAt: Date.now(), profile: payload }));
+    if (!saved && profileDirty) showProfileSaveFailure(true);
+    return saved;
+  }
+
+  function queueProfileSave(delay = PROFILE_DEBOUNCE) {
+    clearTimeout(profileTimer);
+    if (!state.profileLoaded || applicationClosing || !profileDirty) return;
+    const retry = profileFailures ? profileRetryDelay(profileFailures, profileFailureStatus) : delay;
+    if (retry !== null) profileTimer = setTimeout(saveProfileNow, retry);
   }
 
   async function saveProfileNow() {
     if (!state.profileLoaded || applicationClosing || profileSaving || !profileDirty) return;
+    clearTimeout(profileTimer);
     profileSaving = true;
     const revision = profileRevision;
     const payload = profilePayload();
     profileController = new AbortController();
     try {
       await api('/api/user-data', { method: 'PUT', signal: profileController.signal, body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' } });
+      profileFailures = 0;
+      profileFailureStatus = 0;
       if (revision === profileRevision) {
         profileDirty = false;
-        localStorage.removeItem(PROFILE_PENDING_KEY);
+        removeLocalValue(PROFILE_PENDING_KEY);
+        showProfileSaveFailure(false);
       }
-    } catch (_) {
+    } catch (error) {
       profileDirty = true;
+      profileFailures += 1;
+      profileFailureStatus = Number(error?.status) || 0;
       persistPendingProfile();
+      showProfileSaveFailure(true);
     } finally {
       profileSaving = false;
       profileController = null;
-      if (profileDirty && !applicationClosing) {
-        clearTimeout(profileTimer);
-        profileTimer = setTimeout(saveProfileNow, PROFILE_DEBOUNCE);
-      }
+      queueProfileSave();
     }
   }
 
   function scheduleProfileSave(delay = PROFILE_DEBOUNCE) {
-    localStorage.setItem('iris-history', JSON.stringify(state.history));
+    writeLocalValue('iris-history', JSON.stringify(state.history));
     profileDirty = true;
     profileRevision += 1;
     persistPendingProfile();
-    if (!state.profileLoaded || applicationClosing) return;
-    clearTimeout(profileTimer);
-    profileTimer = setTimeout(saveProfileNow, delay);
+    queueProfileSave(delay);
+  }
+
+  function retryProfileSave() {
+    profileFailures = 0;
+    profileFailureStatus = 0;
+    queueProfileSave(0);
   }
 
   function saveProfileBestEffort() {
@@ -2648,14 +2685,14 @@
   }
 
   function persistFavorites() {
-    localStorage.setItem('iris-favorites', JSON.stringify([...state.favorites]));
+    writeLocalValue('iris-favorites', JSON.stringify([...state.favorites]));
     scheduleProfileSave(0);
   }
 
   async function loadUserProfile() {
-    const localRecentlyViewed = safeJSON(localStorage.getItem(RECENT_VIEWED_KEY) || '[]', []);
+    const localRecentlyViewed = safeJSON(readLocalValue(RECENT_VIEWED_KEY) || '[]', []);
     const serverProfile = await api('/api/user-data');
-    const pending = safeJSON(localStorage.getItem(PROFILE_PENDING_KEY) || 'null', null);
+    const pending = safeJSON(readLocalValue(PROFILE_PENDING_KEY) || 'null', null);
     const pendingProfile = pending && pending.profile && pending.profile.schemaVersion === 1 ? pending.profile : null;
     const profile = pendingProfile || serverProfile;
     if (profile.migrated) {
@@ -2667,7 +2704,7 @@
       if (Array.isArray(profile.recentlyViewed) && profile.recentlyViewed.length) state.recentlyViewed = profile.recentlyViewed;
       else if (Array.isArray(localRecentlyViewed)) state.recentlyViewed = localRecentlyViewed;
     } else {
-      state.history = safeJSON(localStorage.getItem('iris-history') || '[]', []);
+      state.history = safeJSON(readLocalValue('iris-history') || '[]', []);
     }
     resetTransientCatalogFilters();
     globalSearch.value = '';
@@ -2679,12 +2716,12 @@
     normalizeDependentFilters('titles');
     document.documentElement.dataset.theme = state.theme;
     updateThemeChrome();
-    localStorage.setItem('iris-server', state.server);
-    localStorage.setItem('iris-theme', state.theme);
-    localStorage.setItem('iris-view', state.view);
-    localStorage.setItem('iris-favorites', JSON.stringify([...state.favorites]));
+    writeLocalValue('iris-server', state.server);
+    writeLocalValue('iris-theme', state.theme);
+    writeLocalValue('iris-view', state.view);
+    writeLocalValue('iris-favorites', JSON.stringify([...state.favorites]));
     state.recentlyViewed = normalizedRecentViewedEntries();
-    localStorage.setItem(RECENT_VIEWED_KEY, JSON.stringify(state.recentlyViewed));
+    writeLocalValue(RECENT_VIEWED_KEY, JSON.stringify(state.recentlyViewed));
     state.profileLoaded = true;
     const migratedLocalRecentlyViewed = state.recentlyViewed.length > 0 && !(Array.isArray(profile.recentlyViewed) && profile.recentlyViewed.length);
     if (pendingProfile || !profile.migrated || migratedLocalRecentlyViewed) scheduleProfileSave(0);
@@ -2696,6 +2733,7 @@
     clearTimeout(suggestionTimer);
     clearTimeout(catalogDebounce);
     clearTimeout(profileTimer);
+    clearTimeout(battlegroundTimer);
     clearTimeout(showToast.timer);
     state.routeController?.abort();
     state.catalogController?.abort();
@@ -2741,7 +2779,7 @@
     const viewButton = event.target.closest('[data-view]');
     if (viewButton) {
       state.view = viewButton.dataset.view;
-      localStorage.setItem('iris-view', state.view);
+      writeLocalValue('iris-view', state.view);
       main.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button === viewButton));
       const data = state.catalog?.data;
       const results = main.querySelector('[data-catalog-results]');
@@ -2902,22 +2940,27 @@
     if (event.target.closest('[data-search-all]')) submitGlobalSearch();
   });
 
-  serverSelect.addEventListener('change', () => {
-    const previous = state.server;
-    state.server = serverSelect.value;
-    localStorage.setItem('iris-server', state.server);
+  async function changeServer() {
+    const nextServer = normalizeServerKey(serverSelect.value);
+    if (state.server === nextServer) return;
+    state.server = nextServer;
+    writeLocalValue('iris-server', nextServer);
     scheduleProfileSave(0);
-    if (previous !== state.server) {
-      const serverLabel = serverSelect.options[serverSelect.selectedIndex]?.text || state.server;
-      const homeServerName = document.querySelector('[data-home-server-name]');
-      if (homeServerName) homeServerName.textContent = serverLabel;
-      showToast(`Выбран сервер ${serverLabel}. Данные обновлены.`);
-      const activeRoute = routeBase();
-      if (['home', 'monsters', 'transformations', 'favorites', 'search'].includes(activeRoute) || state.route.startsWith('item/') || state.route.startsWith('recipe/') || state.route.startsWith('monster/') || state.route.startsWith('title/') || state.route.startsWith('transformation/')) {
-        void renderRoute().finally(() => serverSelect.focus({ preventScroll: true }));
-      }
+    const kind = routeBase();
+    if (['items', 'monsters', 'recipes', 'titles', 'transformations'].includes(kind)) {
+      catalogFilters(kind).page = 1;
+      const params = new URLSearchParams(decodeRouteHash().split('?')[1] || '');
+      params.delete('page');
+      replaceRouteHash(kind + (params.size ? `?${params}` : ''));
     }
-  });
+    const serverLabel = serverSelect.options[serverSelect.selectedIndex]?.text || nextServer;
+    showToast(`Выбран сервер ${serverLabel}.`);
+    await renderRoute({ retainOnError: false, resetScroll: true });
+    if (state.server === nextServer && !applicationClosing) serverSelect.focus({ preventScroll: true });
+  }
+
+  serverSelect.addEventListener('change', changeServer);
+  document.getElementById('retryProfileSave')?.addEventListener('click', retryProfileSave);
 
   moreButton.addEventListener('click', () => moreMenu.hidden ? openMoreMenu() : closeMoreMenu({ restoreFocus: true }));
   moreMenu.addEventListener('click', event => {
@@ -2977,15 +3020,22 @@
   });
 
   infoDialog.addEventListener('click', event => { if (event.target === infoDialog || event.target.closest('[data-close-dialog]')) infoDialog.close(); });
-  infoDialog.addEventListener('close', () => { dialogReturnFocus?.focus?.({ preventScroll: true }); dialogReturnFocus = null; });
+  infoDialog.addEventListener('close', () => {
+    if (infoDialog.open) return;
+    setOverlayScrollLocked(!filterDrawer.hidden);
+    dialogReturnFocus?.focus?.({ preventScroll: true });
+    dialogReturnFocus = null;
+  });
 
   window.addEventListener('hashchange', handleRouteHashChange);
   window.addEventListener('beforeunload', prepareForWindowClose);
   window.addEventListener('pagehide', prepareForWindowClose);
   window.addEventListener('pageshow', () => {
     applicationClosing = false;
+    scheduleBattlegroundStatus();
   });
   document.addEventListener('visibilitychange', () => {
+    scheduleBattlegroundStatus();
     if (document.visibilityState === 'hidden') {
       const now = Date.now();
       if (now - lastVisibilitySave >= VISIBILITY_SAVE_INTERVAL) {
@@ -2997,9 +3047,12 @@
   });
 
   initializeRouteHistory();
+  let battlegroundTimer;
   function scheduleBattlegroundStatus() {
+    clearTimeout(battlegroundTimer);
+    if (applicationClosing || document.visibilityState === 'hidden') return;
     renderBattlegroundStatus();
-    window.setTimeout(scheduleBattlegroundStatus, 1000 - (Date.now() % 1000));
+    battlegroundTimer = window.setTimeout(scheduleBattlegroundStatus, 1000 - (Date.now() % 1000));
   }
 
   scheduleBattlegroundStatus();

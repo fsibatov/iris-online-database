@@ -1,0 +1,827 @@
+{
+  "schemaVersion": 1,
+  "referenceArchive": {
+    "name": "Iris Resourses(3).7z",
+    "sha256": "f2e0fadedd32800f3f57471050d36ffa4b811656653793cca9387fac044664e4"
+  },
+  "referenceCommit": "4bb96ba2622f67f846511c5d33afcb7074c60662",
+  "verifiedAt": "2026-09-07",
+  "liveServerStateVerified": false,
+  "sourceFiles": [
+    {
+      "path": "1/kiss/item_change.txt",
+      "sha256": "3ad4ee2748da21cab9415d8a875c1c8e7f26afdc1f87f1fb3f32948ba71daa37"
+    },
+    {
+      "path": "1/kiss/item_droplist.txt",
+      "sha256": "39d7c1c0afaad7c14b4b41b490fbfd09cff73132644464fb6c47b1b6743ed6c0"
+    },
+    {
+      "path": "1/kiss/item_dropn.txt",
+      "sha256": "c880b3613ea810c84bdb06f281172a18932d9c9309c191290d5e639f7b292931"
+    },
+    {
+      "path": "1/kiss/item_dropw.txt",
+      "sha256": "3fea169b3458ccb2071e5f1af309aa01f0d4fce9f52ad11712cce89d93388c20"
+    },
+    {
+      "path": "1/or/item_change.txt",
+      "sha256": "ce7b90cd6268fa67c65b5ab076872772594a7a5d6803e023be16eabad877a5e7"
+    },
+    {
+      "path": "1/or/item_droplist.txt",
+      "sha256": "dc647babae8cc59077e9dbf739b0e9b974a1290493c196daa42b24bce137bbd0"
+    },
+    {
+      "path": "1/or/item_dropn.txt",
+      "sha256": "04e053d4ec8adb7efed67f123ad15dfa7a03ec496c45332fe06f26163794ba39"
+    },
+    {
+      "path": "1/or/item_dropw.txt",
+      "sha256": "00187d74e0523404cce2a5201541b946eaa13cda18d9a6b7a18a7f2aa217a344"
+    },
+    {
+      "path": "Rus/Rus/card_npctarot.txt",
+      "sha256": "9fa70df43bb76a41d4d18936ba9bd20a410faa87e7f2b889e442db4e92cdae07"
+    },
+    {
+      "path": "Rus/Rus/card_tarot.txt",
+      "sha256": "23c8cc5eb456fd1a24c8d261d7fd6c1ef3a483e44d0fffd7cce7d7a6d41f9c97"
+    },
+    {
+      "path": "Rus/Rus/cardbook_tooltip.txt",
+      "sha256": "3aa4d7dedf1d70c194d6504a2dd599e4d244666462c2cc2e193d27452abd1b2e"
+    },
+    {
+      "path": "Rus/Rus/emotionfiltername.txt",
+      "sha256": "07d971ea4411b481b84c3584cbd55a0bf65f81009de6161a0acf761da463201c"
+    },
+    {
+      "path": "Rus/Rus/filtertable.txt",
+      "sha256": "587512c9e0b3840beb08b3c2c9588dbc885a93c7083a40b0c66ff1aff9662df6"
+    },
+    {
+      "path": "Rus/Rus/gatheringname.txt",
+      "sha256": "8999376b97250a0f943ede679b8dab923c078f80d53e7d0a441401676ec16a85"
+    },
+    {
+      "path": "Rus/Rus/guildskill_text.txt",
+      "sha256": "2e040c5fefa60c487c77f6685d7cfba7af6f89c7300ffd4a6681b7711055c5fc"
+    },
+    {
+      "path": "Rus/Rus/interfacemsg.txt",
+      "sha256": "43e2cf565e801f18373ae05483a9fc6f9a0606fea97fa491e7139d10668c6d17"
+    },
+    {
+      "path": "Rus/Rus/item_categoryname.txt",
+      "sha256": "84c9de75a749a16ba704c7122fea65b5584c98eda60d73493789df99e9773584"
+    },
+    {
+      "path": "Rus/Rus/item_name.txt",
+      "sha256": "be167fb9a94375ac3bf218efc6bcae0e9c185b82f68e02a084e3cbbd5f04803c"
+    },
+    {
+      "path": "Rus/Rus/item_tooltip.txt",
+      "sha256": "745785db8fef795480eb99501100d3f83d631093b29fa2c1f3803acda1991a3f"
+    },
+    {
+      "path": "Rus/Rus/map_explanation.txt",
+      "sha256": "b596dd15f101f42edd4f82f29ad9865ee79be3a6baab064a06e488c0735236f1"
+    },
+    {
+      "path": "Rus/Rus/map_name.txt",
+      "sha256": "695469e73a9f59199ed8dc0c3802e820946e6de0c0d96090500167fdd85ff5f4"
+    },
+    {
+      "path": "Rus/Rus/mon_name.txt",
+      "sha256": "2cdb1effc8a7bae2029192a6faf29215a70e4aa616ba06dda0ff8762cba6801e"
+    },
+    {
+      "path": "Rus/Rus/mon_note.txt",
+      "sha256": "f17827616f20b8628dedd396914b1ea9244a57e4df33fa161df1cfddd8ac06ec"
+    },
+    {
+      "path": "Rus/Rus/npc_name.txt",
+      "sha256": "0e5c2f373a787a6472d0bc5f3f6802cb148e4d0604d09bd21f88f3b8621457fa"
+    },
+    {
+      "path": "Rus/Rus/npc_note.txt",
+      "sha256": "0ccfe12a111730ce244fb427f1a7e1da2e82a927e9b287600c3de0d7d0001575"
+    },
+    {
+      "path": "Rus/Rus/quest_name.txt",
+      "sha256": "b8e6e4a8a37ae70b87791c691a888b10bfe2d14bb3b619a64f59e84478f03820"
+    },
+    {
+      "path": "Rus/Rus/quest_note.txt",
+      "sha256": "80d503a097a3f1e3905d8b4f9955a0f22b83265182a6cfe230de5e4ac2a80775"
+    },
+    {
+      "path": "Rus/Rus/skill_name.txt",
+      "sha256": "f7b61f94088c5aad7226bbdb5f1c0ba14c772c2ded38dcfa48e10fc32c9134b1"
+    },
+    {
+      "path": "Rus/Rus/skill_tooltip.txt",
+      "sha256": "490ade6a3cb4742b166c51e65628fba913e390887f196eaa0502caf9ca5dc006"
+    },
+    {
+      "path": "Rus/Rus/systemmsg.txt",
+      "sha256": "ce434da46ff9bf95d6b234051437e4d4483f13b869315a606823bd62fb816c69"
+    },
+    {
+      "path": "Rus/Rus/tip_text.txt",
+      "sha256": "3f0bdfc97269f3cfb0acdf189cd790e07d608f125c12a2dff4b80fd296abc850"
+    },
+    {
+      "path": "Rus/Rus/titlemsg.txt",
+      "sha256": "8926d3030cf1434d3ce12f403c57d46e889be3dd55837f6837f77d1f5502b575"
+    },
+    {
+      "path": "resource/resource/001_areagroup.txt",
+      "sha256": "99a6e029d9434258ba501231de32875132fbf8f6aeb16d11347b2fbc6457f68f"
+    },
+    {
+      "path": "resource/resource/002_areagroup.txt",
+      "sha256": "4a3696d2cef1463eadfd7576ef7abdd6f61701324edd5cb3f99be55734408434"
+    },
+    {
+      "path": "resource/resource/003_areagroup.txt",
+      "sha256": "fb7d9ca4ebfa10bf8c9a5e112f25a6f3eda8382ac953b57d27bc21893373ebdf"
+    },
+    {
+      "path": "resource/resource/004_areagroup.txt",
+      "sha256": "2f1345f15f0b40e75553d159fe8c476f6e3d20a60b278d08334dcb040b30a6e0"
+    },
+    {
+      "path": "resource/resource/005_areagroup.txt",
+      "sha256": "43dcb3f77d4d872daa962dd906f2d11b119dfca5af7359fea8ecae4672102530"
+    },
+    {
+      "path": "resource/resource/006_areagroup.txt",
+      "sha256": "99e11afb6a0f2f4c42a6afbe7f659a3b4b8daf6c76ed69000e5d501f5355ca3c"
+    },
+    {
+      "path": "resource/resource/007_areagroup.txt",
+      "sha256": "213f880bebe5ffee8244518bb51b1fa9ec53fb40419038ef6682c2fc67d42bc3"
+    },
+    {
+      "path": "resource/resource/008_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/009_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/010_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/011_areagroup.txt",
+      "sha256": "1c5e00d0081bcf388087ea1743ee6be0d1c92b74ad3d48a194c0f0c0d813d401"
+    },
+    {
+      "path": "resource/resource/012_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/013_areagroup.txt",
+      "sha256": "1c5e00d0081bcf388087ea1743ee6be0d1c92b74ad3d48a194c0f0c0d813d401"
+    },
+    {
+      "path": "resource/resource/014_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/015_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/016_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/017_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/018_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/019_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/020_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/021_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/022_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/023_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/024_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/025_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/026_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/027_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/028_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/029_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/030_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/031_areagroup.txt",
+      "sha256": "76efe8ec2a106c6c744860547dc7a71ace6071b19c881c2a9f428df5dc8fd056"
+    },
+    {
+      "path": "resource/resource/032_areagroup.txt",
+      "sha256": "7c2faff49b0fce64eb80508135479d3934a196dafcd62843eecec4afc80aa78f"
+    },
+    {
+      "path": "resource/resource/033_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/034_areagroup.txt",
+      "sha256": "b9ae12768c8f34cb91b80dcaa892bfbecefca6bc4e23cf75f1d12771057cfd04"
+    },
+    {
+      "path": "resource/resource/101_areagroup.txt",
+      "sha256": "76efe8ec2a106c6c744860547dc7a71ace6071b19c881c2a9f428df5dc8fd056"
+    },
+    {
+      "path": "resource/resource/102_areagroup.txt",
+      "sha256": "76efe8ec2a106c6c744860547dc7a71ace6071b19c881c2a9f428df5dc8fd056"
+    },
+    {
+      "path": "resource/resource/103_areagroup.txt",
+      "sha256": "0594fb68f4527448faeb616ddb3612c55082b8e03b47dca93d75a20cd952b5d7"
+    },
+    {
+      "path": "resource/resource/104_areagroup.txt",
+      "sha256": "0594fb68f4527448faeb616ddb3612c55082b8e03b47dca93d75a20cd952b5d7"
+    },
+    {
+      "path": "resource/resource/200_areagroup.txt",
+      "sha256": "43dcb3f77d4d872daa962dd906f2d11b119dfca5af7359fea8ecae4672102530"
+    },
+    {
+      "path": "resource/resource/201_areagroup.txt",
+      "sha256": "43dcb3f77d4d872daa962dd906f2d11b119dfca5af7359fea8ecae4672102530"
+    },
+    {
+      "path": "resource/resource/202_areagroup.txt",
+      "sha256": "43dcb3f77d4d872daa962dd906f2d11b119dfca5af7359fea8ecae4672102530"
+    },
+    {
+      "path": "resource/resource/203_areagroup.txt",
+      "sha256": "43dcb3f77d4d872daa962dd906f2d11b119dfca5af7359fea8ecae4672102530"
+    },
+    {
+      "path": "resource/resource/204_areagroup.txt",
+      "sha256": "43dcb3f77d4d872daa962dd906f2d11b119dfca5af7359fea8ecae4672102530"
+    },
+    {
+      "path": "resource/resource/205_areagroup.txt",
+      "sha256": "b6e82ff3a0a063c195af81355b543043b9c0db8e6e1e86fd4ed0db8e0e6a85c6"
+    },
+    {
+      "path": "resource/resource/206_areagroup.txt",
+      "sha256": "91aa68efcfb759dac4fa656b2f1a91c9bddd9c32464e564ee6616ee28b832f54"
+    },
+    {
+      "path": "resource/resource/207_areagroup.txt",
+      "sha256": "2796233451ce6b09b7380295d3d3cb2279d203c260f7e25fddaafaa9a061b43d"
+    },
+    {
+      "path": "resource/resource/208_areagroup.txt",
+      "sha256": "6393f8d1068092084c4ed11667347da3cb885ad3a19a5349311e4527dc81cbcd"
+    },
+    {
+      "path": "resource/resource/209_areagroup.txt",
+      "sha256": "b6e82ff3a0a063c195af81355b543043b9c0db8e6e1e86fd4ed0db8e0e6a85c6"
+    },
+    {
+      "path": "resource/resource/210_areagroup.txt",
+      "sha256": "ecf1198d19f6e4353b3653bd146b962507ac218fcac6e68a8dce61abf29957ae"
+    },
+    {
+      "path": "resource/resource/701_areagroup.txt",
+      "sha256": "b6e82ff3a0a063c195af81355b543043b9c0db8e6e1e86fd4ed0db8e0e6a85c6"
+    },
+    {
+      "path": "resource/resource/Daily_Gift.txt",
+      "sha256": "e9729afe75ce09590d46877bdcf9f01985200f986a2bf26151ac229d77517561"
+    },
+    {
+      "path": "resource/resource/Imprinting_Default.txt",
+      "sha256": "be5848b26e367e4ca4b72cccb46bd918c48cdfbea8bde2c486929d7152b18b3a"
+    },
+    {
+      "path": "resource/resource/characterbasefile.txt",
+      "sha256": "062331cfbc804f5f075cad4c35b067ec5518f4ce78341439e00d6f5a62959c80"
+    },
+    {
+      "path": "resource/resource/characterhairfile.txt",
+      "sha256": "f388c6e3aaa774d1b758bd5b3004acc5528f8bf49578d1b89bbd21f136343c60"
+    },
+    {
+      "path": "resource/resource/communityskilllist.txt",
+      "sha256": "bd10d91a241f29054a5196116bdc56dfb991bfcc875cdbc5d7fc6e95f853dfb0"
+    },
+    {
+      "path": "resource/resource/damagecalc.txt",
+      "sha256": "3dc797c0ac737113c86b94ff3d737e593cf2137e49fe8b59636723ff74c20b9a"
+    },
+    {
+      "path": "resource/resource/default_quickslot.txt",
+      "sha256": "6d4926b20834262a1a4e3a6c48e0b991a9cdb914e97fa2bb6c501b0289eb1c4a"
+    },
+    {
+      "path": "resource/resource/doorposlist.txt",
+      "sha256": "0533e486b2ff1fe93d11735e7f24572fbaab89fcf5be08ca4bc2fd052de6b2cd"
+    },
+    {
+      "path": "resource/resource/dropincrease.txt",
+      "sha256": "69d34939647074cf3d3cbaa06477346e6df2fca043f01c2685e9252329cc168d"
+    },
+    {
+      "path": "resource/resource/emotionlist.txt",
+      "sha256": "2910f42351cf8ae61ea270cf09919072be55a62be339802c6d95631dd688b6e0"
+    },
+    {
+      "path": "resource/resource/exptable.txt",
+      "sha256": "037e420acec9a40d1aa621cc0d9f06774d27d637f842631851da75c6b15811c2"
+    },
+    {
+      "path": "resource/resource/fortunetarot_card.txt",
+      "sha256": "bd350da0a85a53d4b9e80131ff76a587df0b9475aa13b61b681be540716e2eec"
+    },
+    {
+      "path": "resource/resource/fortunetarot_comment.txt",
+      "sha256": "8500d0afd21fe01531557966ccc9bb71657383814101229c514c3d5e6181e986"
+    },
+    {
+      "path": "resource/resource/fortunetarot_spread.txt",
+      "sha256": "8f9f0ab01f23aba397ba87170ed194be1b165f7ace7ab83f62be841453a0202d"
+    },
+    {
+      "path": "resource/resource/gatheringlist.txt",
+      "sha256": "531aafcc45df2bfe7867723e1960c1c357b016e8cf944eb257b433d1021c0951"
+    },
+    {
+      "path": "resource/resource/genpattern.txt",
+      "sha256": "ac1beb76ae7fc77a07679324b905da57884f3988111bc72cd8c48f40be5bbe5c"
+    },
+    {
+      "path": "resource/resource/guildmanage.txt",
+      "sha256": "3075faf40b26ccea520cef213f3c36c2347c17d1a8fa0338b273c54542c9a661"
+    },
+    {
+      "path": "resource/resource/guildskill_info.txt",
+      "sha256": "fb023315c2186a36d49f9b916f3e677489da24f4b0e2cb9de6045f11e47569cf"
+    },
+    {
+      "path": "resource/resource/item_ability.txt",
+      "sha256": "24444dcefbc69b0a181091a8f2937bfd45acd162380f7a0285a5f66a87ea616a"
+    },
+    {
+      "path": "resource/resource/item_card.txt",
+      "sha256": "7bfb1f1adc0e591b5ba4f09ec58cb44e076328a46ef17b57c8c0d7b7ad6b56db"
+    },
+    {
+      "path": "resource/resource/item_card_slot.txt",
+      "sha256": "155da57a37996bc776ef28a3bf506071f4dbdce685cd61f23b96f3d583800568"
+    },
+    {
+      "path": "resource/resource/item_dealcategorytable.txt",
+      "sha256": "d233291a64d2d0032445e7a19c8050ee1bf277447b8823c54d242e1c1d8bbe19"
+    },
+    {
+      "path": "resource/resource/item_define.txt",
+      "sha256": "f101ca8e71029150d7f28bfd2e4748b56979428ca69cd076979ed824362ad6f7"
+    },
+    {
+      "path": "resource/resource/item_disjoint.txt",
+      "sha256": "ae8881556fe1e3a6f2f65d1c81b873bb0a169d282a12a733e6a88b6126165806"
+    },
+    {
+      "path": "resource/resource/item_disjointlist.txt",
+      "sha256": "5cc6ca273afd5b86d61c844426dab84567e0b595dc24a4465f7143e7f43dd15e"
+    },
+    {
+      "path": "resource/resource/item_droplimit.txt",
+      "sha256": "c2c68b9454fa1f1ee299a6ef7a90def9e0114dddf63fff29a64db581359db941"
+    },
+    {
+      "path": "resource/resource/item_dropmoney.txt",
+      "sha256": "f588772563407fe0ab7d5629085498157d1fb8ed1ea218f96164c83cdd3b84b1"
+    },
+    {
+      "path": "resource/resource/item_dropq.txt",
+      "sha256": "95067a5021f8743b9159873fafc1113c573f4f2677ede67027cf916a105ca67d"
+    },
+    {
+      "path": "resource/resource/item_dropw.txt",
+      "sha256": "64edb68fab5d2beb2f275285583656852402ec6820ba474fa28f92d1aecce1d9"
+    },
+    {
+      "path": "resource/resource/item_dropwave.txt",
+      "sha256": "09a3b7bb5dfeffea907f1ca8c57b9e93960d1ce73bc4d1f7a6e888325ca9a15d"
+    },
+    {
+      "path": "resource/resource/item_enhanced.txt",
+      "sha256": "85283338534acc0ea03eef7869590bc3da7d3db228ddbe3daddca91caca59f06"
+    },
+    {
+      "path": "resource/resource/item_enhancedeffect.txt",
+      "sha256": "aad05cf42923a1797cf9825fd270ef5503a641085c1b9c20ee873d3a69fb5556"
+    },
+    {
+      "path": "resource/resource/item_enhancedrate.txt",
+      "sha256": "fb2b04b0dd141f3f9ba961a967011b8d3ab5aec0e9c1f27a14f2fc4defdcdd23"
+    },
+    {
+      "path": "resource/resource/item_filename.txt",
+      "sha256": "294fcfde7ef97fbe8af18c96f2248bd78a09aa74fa6ee2b45b9dd901397703b9"
+    },
+    {
+      "path": "resource/resource/item_gatheringlimit.txt",
+      "sha256": "d88bb3a99dde4d68324ec34c2d8d3c0dc50ed41c5c5ea8194682d712a7af92bd"
+    },
+    {
+      "path": "resource/resource/item_gatheringlist.txt",
+      "sha256": "756f5da7f9d44dbffb4abc1883c5c76b742fbe01ad6fbcb0eb9089c9f5554cee"
+    },
+    {
+      "path": "resource/resource/item_gatheringmoney.txt",
+      "sha256": "5e1246e8a02e0479889219a81ed1311cc33dbfdb7e59fb93b731ba7ee203d549"
+    },
+    {
+      "path": "resource/resource/item_gatheringn.txt",
+      "sha256": "0239ee40134358ebd7e96a7b587a0091583209141a8d45a2f6cc08d3fc1543c9"
+    },
+    {
+      "path": "resource/resource/item_gatheringq.txt",
+      "sha256": "5d936a9707e22ca43fe7a568d07041a62e26c8074041329a1b4eb328e06af787"
+    },
+    {
+      "path": "resource/resource/item_limit.txt",
+      "sha256": "838d6e744f11a87e93b8b40726153a6b1c84337b77359841f2672e52ede0c961"
+    },
+    {
+      "path": "resource/resource/item_mixed.txt",
+      "sha256": "3f4d6066fe37c2485ce8db83258c25c9fd219f4906df12eff431dfd62d72a275"
+    },
+    {
+      "path": "resource/resource/item_npcstore.txt",
+      "sha256": "0c1c71d1ad6552feadf41e9997ef9b355e61335a77a875ebf6e8bfe0bb1eb331"
+    },
+    {
+      "path": "resource/resource/item_onepiece.txt",
+      "sha256": "3e78be68c7814d2e6bafa1f064cb9a4ca73d975fb72e5ffd190f77cbc92d2614"
+    },
+    {
+      "path": "resource/resource/item_pc.txt",
+      "sha256": "a2fe714eb73be8bbc4aeab65cb9509d28350c18046761fcf36d8845857cbc275"
+    },
+    {
+      "path": "resource/resource/item_set.txt",
+      "sha256": "bedc7d49a4f9aae273bdb44114a68fec8583936ff410c6594f50d13a575a68d1"
+    },
+    {
+      "path": "resource/resource/item_spread.txt",
+      "sha256": "f02e0963202e312cfee2c26d89b1f7ec2d252f40cecc3fccb2c4471021a33819"
+    },
+    {
+      "path": "resource/resource/item_tarot.txt",
+      "sha256": "4efa908e5d497331f8d9225a73075981292a332decc72f7820fae00c0cb0ad0b"
+    },
+    {
+      "path": "resource/resource/item_tarot_result.txt",
+      "sha256": "c8594c4421babe3b71487f2e657bd3b1fb3c75225d75f45dc8227349dfc6d20f"
+    },
+    {
+      "path": "resource/resource/item_transe.txt",
+      "sha256": "3ef372e6ecd08ba9136014a3c1826fce24b5290aeb532787d3e7ca45c9ed2cbe"
+    },
+    {
+      "path": "resource/resource/item_transelimit.txt",
+      "sha256": "e0b1e8c8ec9374c4e355cd1085fe8b2c1525ad73868e2fe7f18d03cbd23e4ea5"
+    },
+    {
+      "path": "resource/resource/item_weaponcostume.txt",
+      "sha256": "bb6a9cbb05ce03fbc49b1ea29bd8fa7abcde35aa23a1f695ad596f5e507e3d47"
+    },
+    {
+      "path": "resource/resource/list_quest.txt",
+      "sha256": "2431e33e3e1497c349c59443b4974ad4a72e9cd7c6e0709fb165749b85bb5768"
+    },
+    {
+      "path": "resource/resource/makestageviewitem.txt",
+      "sha256": "11bd23ef1f7dc6c68b2ecd3cde6ffb02e9017ba1c2754a47e7512f260318a2f5"
+    },
+    {
+      "path": "resource/resource/mapchangepos.txt",
+      "sha256": "2dc1489d3f70bec8355047dbbc712acca721c70e3fe430434d20aeccaaf863d8"
+    },
+    {
+      "path": "resource/resource/mapdata.txt",
+      "sha256": "76968278661ce25e8e7f5094c6ed13502dc647484ec5299f41d1da749c4ca6aa"
+    },
+    {
+      "path": "resource/resource/modelfilelist.txt",
+      "sha256": "8818d353abaad41f5bff5457d8e0ca652c0861a78f52d4377ad1ffbf8657a9cb"
+    },
+    {
+      "path": "resource/resource/monsterlist.txt",
+      "sha256": "06104af5a1164007b197db368aa7f260e38b8e464be9245c55ae18334f9617c5"
+    },
+    {
+      "path": "resource/resource/monsterspeech.txt",
+      "sha256": "01c011b022da58a9e2150ece7cb34eb424e8dfd1e63458de2d5000d5db228488"
+    },
+    {
+      "path": "resource/resource/npc_func.txt",
+      "sha256": "98dfc3d570a1d6a7ad2db83016172a8e861baa829d16239b650afc665297b011"
+    },
+    {
+      "path": "resource/resource/npc_mixed.txt",
+      "sha256": "b799093de9440620779b4aa9081c99197150c2f06f7a58d537cfdd7d00daf4e4"
+    },
+    {
+      "path": "resource/resource/npc_scene.txt",
+      "sha256": "d5432279a1ef0f5e327654e31b58f0710700b39061511ae7375e1b0675ab825b"
+    },
+    {
+      "path": "resource/resource/npclist.txt",
+      "sha256": "6fe68c21fa11b4c79998e7e666006e064471ebcea8e387102e8467dcc70c4c89"
+    },
+    {
+      "path": "resource/resource/npcquestlist.txt",
+      "sha256": "18f938f2b31091bc58600dbe34643c52c4ba0c5cfb458daf1037185a6fb0fe1e"
+    },
+    {
+      "path": "resource/resource/party_exp.txt",
+      "sha256": "d235a431d2780b2f9d399e7ec7193a04d9d05d8d73d386600a5d710e0c25889c"
+    },
+    {
+      "path": "resource/resource/path_guildskilltree.txt",
+      "sha256": "fd00a59497f84b3e7d80cc704a961e552ddaee0c68e725424c376336260062e3"
+    },
+    {
+      "path": "resource/resource/path_skilltree.txt",
+      "sha256": "6fa1c1deac98f2129175aab337709631b7e5e02ccd5b6255c5d2292ce309f08c"
+    },
+    {
+      "path": "resource/resource/playerjobtree.txt",
+      "sha256": "5da5df88091fb15ffb6349475ad7149e130f68b54a2f8673fe9617a670505658"
+    },
+    {
+      "path": "resource/resource/pvp_character.txt",
+      "sha256": "b7424e37c57f50c7c09e7e94c9f57150c8fec506423518e5c7524cb80ca0a8a7"
+    },
+    {
+      "path": "resource/resource/pvp_map.txt",
+      "sha256": "42b2513af368bf2e8154927feb3f0c6adc736f95fea61f20e7db2b8511b1d6d5"
+    },
+    {
+      "path": "resource/resource/pvp_time.txt",
+      "sha256": "e6c1aa6814f72a3dd107a601a3375fce952f4cb765a23d5734ac201cd803ab19"
+    },
+    {
+      "path": "resource/resource/quest_extra.txt",
+      "sha256": "269d7077159301d409ba304d97f04fb8548433840b43a676a7c74776c3224eea"
+    },
+    {
+      "path": "resource/resource/quest_ivent.txt",
+      "sha256": "1b947e3d7516c16cdf512e735d20b1ff380c79804848ea7deb4ec46228bba6f4"
+    },
+    {
+      "path": "resource/resource/quest_main.txt",
+      "sha256": "49efce81bda172dd57b882a93807213ec6c541b20047caf26cd3a28ccd4429aa"
+    },
+    {
+      "path": "resource/resource/quest_scroll.txt",
+      "sha256": "5fc99a66a78a83589c4c4390b194f6ffa921a5d11398368a1a1b3cfb47451d06"
+    },
+    {
+      "path": "resource/resource/skill_anispeed.txt",
+      "sha256": "fd2ab8ea0f0ac6c50f5c77256975b97de1be2fd5c8cbd73d9f806e604d58f5f4"
+    },
+    {
+      "path": "resource/resource/skilllist_active.txt",
+      "sha256": "945fdb461e4eb00419c8c8faee9efcaa2a0391013e77040341645de176a72bea"
+    },
+    {
+      "path": "resource/resource/skilllist_class.txt",
+      "sha256": "39cfb28f29e557e42cd1fefd64a93839712f2d59952248d8ef92bf4ee73a61ab"
+    },
+    {
+      "path": "resource/resource/skilllist_effect.txt",
+      "sha256": "239eb9dd21c6e5c7cfaa84aea4178105eb7f8e13f8c6fbb44c9512333997ddef"
+    },
+    {
+      "path": "resource/resource/skilllist_mon.txt",
+      "sha256": "4990692d2778a8524a667f2d34602964f0955c4e59c9af368ec7e2f928f372d5"
+    },
+    {
+      "path": "resource/resource/skilllist_overlap.txt",
+      "sha256": "c845c9fb26003197d824a8eed963706e3ce5ae44313de96d67ff46b484a5ca28"
+    },
+    {
+      "path": "resource/resource/skilllist_pc.txt",
+      "sha256": "d8755fe44e74e461341f13dff1ce873d6f18b941789c04f86098b90fd7d0b565"
+    },
+    {
+      "path": "resource/resource/skilllist_sub.txt",
+      "sha256": "86db8fa4eb985bf263aae44838e729aeaa6d018b0634d82b125c040629d60fac"
+    },
+    {
+      "path": "resource/resource/skilllist_trap.txt",
+      "sha256": "71990f29c7bc10d6659d7a93fac52a8e9be1161c1572906b9cd4abda47af4439"
+    },
+    {
+      "path": "resource/resource/soundlist.txt",
+      "sha256": "6b1efaa14df32c38a8aec1a21ef5678fb88804720d16f971b982caea445bcfe9"
+    },
+    {
+      "path": "resource/resource/statusbase.txt",
+      "sha256": "3628b85b3a82451eeedc41f358f598372d3f07ccd250e6eccd9859e2d1a7d048"
+    },
+    {
+      "path": "resource/resource/statusextbase.txt",
+      "sha256": "38daa0fee26c345ca868ba29a58ddf59ab0a399d22b268bab97f5fa0c0b6213c"
+    },
+    {
+      "path": "resource/resource/statusextmultipl.txt",
+      "sha256": "85cf9fdaa48b20c36ef9a1d9f6f29e4419a94ff06c4caf6affa9698d16dae88d"
+    },
+    {
+      "path": "resource/resource/statusmultipl.txt",
+      "sha256": "0f4a844377506464139ed63ed7f56514f360620713eb24e1015c141669d251f8"
+    },
+    {
+      "path": "resource/resource/summonmonster.txt",
+      "sha256": "5f8438e2bd3b8b8b842fb99c1b639018fbe32552a313d49e9090814d0df093d4"
+    },
+    {
+      "path": "resource/resource/sxptable.txt",
+      "sha256": "037e420acec9a40d1aa621cc0d9f06774d27d637f842631851da75c6b15811c2"
+    },
+    {
+      "path": "resource/resource/tarotdramapattern.txt",
+      "sha256": "019919da12a0a00227103a1ed577e2362262cd84410ad56bcea4db39c48187f6"
+    },
+    {
+      "path": "resource/resource/themetime.txt",
+      "sha256": "afa9680b82be600e39367e39e5503567bdaed771b37221aab8747e77b6d472c5"
+    },
+    {
+      "path": "resource/resource/tip_game.txt",
+      "sha256": "539d1657c247ae1513f458f9dd1cfa1e0f56b4705a90b1e2b0be424cbcdc0a39"
+    },
+    {
+      "path": "resource/resource/tip_loadingmap.txt",
+      "sha256": "fb7d7b74368c8289f42ebd6e6324f55142aadfdfd2404d609b9cdb1ddfa297d8"
+    },
+    {
+      "path": "resource/resource/title_define.txt",
+      "sha256": "75dd89310ad8cff3f29f9acbd017e4865363fefd964bdb19ac08dc07e8edc88d"
+    },
+    {
+      "path": "resource/resource/tutorialmode.txt",
+      "sha256": "f97a46bb1f286398c50b3f5ecdb857f03c93bb96ae93f100413ff395be33d50a"
+    },
+    {
+      "path": "resource/resource/tutorialskilllist.txt",
+      "sha256": "df26520f5c95db7ee1715978ff5cf7ed8ccd02fd5512eb2295ec7397c27a9a92"
+    },
+    {
+      "path": "resource/resource/twitter_automsg.txt",
+      "sha256": "969792083393e650ab69fc5fb9bfdf6838d2e42d4615865c0d8f7a66a800d3e5"
+    },
+    {
+      "path": "resource/resource/vehiclelist.txt",
+      "sha256": "1c10a830a68982c512c7097d3984a688886b260c2d614588e96be62323ea6d98"
+    },
+    {
+      "path": "resource/resource/wave_drama.txt",
+      "sha256": "0a83897442e3d2f8979c979cb3241a08b4095fd6058f73e93189d0c9cbe38c9d"
+    },
+    {
+      "path": "resource/resource/wave_exp.txt",
+      "sha256": "f25f47476e5d927f32d6cd26c63a92acfb19c17570d129089ed7fd1546154dcd"
+    },
+    {
+      "path": "resource/resource/wave_grade.txt",
+      "sha256": "f39e5495b012d420adaab5a51543472f5e12b5c4b42c5bd7cdd8b28ec471c72f"
+    },
+    {
+      "path": "resource/resource/wave_mission.txt",
+      "sha256": "836b4ff321a084ee731b5da83c5421523588a6350820d2a5eb92c521ef90dc33"
+    },
+    {
+      "path": "resource/resource/wave_monster.txt",
+      "sha256": "f83639d873e59cbf8ee377934ca93e2ba457e604d87b7ccfa3c8d3e719aa10d6"
+    },
+    {
+      "path": "resource/resource/wave_partyweight.txt",
+      "sha256": "25bb0523da6e892f4e2c0c4a878bea0137e56c04f5ea8a4b6c870e3ea0e8fb9a"
+    },
+    {
+      "path": "resource/resource/wave_rewardstep.txt",
+      "sha256": "d788c23adf7406393492ae8d35135454daadcb3c4713e9e1450b2613ac6aaa26"
+    }
+  ],
+  "unresolvedOptions": {
+    "registry": "assets/item_abilities.json.gz",
+    "field": "conflictsPreserved",
+    "count": 38
+  },
+  "projectionAdjustments": [
+    {
+      "server": "kiss",
+      "source": "1/kiss/item_dropn.txt",
+      "line": 2483,
+      "monsterId": 10042,
+      "groupId": 6000501,
+      "rawWeights": [
+        100,
+        50
+      ],
+      "embeddedWeights": [
+        100
+      ],
+      "reason": "В последовательной базовой модели повторная группа после 100% недостижима; поведение закреплено существующим тестом. Модификаторы действующего сервера отдельно не подтверждены."
+    }
+  ],
+  "unresolvedReferences": {
+    "recipeMaterialIds": [
+      "830050",
+      "830051",
+      "830052",
+      "830053",
+      "830054",
+      "830055",
+      "830056",
+      "830057"
+    ],
+    "chestOutputIds": [
+      "11122017",
+      "11122018",
+      "11122019",
+      "11122020",
+      "11122021",
+      "11122022",
+      "11122023",
+      "11122024",
+      "11122025",
+      "11122026",
+      "11122027",
+      "11122028",
+      "11122029",
+      "11122030",
+      "11122031",
+      "11122032",
+      "11122033",
+      "11122034",
+      "11122035",
+      "11122036",
+      "11122037",
+      "11122038",
+      "11122039",
+      "11122040"
+    ],
+    "unknownItemEffectTypes": {
+      "320": 2
+    }
+  }
+}

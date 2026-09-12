@@ -391,30 +391,22 @@ class InterfaceDetailTests(unittest.TestCase):
 
     def test_server_switch_refreshes_server_specific_monster_views(self):
         self.assertIn(
-            "['home', 'monsters', 'transformations', 'favorites', 'search'].includes(activeRoute)",
+            "await renderRoute({ retainOnError: false, resetScroll: true })",
             self.script,
         )
         self.assertIn("&server=${encodeURIComponent(state.server)}", self.script)
 
     def test_home_primary_matches_main_home_width(self):
-        end = self.styles.index(".item-inline-set")
-        start = self.styles.rfind(".home-page", 0, end)
-        self.assertGreaterEqual(start, 0)
-        final_home = self.styles[start:end]
         self.assertRegex(
-            final_home,
-            r"\.home-page\s*\{[^}]*width:\s*min\(100%,\s*980px\)[^}]*max-width:\s*980px",
-            re.DOTALL,
+            self.styles, r"\.page\s*\{[^}]*width:\s*min\(100%,\s*var\(--content-max\)\)"
         )
+        self.assertNotRegex(self.styles, r"\.home-page\s*\{[^}]*\bwidth:")
+        self.assertRegex(self.styles, r"\.home-page\s*\{[^}]*align-content:\s*start")
         self.assertRegex(
-            final_home,
-            r"\.home-primary\s*\{[^}]*width:\s*100%[^}]*max-width:\s*none",
-            re.DOTALL,
+            self.styles, r"\.home-primary\s*\{[^}]*width:\s*100%[^}]*max-width:\s*none"
         )
-        self.assertRegex(
-            final_home, r"\.home-primary\s*\{[^}]*overflow:\s*visible", re.DOTALL
-        )
-        self.assertNotIn(".home-primary::after", final_home)
+        self.assertRegex(self.styles, r"\.home-primary\s*\{[^}]*overflow:\s*visible")
+        self.assertNotIn(".home-primary::after", self.styles)
 
     def test_drop_chance_formatter_preserves_small_nonzero_values(self):
         formatter = re.search(

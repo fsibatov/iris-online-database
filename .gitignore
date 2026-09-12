@@ -19,6 +19,7 @@
 /.venv/
 /iris-online-database
 /resource_windows_*.syso
+/iris-online-database-res.syso
 __pycache__/
 coverage.out
 pending-delete.json

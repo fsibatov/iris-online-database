@@ -70,6 +70,9 @@ func main() {
 }
 
 func runDesktop() error {
+	if err := checkDesktopCompatibility(); err != nil {
+		return err
+	}
 	app, err := newApplication()
 	if err != nil {
 		return err
@@ -124,14 +127,14 @@ func runDesktop() error {
 			WindowClassName:      "IrisOnlineDatabaseWindow",
 			DLLSearchPaths:       windows.DLLSearchApplicationDir | windows.DLLSearchSystem32,
 			Messages: &windows.Messages{
-				InstallationRequired: "Для Iris Online Database требуется Microsoft Edge WebView2 Runtime. Нажмите OK, чтобы безопасно скачать и установить Evergreen Runtime.",
-				UpdateRequired:       "Microsoft Edge WebView2 Runtime нужно обновить. Нажмите OK, чтобы скачать актуальную Evergreen-версию.",
+				InstallationRequired: "Для Iris Online Database нужен Microsoft Edge WebView2 Runtime. Установщик загрузит компонент с серверов Microsoft. Требуется подключение к интернету.",
+				UpdateRequired:       "Для запуска нужно обновить Microsoft Edge WebView2 Runtime. Требуется подключение к интернету.",
 				MissingRequirements:  "Необходим компонент WebView2",
 				Webview2NotInstalled: "Microsoft Edge WebView2 Runtime не установлен",
 				Error:                "Ошибка Iris Online Database",
 				FailedToInstall:      "WebView2 Runtime не удалось установить. Проверьте подключение к интернету или обратитесь к администратору.",
 				DownloadPage:         "Приложению требуется Microsoft Edge WebView2 Runtime. Нажмите OK, чтобы открыть официальную страницу загрузки. Минимальная версия: ",
-				PressOKToInstall:     "Нажмите OK для установки.",
+				PressOKToInstall:     "\n\nНажмите «ОК», чтобы начать установку, или «Отмена», чтобы выйти.",
 				ContactAdmin:         "Для запуска требуется WebView2 Runtime. Обратитесь к системному администратору.",
 				InvalidFixedWebview2: "Указанный WebView2 Runtime недействителен.",
 				WebView2ProcessCrash: "Процесс WebView2 аварийно завершился. Перезапустите приложение.",

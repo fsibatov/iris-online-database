@@ -1,5 +1,3 @@
-"""Canonical Windows release targets shared by release verification tools."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,6 +13,7 @@ class ReleaseTarget:
     pe_machine: int
     pe_magic: int
     require_high_entropy_va: bool
+    legacy: bool = False
 
     def filename(self, version: str) -> str:
         return f"IrisOnlineDB-{version}-Windows-{self.asset_suffix}.exe"
@@ -61,6 +60,30 @@ RELEASE_TARGETS = (
         pe_magic=PE32_PLUS,
         require_high_entropy_va=True,
     ),
+    ReleaseTarget(
+        platform="windows/amd64",
+        goarch="amd64",
+        asset_suffix="7-8.1-x64",
+        level_name="GOAMD64",
+        level_value="v1",
+        pe_machine=IMAGE_FILE_MACHINE_AMD64,
+        pe_magic=PE32_PLUS,
+        require_high_entropy_va=True,
+        legacy=True,
+    ),
+    ReleaseTarget(
+        platform="windows/386",
+        goarch="386",
+        asset_suffix="7-8.1-x86",
+        level_name="GO386",
+        level_value="sse2",
+        pe_machine=IMAGE_FILE_MACHINE_I386,
+        pe_magic=PE32,
+        require_high_entropy_va=False,
+        legacy=True,
+    ),
 )
 
-TARGET_BY_GOARCH = {target.goarch: target for target in RELEASE_TARGETS}
+TARGET_BY_GOARCH = {
+    target.goarch: target for target in RELEASE_TARGETS if not target.legacy
+}

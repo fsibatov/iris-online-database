@@ -1,15 +1,12 @@
-"""Verify Go/Wails build metadata in every Windows release executable."""
-
 from __future__ import annotations
 
 import argparse
 import re
 import shutil
-
-# The command uses fixed argv, no shell, and a resolved Go executable path.
 import subprocess  # nosec B404
 from pathlib import Path
 
+from prepare_windows_legacy import compatibility_marker
 from release_targets import RELEASE_TARGETS, TARGET_BY_GOARCH
 
 COMMON_METADATA_MARKERS = (
@@ -20,33 +17,53 @@ COMMON_METADATA_MARKERS = (
     ("WAILS_VERSION", "github.com/wailsapp/wails/v2\tv2.14.0"),
 )
 
-# Backward-compatible alias used by existing regression tests: amd64 is the
-# first release target, but verification below covers the complete matrix.
-EXPECTED_METADATA_MARKERS = (
-    ("TARGET_ARCH", "GOARCH=amd64"),
-    ("TARGET_LEVEL", "GOAMD64=v1"),
-    *COMMON_METADATA_MARKERS,
-)
 
-
-def expected_metadata_markers(goarch: str) -> tuple[tuple[str, str], ...]:
+def expected_metadata_markers(
+    goarch: str, legacy: bool = False
+) -> tuple[tuple[str, str], ...]:
     target = TARGET_BY_GOARCH[goarch]
+    common = tuple(
+        (
+            category,
+            marker + ",windows_legacy"
+            if legacy and category == "PRODUCTION_TAGS"
+            else marker,
+        )
+        for category, marker in COMMON_METADATA_MARKERS
+    )
     return (
         ("TARGET_ARCH", f"GOARCH={target.goarch}"),
         ("TARGET_LEVEL", target.build_level_marker),
-        *COMMON_METADATA_MARKERS,
+        *common,
     )
 
 
-def missing_metadata_categories(metadata: str, goarch: str = "amd64") -> list[str]:
-    return [
-        category
-        for category, marker in expected_metadata_markers(goarch)
-        if marker not in metadata
-    ]
+def missing_metadata_categories(
+    metadata: str, goarch: str = "amd64", legacy: bool = False
+) -> list[str]:
+    missing = []
+    for category, marker in expected_metadata_markers(goarch, legacy):
+        if category == "PRODUCTION_TAGS":
+            tags = re.search(r"(?:^|\s)-tags=([^\s]+)", metadata)
+            if not tags or set(tags[1].split(",")) != set(
+                marker.split("=", 1)[1].split(",")
+            ):
+                missing.append(category)
+        elif marker not in metadata:
+            missing.append(category)
+    return missing
 
 
-def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
+def release_marker_matches(binary: bytes, version: str, commit: str) -> bool:
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        return False
+    markers = set(re.findall(rb"IrisOnlineRelease/[0-9.]+/[0-9A-Za-z]+", binary))
+    return markers == {f"IrisOnlineRelease/{version}/{commit}".encode()}
+
+
+def verify_executable(
+    path: Path, version: str, goarch: str, go: str, commit: str, legacy: bool = False
+) -> None:
     result = subprocess.run(
         [go, "version", "-m", str(path)],
         check=False,
@@ -59,15 +76,24 @@ def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
     if result.returncode:
         raise SystemExit(f"could not read Go build metadata ({goarch})")
     metadata = result.stdout
-    missing = missing_metadata_categories(metadata, goarch)
+    missing = missing_metadata_categories(metadata, goarch, legacy)
     if missing:
         raise SystemExit(
             f"release executable metadata mismatch ({goarch}): " + ",".join(missing)
         )
     binary = path.read_bytes()
-    marker = f"IrisOnlineRelease/{version}/".encode()
-    if marker not in binary:
-        raise SystemExit(f"release application marker is missing ({goarch})")
+    if legacy:
+        if compatibility_marker().encode() not in binary:
+            raise SystemExit(f"Windows 7 compatibility marker is missing ({goarch})")
+        if (
+            b"internal/syscall/windows.ProcessPrng" in binary
+            or b"internal/syscall/windows.BCryptGenRandom" not in binary
+        ):
+            raise SystemExit(
+                f"Windows 7 random generator compatibility mismatch ({goarch})"
+            )
+    if not release_marker_matches(binary, version, commit):
+        raise SystemExit(f"release application commit marker is invalid ({goarch})")
     if b"IrisOnlineDiagnostic/" in binary or b"IrisOnlineDevelopment/" in binary:
         raise SystemExit(f"development marker found in release executable ({goarch})")
     lowered = binary.lower()
@@ -87,7 +113,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--expected-commit", required=True)
     args = parser.parse_args()
+    if not re.fullmatch(r"[0-9a-f]{40}", args.expected_commit):
+        parser.error("expected commit must be a complete lowercase Git SHA")
     go = shutil.which("go")
     if not go:
         raise SystemExit("Go executable is unavailable")
@@ -96,7 +125,9 @@ def main() -> None:
         path = args.directory / target.filename(args.version)
         if not path.is_file():
             raise SystemExit(f"release executable is missing: {path.name}")
-        verify_executable(path, args.version, target.goarch, go)
+        verify_executable(
+            path, args.version, target.goarch, go, args.expected_commit, target.legacy
+        )
 
 
 if __name__ == "__main__":

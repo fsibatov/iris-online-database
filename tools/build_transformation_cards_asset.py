@@ -1,5 +1,3 @@
-"""Build transformation-card data from the authoritative Iris resource tables."""
-
 from __future__ import annotations
 
 import argparse

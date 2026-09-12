@@ -1,10 +1,3 @@
-"""Update data/latest-vk.json from the public Iris Online VK wall.
-
-The script intentionally uses a real browser instead of VK API credentials.
-If VK is unavailable or its page structure changes, the existing JSON file is
-left untouched and the process exits with an error.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -217,7 +210,7 @@ def _safe_failure_category(exc: Exception) -> str:
 
 
 def _navigate_page(page, url: str) -> str:
-    """Navigate without treating an interrupted post-commit load as immediate failure."""
+
     error = ""
     try:
         page.goto(url, wait_until="commit", timeout=NAVIGATION_TIMEOUT_MS)
@@ -231,7 +224,7 @@ def _navigate_page(page, url: str) -> str:
 
 
 def _visible_post_ids_from_page(page) -> list[int]:
-    """Return only public post links that are actually visible on the wall."""
+
     values: list[str] = []
     with contextlib.suppress(PlaywrightError):
         values.extend(
@@ -281,7 +274,6 @@ def _post_id_from_page(page) -> int:
 
 
 def _decode_http_body(payload: bytes, headers: dict[str, str] | None = None) -> str:
-    """Decode an HTML response without assuming that VK always returns UTF-8."""
 
     if not payload:
         return ""
@@ -294,8 +286,6 @@ def _decode_http_body(payload: bytes, headers: dict[str, str] | None = None) -> 
         if match:
             declared.append(match.group(1))
 
-    # HTML charset declarations are ASCII-compatible even when the document body
-    # itself is Windows-1251, so inspecting a small prefix is safe.
     prefix = payload[:8192].decode("ascii", errors="ignore")
     for match in CHARSET_PATTERN.finditer(prefix):
         declared.append(match.group(1))
@@ -312,9 +302,6 @@ def _decode_http_body(payload: bytes, headers: dict[str, str] | None = None) -> 
         except (LookupError, UnicodeDecodeError):
             continue
 
-    # Never let an unexpected upstream encoding turn the scheduled updater into
-    # a traceback. Replacement characters are preferable to discarding the LKG
-    # update path entirely; downstream parsing still validates the extracted post.
     return payload.decode("utf-8", errors="replace")
 
 
@@ -389,7 +376,7 @@ def _meta_content(page, selectors: tuple[str, ...]) -> str:
 
 
 def _post_text_from_wall(page, post_id: int) -> str:
-    """Read the matching post text from the already loaded wall when possible."""
+
     needle = f"wall-{COMMUNITY_ID}_{post_id}"
     try:
         links = page.locator(f'a[href*="{needle}"]')
@@ -436,7 +423,7 @@ def _post_text_from_wall(page, post_id: int) -> str:
 
 
 def _wait_for_post_text(page, fallback: str = "") -> str:
-    """Wait briefly for dynamically rendered post text, then use wall fallback."""
+
     for _ in range(8):
         text = _first_locator_text(page, POST_TEXT_SELECTORS)
         if not text:
@@ -448,7 +435,7 @@ def _wait_for_post_text(page, fallback: str = "") -> str:
 
 
 def _find_latest_wall_post(context):
-    """Probe every public wall variant and keep the highest post identifier found."""
+
     found_id = 0
     wall_page = None
     visible_wall_ids: list[int] = []

@@ -128,7 +128,6 @@ func enhancementBonus(base int, percent float64) int {
 	if base <= 0 || percent == 0 {
 		return 0
 	}
-	// ItemTipWindow_Set.cpp truncates the positive result when assigning it to a short.
 	return int(math.Trunc(float64(base) * percent / 100.0))
 }
 

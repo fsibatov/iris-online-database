@@ -1,5 +1,3 @@
-"""Verify PE architecture, hardening flags and embedded Windows resources."""
-
 from __future__ import annotations
 
 import argparse
@@ -199,6 +197,15 @@ def verify_target(path: pathlib.Path, version: str, target) -> None:
         raise SystemExit(
             f"COFF timestamp prevents deterministic release output ({target.goarch})"
         )
+    if target.legacy:
+        pe_offset = struct.unpack_from("<I", _data, 0x3C)[0]
+        optional = pe_offset + 24
+        os_version = struct.unpack_from("<HH", _data, optional + 40)
+        subsystem_version = struct.unpack_from("<HH", _data, optional + 48)
+        if os_version > (6, 1) or subsystem_version > (6, 1):
+            raise SystemExit(
+                f"PE header requires a newer Windows version ({target.goarch})"
+            )
     if ".rsrc" not in sections or sections[".rsrc"][2] == 0:
         raise SystemExit(f"Windows resource section is missing ({target.goarch})")
 
@@ -227,7 +234,16 @@ def verify_target(path: pathlib.Path, version: str, target) -> None:
         raise SystemExit(f"application manifest is missing ({target.goarch})")
     manifest = decode_manifest(manifests[0])
     lowered_manifest = manifest.lower()
-    for marker in ("permonitorv2", "asinvoker", "longpathaware"):
+    manifest_markers = ["permonitorv2", "asinvoker", "longpathaware"]
+    if target.legacy:
+        manifest_markers.extend(
+            (
+                "{35138b9a-5d96-4fbd-8e2d-a2440225f93a}",
+                "{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}",
+                "{1f676c76-80e1-4239-95bb-83d0f6d0da78}",
+            )
+        )
+    for marker in manifest_markers:
         if marker not in lowered_manifest:
             raise SystemExit(f"application manifest is incomplete ({target.goarch})")
     verify_version_resource(resource_payloads(path, 16), version, target.goarch)

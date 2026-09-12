@@ -1,5 +1,3 @@
-"""Log-safe repository hygiene and secret-pattern audit for release gating."""
-
 from __future__ import annotations
 
 import argparse
@@ -8,8 +6,6 @@ import os
 import re
 import shutil
 import stat
-
-# Git is resolved to an executable path and invoked with fixed argv without a shell.
 import subprocess  # nosec B404
 from collections import Counter
 from dataclasses import dataclass
@@ -68,6 +64,7 @@ TEXT_SUFFIXES = {
     ".go",
     ".py",
     ".js",
+    ".mjs",
     ".css",
     ".html",
     ".md",
@@ -77,6 +74,7 @@ TEXT_SUFFIXES = {
     ".yaml",
     ".sh",
     ".ps1",
+    ".patch",
     ".env",
 }
 SECRET_PATTERNS = (
@@ -99,7 +97,7 @@ class Category(str, Enum):
     PYTHON_MODE = "HYG003"
     INVALID_UTF8 = "FMT001"
     INVALID_JSON = "FMT002"
-    # This is a finding category, not a credential.
+
     SECRET = "SEC001"  # nosec B105
     DEVELOPER_PATH = "SEC002"
 
