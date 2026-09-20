@@ -1,9 +1,3 @@
-"""Build the additive set-effect projection from original Iris Online resources.
-
-The source resources are intentionally NOT bundled with the public/source release.
-Pass explicit paths when regenerating the asset.
-"""
-
 from __future__ import annotations
 
 import argparse

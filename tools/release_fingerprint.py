@@ -1,5 +1,3 @@
-"""Create and verify the strict release-gate fingerprint for the current Git tree."""
-
 from __future__ import annotations
 
 import argparse
@@ -7,8 +5,6 @@ import hashlib
 import json
 import os
 import shutil
-
-# Subprocesses use fixed argv, no shell, and resolved executable paths.
 import subprocess  # nosec B404
 import sys
 import tempfile
@@ -32,7 +28,7 @@ VERSION_COMMANDS = {
 
 
 class FingerprintError(RuntimeError):
-    """A release-gate invariant was not satisfied."""
+    pass
 
 
 def git(root: Path, *args: str) -> str:

@@ -1,10 +1,3 @@
-"""Build additive item details omitted by the legacy game-data projection.
-
-Existing JSON keys in game_data.json.gz are authoritative and never overwritten.
-The generated supplement only restores data that is absent from that projection,
-plus raw technical/restriction fields for which the embedded JSON has no key.
-"""
-
 from __future__ import annotations
 
 import argparse

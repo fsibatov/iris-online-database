@@ -1,0 +1,16 @@
+name: Ошибка приложения
+description: Воспроизводимая ошибка интерфейса или работы приложения.
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Версия приложения и Windows
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как воспроизвести
+      description: Укажите сервер, действия, ожидаемый и фактический результат. Не прикладывайте рабочий профиль или личные пути.
+    validations:
+      required: true

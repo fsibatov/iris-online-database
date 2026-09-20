@@ -125,7 +125,7 @@ func TestUpdateCheckValidatesAndBoundsGitHubAPIResponse(t *testing.T) {
 			if result.Checked != tc.wantChecked || result.LatestVersion != tc.wantLatest || result.UpdateAvailable != tc.wantUpdate || result.Failure != tc.wantFailure {
 				t.Fatalf("result=%+v", result)
 			}
-			if result.UpdateAvailable && result.ReleaseURL != githubReleaseTagPrefix+tc.wantLatest {
+			if result.UpdateAvailable && result.ReleaseURL != githubReleaseTagPrefix+"v"+tc.wantLatest {
 				t.Fatalf("unexpected release URL %q", result.ReleaseURL)
 			}
 		})
@@ -141,6 +141,33 @@ func TestUpdateCheckRejectsUnexpectedAPIContentType(t *testing.T) {
 	result := checkLatestRelease(context.Background(), server.Client(), server.URL, "1.0.0")
 	if result.Checked || result.Failure != updateFailureInvalidResponse {
 		t.Fatalf("unexpected content type must fail closed: %+v", result)
+	}
+}
+
+func TestUpdateCheckPreservesActualReleaseTag(t *testing.T) {
+	for _, tag := range []string{"v2.1", "v2.1.0", "2.1"} {
+		for _, source := range []string{"api", "web"} {
+			t.Run(source+"/"+tag, func(t *testing.T) {
+				client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					if source == "api" {
+						return jsonResponse(http.StatusOK, fmt.Sprintf(`{"tag_name":%q}`, tag), r), nil
+					}
+					return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{githubReleaseTagPrefix + tag}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+				}), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+				webURL, apiURL := "", githubLatestReleaseAPI
+				if source == "web" {
+					webURL, apiURL = githubLatestReleaseURL, ""
+				}
+				result := checkLatestReleaseSources(context.Background(), client, webURL, apiURL, "2.0.6")
+				if !result.Checked || !result.UpdateAvailable || result.ReleaseURL != githubReleaseTagPrefix+tag || result.LatestVersion != strings.TrimPrefix(tag, "v") {
+					t.Fatalf("tag was changed: %+v", result)
+				}
+				current := checkLatestReleaseSources(context.Background(), client, webURL, apiURL, "2.1")
+				if !current.Checked || current.UpdateAvailable || current.ReleaseURL != "" {
+					t.Fatalf("equivalent versions must not advertise an update: %+v", current)
+				}
+			})
+		}
 	}
 }
 
@@ -172,7 +199,7 @@ func TestUpdateCheckUsesTrustedGitHubWebRedirect(t *testing.T) {
 		},
 	}
 	result := checkLatestReleaseSources(context.Background(), client, githubLatestReleaseURL, githubLatestReleaseAPI, "2.0.5")
-	if !result.Checked || !result.UpdateAvailable || result.LatestVersion != "2.1.0" || result.ReleaseURL != githubReleaseTagPrefix+"2.1.0" {
+	if !result.Checked || !result.UpdateAvailable || result.LatestVersion != "2.1.0" || result.ReleaseURL != githubReleaseTagPrefix+"v2.1.0" {
 		t.Fatalf("unexpected web release result: %+v", result)
 	}
 	if apiCalls.Load() != 0 {
@@ -493,7 +520,7 @@ func TestUpdateCheckEndpointRefreshesOnRequest(t *testing.T) {
 		req.Host = "wails.localhost"
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"latestVersion":"1.1.0"`) {
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"latestVersion":"1.1"`) {
 			t.Fatalf("target=%s status=%d body=%s", target, rec.Code, rec.Body.String())
 		}
 	}

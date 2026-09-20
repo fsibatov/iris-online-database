@@ -1,6 +1,8 @@
 import unittest
 from pathlib import Path
 
+from validate_vk_candidate import compare
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "update-vk-news.yml"
 UPDATER = ROOT / "tools" / "update_vk_news.py"
@@ -61,8 +63,20 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
     def test_equal_or_newer_candidate_does_not_need_stale_quorum(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn('action = "same"', workflow)
-        self.assertIn('action = "promote"', workflow)
+        current = {
+            "post_id": 10,
+            "post_url": "https://vk.ru/wall-59626511_10",
+            "text": "Новость",
+        }
+        newer = {**current, "post_id": 11, "post_url": "https://vk.ru/wall-59626511_11"}
+        older = {**current, "post_id": 9, "post_url": "https://vk.ru/wall-59626511_9"}
+        self.assertEqual(compare(current, current), (10, "same"))
+        self.assertEqual(compare(current, newer), (11, "promote"))
+        self.assertEqual(compare(current, older), (9, "stale"))
+        self.assertEqual(
+            compare(current, {**current, "text": "Исправленная новость"}),
+            (10, "promote"),
+        )
         self.assertIn('"same" {', workflow)
         self.assertIn('"promote" {', workflow)
         self.assertIn("VK: без изменений", workflow)
@@ -71,11 +85,27 @@ class VKWorkflowTransientPolicyTests(unittest.TestCase):
     def test_candidate_and_current_json_are_validated_before_comparison(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn("json.loads", workflow)
-        self.assertIn('payload.get("post_id")', workflow)
-        self.assertIn('payload.get("post_url")', workflow)
-        self.assertIn('payload.get("text")', workflow)
-        self.assertIn("https://vk.ru/wall-59626511_{post_id}", workflow)
+        valid = {
+            "post_id": 10,
+            "post_url": "https://vk.ru/wall-59626511_10",
+            "text": "Новость",
+        }
+        invalid = [
+            None,
+            [],
+            {},
+            {**valid, "post_id": True},
+            {**valid, "post_id": 0},
+            {**valid, "post_url": "https://example.com"},
+            {**valid, "text": " "},
+        ]
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                with self.assertRaises(SystemExit):
+                    compare(payload, valid)
+                with self.assertRaises(SystemExit):
+                    compare(valid, payload)
+        self.assertIn("& python $ValidatorPath", workflow)
         self.assertIn("VK candidate/current JSON validation failed", workflow)
 
     def test_exhausted_transient_or_unconfirmed_lower_id_is_warning(self):

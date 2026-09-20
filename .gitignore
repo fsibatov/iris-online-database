@@ -16,9 +16,11 @@
 /build/bin/
 /build/generated/
 /web/wailsjs/
+/ui-audit-screenshots/
 /.venv/
 /iris-online-database
 /resource_windows_*.syso
+/iris-online-database-res.syso
 __pycache__/
 coverage.out
 pending-delete.json

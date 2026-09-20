@@ -25,6 +25,8 @@ const (
 	maxPendingListBytes  = int64(1 << 20)
 )
 
+var errNewerProfile = errors.New("настройки созданы более новой версией приложения")
+
 type appPaths struct {
 	RoamingRoot   string
 	LocalRoot     string
@@ -60,7 +62,7 @@ func resolveAppPaths() (appPaths, error) {
 	p.Logs = filepath.Join(p.LocalRoot, "Logs")
 	p.Updates = filepath.Join(p.LocalRoot, "Updates")
 	p.Versions = filepath.Join(p.LocalRoot, "Versions")
-	p.WebViewData = filepath.Join(p.LocalRoot, "WebView2")
+	p.WebViewData = filepath.Join(p.LocalRoot, webViewProfileDirectory)
 	p.PendingDelete = filepath.Join(p.LocalRoot, "pending-delete.json")
 	p.Profile = filepath.Join(p.UserData, "profile.json")
 	for _, dir := range []string{p.UserData, p.Backups, p.Cache, p.Temp, p.Logs, p.Updates, p.Versions, p.WebViewData} {
@@ -159,11 +161,19 @@ type profileStore struct {
 func newProfileStore(paths appPaths) (*profileStore, error) {
 	ps := &profileStore{path: paths.Profile, backup: filepath.Join(paths.Backups, "profile.json.bak")}
 	profile, err := loadProfileFile(ps.path)
-	if err != nil {
-		profile, err = loadProfileFile(ps.backup)
+	if errors.Is(err, errNewerProfile) {
+		return nil, err
 	}
 	if err != nil {
-		profile = defaultProfile()
+		var backupErr error
+		profile, backupErr = loadProfileFile(ps.backup)
+		if backupErr != nil {
+			if errors.Is(err, fs.ErrNotExist) && errors.Is(backupErr, fs.ErrNotExist) {
+				profile = defaultProfile()
+			} else {
+				return nil, errors.New("не удалось прочитать настройки и резервную копию; исходные файлы сохранены")
+			}
+		}
 	}
 	profile = sanitizeProfile(profile)
 	ps.profile = profile
@@ -197,7 +207,10 @@ func loadProfileFile(path string) (userProfile, error) {
 	if err := json.Unmarshal(data, &profile); err != nil {
 		return userProfile{}, err
 	}
-	if profile.SchemaVersion <= 0 || profile.SchemaVersion > profileSchemaVersion {
+	if profile.SchemaVersion > profileSchemaVersion {
+		return userProfile{}, errNewerProfile
+	}
+	if profile.SchemaVersion <= 0 {
 		return userProfile{}, errors.New("неподдерживаемая версия профиля")
 	}
 	return profile, nil
@@ -390,16 +403,9 @@ func (p *profileStore) Replace(profile userProfile) error {
 }
 
 func (p *profileStore) Flush() error {
-	p.mu.RLock()
-	profile := p.profile
-	profile.ItemFilters = copyStringMap(p.profile.ItemFilters)
-	profile.MonsterFilters = copyStringMap(p.profile.MonsterFilters)
-	profile.Favorites = append([]string(nil), p.profile.Favorites...)
-	profile.History = append([]string(nil), p.profile.History...)
-	profile.RecentlyViewed = append([]recentViewEntry{}, p.profile.RecentlyViewed...)
-	profile.Extra = copyRawMessageMap(p.profile.Extra)
-	p.mu.RUnlock()
-	return atomicWriteJSON(p.path, p.backup, profile)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return atomicWriteJSON(p.path, p.backup, p.profile)
 }
 
 func atomicWriteJSON(path, backup string, value any) error {
@@ -587,7 +593,7 @@ func appendPendingDeletes(listPath string, paths []string, allowedRoots []string
 		return
 	}
 	if err := atomicWriteJSON(listPath, listPath+".bak", pendingDeleteList{Paths: filtered}); err != nil {
-		logger.Printf("не удалось сохранить список отложенной очистки: %v", err)
+		logger.Printf("не удалось сохранить список отложенной очистки: %s", storageFailureReason(err))
 		return
 	}
 	logger.Printf("в отложенную очистку добавлено %d путей", len(filtered))

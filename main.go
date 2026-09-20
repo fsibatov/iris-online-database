@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unicode"
-	"unicode/utf8"
+
+	"iris-online-database/internal/catalog"
 )
 
 type Meta struct {
@@ -558,11 +558,6 @@ type monsterPresenceSupplement struct {
 	Servers       map[string][]int `json:"servers"`
 }
 
-type searchDocument struct {
-	Literal string
-	Stems   string
-}
-
 type Title struct {
 	Index   int    `json:"index"`
 	Name    string `json:"name"`
@@ -578,12 +573,14 @@ type appStore struct {
 	data             GameData
 	itemsByID        map[int]*Item
 	monstersByID     map[int]*Monster
+	nameKeys         map[string]catalog.Name
+	recipeSearch     map[int]catalog.Document
 	itemNames        map[int]string
-	itemSearch       []searchDocument
-	monsterSearch    []searchDocument
+	itemSearch       []catalog.Document
+	monsterSearch    []catalog.Document
 	titles           []Title
 	titlesByIndex    map[int]*Title
-	titleSearch      []searchDocument
+	titleSearch      []catalog.Document
 	monsterTypeNames map[int]string
 	categoryItems    map[string]int
 	itemRecipes      map[int][]itemRecipeMaterialSource
@@ -659,8 +656,8 @@ func ensureLoaded() error {
 		store.itemsByID = make(map[int]*Item, len(store.data.Items))
 		store.monstersByID = make(map[int]*Monster, len(store.data.Monsters))
 		store.itemNames = make(map[int]string, len(store.data.Items))
-		store.itemSearch = make([]searchDocument, len(store.data.Items))
-		store.monsterSearch = make([]searchDocument, len(store.data.Monsters))
+		store.itemSearch = make([]catalog.Document, len(store.data.Items))
+		store.monsterSearch = make([]catalog.Document, len(store.data.Monsters))
 		store.monsterTypeNames = make(map[int]string)
 		store.categoryItems = make(map[string]int)
 		for i := range store.data.Items {
@@ -668,25 +665,64 @@ func ensureLoaded() error {
 			presented := itemForPresentation(item)
 			store.itemsByID[item.ID] = item
 			store.itemNames[item.ID] = item.Name
-			store.itemSearch[i] = newSearchDocument(fmt.Sprintf("%d %s %s %s %s %s", item.ID, item.Name, presented.TypeLine, item.Category, presented.Subcategory, item.Quality))
-			if _, isRecipe := store.itemRecipes[item.ID]; !isRecipe && !isTitleItem(item) && !isTransformationItem(item.ID) {
+			store.itemSearch[i] = catalog.NewDocument(fmt.Sprintf("%d %s %s %s %s %s", item.ID, item.Name, presented.TypeLine, item.Category, presented.Subcategory, item.Quality))
+			if _, isRecipe := store.itemRecipes[item.ID]; !isRecipe && !isTitleItem(item) && !isTransformationItem(item.ID) && !isTestItem(item) {
 				store.categoryItems[item.Category]++
 			}
 		}
 		for i := range store.data.Monsters {
 			monster := &store.data.Monsters[i]
 			store.monstersByID[monster.ID] = monster
-			store.monsterSearch[i] = newSearchDocument(fmt.Sprintf("%d %s %s %s", monster.ID, monster.Name, monster.Category, monster.TypeName))
+			store.monsterSearch[i] = catalog.NewDocument(fmt.Sprintf("%d %s %s %s", monster.ID, monster.Name, monster.Category, monster.TypeName))
 			if _, exists := store.monsterTypeNames[monster.Type]; !exists && strings.TrimSpace(monster.TypeName) != "" {
 				store.monsterTypeNames[monster.Type] = strings.TrimSpace(monster.TypeName)
 			}
 		}
+		prepareCatalogIndexes()
 		store.runtimes = make(map[string]*runtimeSlot, len(store.data.Servers))
 		for key, server := range store.data.Servers {
 			store.runtimes[key] = &runtimeSlot{server: server, chestProfiles: store.chestProfiles[key], monsterIDs: store.monsterPresence[key]}
 		}
 	})
 	return loadErr
+}
+
+func prepareCatalogIndexes() {
+	store.nameKeys = make(map[string]catalog.Name, len(store.data.Items)+len(store.data.Monsters))
+	addName := func(name string) {
+		if _, ok := store.nameKeys[name]; !ok {
+			store.nameKeys[name] = catalog.PrepareName(name)
+		}
+	}
+	for i := range store.data.Items {
+		addName(store.data.Items[i].Name)
+	}
+	for i := range store.data.Monsters {
+		addName(store.data.Monsters[i].Name)
+	}
+	for i := range store.titles {
+		addName(store.titles[i].Name)
+	}
+	for i := range transformationCards {
+		addName(transformationCards[i].Name)
+	}
+	store.recipeSearch = make(map[int]catalog.Document, len(store.itemRecipes))
+	for id, materials := range store.itemRecipes {
+		item := store.itemsByID[id]
+		if item == nil {
+			continue
+		}
+		var search strings.Builder
+		fmt.Fprintf(&search, "%d %s %s %s %s", item.ID, item.Name, item.TypeLine, item.Subcategory, item.Quality)
+		for _, material := range materials {
+			if value := store.itemsByID[material.ItemID]; value != nil {
+				fmt.Fprintf(&search, " %d %s", material.ItemID, value.Name)
+			} else {
+				fmt.Fprintf(&search, " %d", material.ItemID)
+			}
+		}
+		store.recipeSearch[id] = catalog.NewDocument(search.String())
+	}
 }
 
 func itemForPresentation(item *Item) Item {
@@ -2092,6 +2128,10 @@ func orderedCatalogNameLess(left, right string, descending bool) (bool, bool) {
 	return less, true
 }
 
+func isTestItem(item *Item) bool {
+	return item != nil && strings.TrimSpace(item.Subcategory) == "---------"
+}
+
 func isTitleItem(item *Item) bool {
 	return item != nil && item.TitleIndex > 0
 }
@@ -2152,11 +2192,11 @@ func loadTitleDefinitions() error {
 	}
 
 	store.titlesByIndex = make(map[int]*Title, len(store.titles))
-	store.titleSearch = make([]searchDocument, len(store.titles))
+	store.titleSearch = make([]catalog.Document, len(store.titles))
 	for index := range store.titles {
 		title := &store.titles[index]
 		store.titlesByIndex[title.Index] = title
-		store.titleSearch[index] = newSearchDocument(fmt.Sprintf("%d %s", title.Index, title.Name))
+		store.titleSearch[index] = catalog.NewDocument(fmt.Sprintf("%d %s", title.Index, title.Name))
 	}
 	return nil
 }
@@ -2284,97 +2324,6 @@ func recipeMasteryLevel(item *Item) int {
 	return max(0, item.MakeSkillExp)
 }
 
-func normalizeSearch(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	value = strings.ReplaceAll(value, "ё", "е")
-	var builder strings.Builder
-	builder.Grow(len(value))
-	spacePending := false
-	for _, r := range value {
-		if (r >= 'а' && r <= 'я') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			if spacePending && builder.Len() > 0 {
-				builder.WriteByte(' ')
-			}
-			spacePending = false
-			builder.WriteRune(r)
-		} else {
-			spacePending = true
-		}
-	}
-	return strings.TrimSpace(builder.String())
-}
-
-var russianSearchSuffixes = []string{
-	"иями", "ями", "ами", "ией", "иям", "ием", "иях", "ью", "ия", "ья",
-	"ого", "ему", "ому", "ыми", "ими", "его", "ее", "ие", "ые", "ое",
-	"ей", "ий", "ый", "ой", "ем", "им", "ым", "ом", "их", "ых",
-	"ую", "юю", "ая", "яя", "ев", "ов", "ам", "ям", "ах", "ях",
-	"а", "я", "ы", "и", "ь", "й", "у", "ю", "о", "е",
-}
-
-func russianSearchStem(word string) string {
-	runes := []rune(word)
-	if len(runes) <= 3 {
-		return word
-	}
-	for _, suffix := range russianSearchSuffixes {
-		suffixRunes := []rune(suffix)
-		if len(runes)-len(suffixRunes) < 3 || !strings.HasSuffix(word, suffix) {
-			continue
-		}
-		return string(runes[:len(runes)-len(suffixRunes)])
-	}
-	return word
-}
-
-func stemSearch(value string) string {
-	normalized := normalizeSearch(value)
-	if normalized == "" {
-		return ""
-	}
-	words := strings.Fields(normalized)
-	for i, word := range words {
-		words[i] = russianSearchStem(word)
-	}
-	return strings.Join(words, " ")
-}
-
-func newSearchDocument(value string) searchDocument {
-	literal := normalizeSearch(value)
-	return searchDocument{Literal: literal, Stems: stemSearch(literal)}
-}
-
-func matchesSearch(document searchDocument, query string) bool {
-	literal := normalizeSearch(query)
-	if literal == "" {
-		return true
-	}
-	if strings.Contains(document.Literal, literal) {
-		return true
-	}
-	stems := stemSearch(literal)
-	if stems == "" {
-		return false
-	}
-	if strings.Contains(document.Stems, stems) {
-		return true
-	}
-	documentWords := strings.Fields(document.Stems)
-	for _, queryWord := range strings.Fields(stems) {
-		found := false
-		for _, documentWord := range documentWords {
-			if documentWord == queryWord {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
 func handleMeta(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w, http.MethodGet)
@@ -2411,7 +2360,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"items": []any{}, "monsters": []any{}, "titles": []any{}, "transformations": []any{}})
 		return
 	}
-	query := q
+	preparedQuery := catalog.PrepareQuery(q)
 	rt := activeRuntime(qv.Get("server"))
 	items := make([]map[string]any, 0, 6)
 	for i := range store.data.Items {
@@ -2419,10 +2368,10 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe {
 			continue
 		}
-		if isTitleItem(item) || isTransformationItem(item.ID) {
+		if isTitleItem(item) || isTransformationItem(item.ID) || isTestItem(item) {
 			continue
 		}
-		if matchesSearch(store.itemSearch[i], query) {
+		if preparedQuery.Matches(store.itemSearch[i]) {
 			items = append(items, itemSummary(item))
 			if len(items) == 6 {
 				break
@@ -2431,7 +2380,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	titles := make([]map[string]any, 0, 4)
 	for i := range store.titles {
-		if matchesSearch(store.titleSearch[i], query) {
+		if preparedQuery.Matches(store.titleSearch[i]) {
 			titles = append(titles, titleSummary(&store.titles[i]))
 			if len(titles) == 4 {
 				break
@@ -2440,7 +2389,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	transformations := make([]map[string]any, 0, 4)
 	for i := range transformationCards {
-		if matchesSearch(transformationSearch[i], query) {
+		if preparedQuery.Matches(transformationSearch[i]) {
 			transformations = append(transformations, transformationSummary(&transformationCards[i], ""))
 			if len(transformations) == 4 {
 				break
@@ -2452,7 +2401,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		if !monsterVisible(rt, store.data.Monsters[i].ID) {
 			continue
 		}
-		if matchesSearch(store.monsterSearch[i], query) {
+		if preparedQuery.Matches(store.monsterSearch[i]) {
 			monsters = append(monsters, monsterSummary(&store.data.Monsters[i]))
 			if len(monsters) == 4 {
 				break
@@ -2523,6 +2472,7 @@ func handleTitles(w http.ResponseWriter, r *http.Request) {
 		rt = activeRuntime(qv.Get("server"))
 	}
 
+	preparedQuery := catalog.PrepareQuery(query)
 	filtered := make([]*Title, 0, len(store.titles))
 	for index := range store.titles {
 		title := &store.titles[index]
@@ -2541,7 +2491,7 @@ func handleTitles(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		if query != "" && !matchesSearch(store.titleSearch[index], query) {
+		if !preparedQuery.Matches(store.titleSearch[index]) {
 			continue
 		}
 		filtered = append(filtered, title)
@@ -2656,7 +2606,7 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Слишком длинное значение фильтра.\n", http.StatusBadRequest)
 		return
 	}
-	queryNormalized := query
+	preparedQuery := catalog.PrepareQuery(query)
 	if category == "" {
 		subcategory = ""
 		quality = ""
@@ -2696,7 +2646,7 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe {
 			continue
 		}
-		if isTitleItem(item) || isTransformationItem(item.ID) {
+		if isTitleItem(item) || isTransformationItem(item.ID) || isTestItem(item) {
 			continue
 		}
 		if scope == "weapons" && item.Category != "Оружие/щит" {
@@ -2736,7 +2686,7 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		if queryNormalized != "" && !matchesSearch(store.itemSearch[i], queryNormalized) {
+		if !preparedQuery.Matches(store.itemSearch[i]) {
 			continue
 		}
 		filtered = append(filtered, item)
@@ -2914,10 +2864,11 @@ func handleRecipes(w http.ResponseWriter, r *http.Request) {
 	page := clampInt(parseInt(qv, "page", 1), 1, 100000)
 	pageSize := clampInt(parseInt(qv, "pageSize", 20), 8, 48)
 
+	preparedQuery := catalog.PrepareQuery(query)
 	filtered := make([]*Item, 0, len(store.itemRecipes))
 	types := map[string]bool{}
 	qualities := map[string]int{}
-	for id, sourceMaterials := range store.itemRecipes {
+	for id := range store.itemRecipes {
 		item := store.itemsByID[id]
 		if item == nil {
 			continue
@@ -2948,19 +2899,8 @@ func handleRecipes(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		if query != "" {
-			var search strings.Builder
-			fmt.Fprintf(&search, "%d %s %s %s %s", item.ID, item.Name, item.TypeLine, item.Subcategory, item.Quality)
-			for _, material := range sourceMaterials {
-				if materialItem := store.itemsByID[material.ItemID]; materialItem != nil {
-					fmt.Fprintf(&search, " %d %s", material.ItemID, materialItem.Name)
-				} else {
-					fmt.Fprintf(&search, " %d", material.ItemID)
-				}
-			}
-			if !matchesSearch(newSearchDocument(search.String()), query) {
-				continue
-			}
+		if !preparedQuery.Matches(store.recipeSearch[id]) {
+			continue
 		}
 		filtered = append(filtered, item)
 	}
@@ -3065,7 +3005,7 @@ func recipeProduct(item *Item) *Item {
 		if _, isRecipe := store.itemRecipes[candidate.ID]; isRecipe {
 			continue
 		}
-		if isTitleItem(candidate) {
+		if isTitleItem(candidate) || isTestItem(candidate) {
 			continue
 		}
 		if recipeProductNameKey(candidate.Name) != key {
@@ -3090,7 +3030,7 @@ func handleItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item := store.itemsByID[id]
-	if item == nil {
+	if item == nil || isTestItem(item) {
 		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
 		return
 	}
@@ -3207,7 +3147,7 @@ func handleMonsters(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Слишком длинное значение фильтра.\n", http.StatusBadRequest)
 		return
 	}
-	queryNormalized := query
+	preparedQuery := catalog.PrepareQuery(query)
 	if category == "" {
 		typeName = ""
 	}
@@ -3248,7 +3188,7 @@ func handleMonsters(w http.ResponseWriter, r *http.Request) {
 		if maxLevel > 0 && mon.Level > maxLevel {
 			continue
 		}
-		if queryNormalized != "" && !matchesSearch(store.monsterSearch[i], queryNormalized) {
+		if !preparedQuery.Matches(store.monsterSearch[i]) {
 			continue
 		}
 		filtered = append(filtered, mon)
@@ -3370,73 +3310,17 @@ func itemStats(item *Item) []map[string]any {
 	return stats
 }
 
-func isRussianCatalogLetter(r rune) bool {
-	r = unicode.ToLower(r)
-	return (r >= 'а' && r <= 'я') || r == 'ё'
+func catalogNameKey(name string) catalog.Name {
+	if key, ok := store.nameKeys[name]; ok {
+		return key
+	}
+	return catalog.PrepareName(name)
 }
 
-func russianCatalogLetterOrder(r rune) int {
-	r = unicode.ToLower(r)
-	const alphabet = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
-	for index, letter := range []rune(alphabet) {
-		if r == letter {
-			return index
-		}
-	}
-	return -1
-}
-
-func catalogNameClass(name string) int {
-	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
-		return 4
-	}
-	first, _ := utf8.DecodeRuneInString(trimmed)
-	if isRussianCatalogLetter(first) {
-		return 0
-	}
-	if unicode.IsLetter(first) {
-		return 1
-	}
-	if unicode.IsDigit(first) {
-		return 2
-	}
-	return 3
-}
-
-func catalogFoldedTextLess(left, right string) bool {
-	leftRunes := []rune(strings.ToLower(left))
-	rightRunes := []rune(strings.ToLower(right))
-	limit := min(len(leftRunes), len(rightRunes))
-	for i := 0; i < limit; i++ {
-		if leftRunes[i] == rightRunes[i] {
-			continue
-		}
-		leftRussian := russianCatalogLetterOrder(leftRunes[i])
-		rightRussian := russianCatalogLetterOrder(rightRunes[i])
-		if leftRussian >= 0 && rightRussian >= 0 {
-			return leftRussian < rightRussian
-		}
-		return leftRunes[i] < rightRunes[i]
-	}
-	return len(leftRunes) < len(rightRunes)
-}
+func catalogNameClass(name string) int { return catalogNameKey(name).Class }
 
 func catalogNameLess(left, right string) bool {
-	leftTrimmed := strings.TrimSpace(left)
-	rightTrimmed := strings.TrimSpace(right)
-	leftClass := catalogNameClass(leftTrimmed)
-	rightClass := catalogNameClass(rightTrimmed)
-	if leftClass != rightClass {
-		return leftClass < rightClass
-	}
-	if leftClass == 4 {
-		return false
-	}
-	if strings.EqualFold(leftTrimmed, rightTrimmed) {
-		return leftTrimmed < rightTrimmed
-	}
-	return catalogFoldedTextLess(leftTrimmed, rightTrimmed)
+	return catalogNameKey(left).Less(catalogNameKey(right))
 }
 
 func sortedKeys(values map[string]bool) []string {
@@ -3571,7 +3455,7 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 		}
 		switch parts[0] {
 		case "item":
-			if item := store.itemsByID[id]; item != nil {
+			if item := store.itemsByID[id]; item != nil && !isTestItem(item) {
 				if isTransformationItem(id) {
 					canonical := fmt.Sprintf("transformation:%d", id)
 					migratedKeys[key] = canonical

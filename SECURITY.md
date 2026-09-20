@@ -4,6 +4,8 @@
 
 Security fixes выпускаются для текущей major-версии 2.x. Версии 1.x больше не получают исправления desktop lifecycle.
 
+Сборки Windows 7/8/8.1 используют те же актуальные зависимости приложения и проверяемый патч Go, но требуют WebView2 109, который Microsoft больше не обновляет. Поддержка запуска приложения не восстанавливает безопасность самой ОС и Runtime. Подробнее: [Windows 7/8/8.1](docs/WINDOWS_LEGACY.md).
+
 ## Сообщение об уязвимости
 
 Не публикуйте секреты, персональные пути, crash dumps или рабочие профили в публичном issue. Используйте GitHub Security Advisory репозитория. В отчёте достаточно версии, воспроизводимых действий и обезличенного результата.
@@ -18,4 +20,4 @@ Security fixes выпускаются для текущей major-версии 2
 - Профиль записывается только в выделенный каталог приложения, атомарно и с проверкой path safety.
 - У приложения нет токенов VK/GitHub, встроенных credentials, telemetry или analytics.
 
-CI запускает repository audit, Bandit, pip-audit, govulncheck, staticcheck, Gitleaks current/history, CodeQL и dependency review. Сетевой сбой security check считается ошибкой/непроверенным состоянием, а не отсутствием уязвимостей.
+CI запускает repository audit, Bandit, pip-audit, govulncheck, staticcheck, Gitleaks current/history, CodeQL для Go, Python и JavaScript, а также dependency review. Анализ Go учитывает теги production-сборки; перед публикацией проверяются полный SHA в EXE и подпись манифеста. Сетевой сбой security check считается ошибкой/непроверенным состоянием, а не отсутствием уязвимостей.

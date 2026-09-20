@@ -41,7 +41,7 @@ func (a *application) shutdown() error {
 		if err := a.profile.Flush(); err != nil {
 			shutdownErr = err
 			if a.logger != nil {
-				a.logger.Printf("сохранение профиля при завершении: %v", err)
+				a.logger.Printf("сохранение настроек при завершении: %s", storageFailureReason(err))
 			}
 		}
 	}
@@ -81,11 +81,15 @@ func (a *application) handleUserData(w http.ResponseWriter, r *http.Request) {
 		if !decodeJSONRequest(w, r, &profile, 1<<20) {
 			return
 		}
+		if profile.SchemaVersion != profileSchemaVersion {
+			http.Error(w, "Эта версия настроек не поддерживается.\n", http.StatusBadRequest)
+			return
+		}
 		if err := a.profile.Replace(profile); err != nil {
 			if a.logger != nil {
-				a.logger.Printf("сохранение профиля: %v", err)
+				a.logger.Printf("сохранение настроек: %s", storageFailureReason(err))
 			}
-			http.Error(w, "Не удалось сохранить профиль.\n", http.StatusInternalServerError)
+			http.Error(w, "Не удалось сохранить настройки.\n", http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, a.profile.Get())

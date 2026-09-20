@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -425,7 +426,7 @@ func TestDependentItemFiltersAreIgnoredWithoutCategory(t *testing.T) {
 	expected := 0
 	for index := range store.data.Items {
 		item := &store.data.Items[index]
-		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe || isTitleItem(item) || isTransformationItem(item.ID) {
+		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe || isTitleItem(item) || isTransformationItem(item.ID) || item.Subcategory == "---------" {
 			continue
 		}
 		expected++
@@ -943,19 +944,81 @@ func TestCorruptProfileFallsBackToBackup(t *testing.T) {
 	}
 }
 
-func TestEmptyProfileFallsBackToDefaults(t *testing.T) {
+func TestUnreadableProfileWithoutBackupIsPreserved(t *testing.T) {
+	for _, data := range []string{"", "{corrupt", `{"schemaVersion":1,"favorites":`} {
+		t.Run(fmt.Sprintf("bytes-%d", len(data)), func(t *testing.T) {
+			dir := t.TempDir()
+			paths := appPaths{Profile: filepath.Join(dir, "profile.json"), Backups: filepath.Join(dir, "Backups")}
+			if err := os.WriteFile(paths.Profile, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := newProfileStore(paths)
+			if err == nil || store != nil {
+				t.Fatal("unreadable profile accepted for replacement")
+			}
+			if got, err := os.ReadFile(paths.Profile); err != nil || string(got) != data {
+				t.Fatal("unreadable profile was modified")
+			}
+		})
+	}
+}
+
+func TestNewerProfileCannotFallBackToOlderBackup(t *testing.T) {
 	dir := t.TempDir()
 	paths := appPaths{Profile: filepath.Join(dir, "profile.json"), Backups: filepath.Join(dir, "Backups")}
-	if err := os.WriteFile(paths.Profile, nil, 0o600); err != nil {
+	backupPath := filepath.Join(paths.Backups, "profile.json.bak")
+	if err := os.MkdirAll(paths.Backups, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	store, err := newProfileStore(paths)
+	if err := atomicWriteJSON(backupPath, filepath.Join(paths.Backups, "unused.bak"), defaultProfile()); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"schemaVersion":2,"favorites":["item:77"]}`)
+	if err := os.WriteFile(paths.Profile, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if store, err := newProfileStore(paths); err != errNewerProfile || store != nil {
+		t.Fatalf("newer profile not rejected: %v", err)
+	}
+	if got, err := os.ReadFile(paths.Profile); err != nil || !bytes.Equal(got, data) {
+		t.Fatal("newer profile was modified")
+	}
+}
+
+func TestProfileFlushSerializesConcurrentWrites(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "Backups"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := newProfileStore(appPaths{Profile: filepath.Join(dir, "profile.json"), Backups: filepath.Join(dir, "Backups")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile := store.Get()
-	if profile.SchemaVersion != profileSchemaVersion || profile.Settings.Server != "kiss" || profile.Settings.Theme != "dark" || profile.Settings.View != "list" || len(profile.Favorites) != 0 || len(profile.History) != 0 {
-		t.Fatalf("empty profile did not fall back to defaults: %#v", profile)
+	start := make(chan struct{})
+	var writers sync.WaitGroup
+	for i := 0; i < 30; i++ {
+		writers.Add(1)
+		go func(i int) {
+			defer writers.Done()
+			<-start
+			var err error
+			if i%2 == 0 {
+				err = store.Flush()
+			} else {
+				profile := defaultProfile()
+				profile.Favorites = []string{fmt.Sprintf("item:%d", i)}
+				err = store.Replace(profile)
+			}
+			if err != nil {
+				t.Errorf("concurrent profile write: %v", err)
+			}
+		}(i)
+	}
+	close(start)
+	writers.Wait()
+	saved, err := loadProfileFile(store.path)
+	if err != nil || !reflect.DeepEqual(saved.Favorites, store.Get().Favorites) {
+		t.Fatalf("disk and memory differ after concurrent writes: %v", err)
 	}
 }
 
@@ -991,10 +1054,7 @@ func TestProfileWriteFailureKeepsInMemoryState(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store, err := newProfileStore(appPaths{Profile: filepath.Join(blocker, "profile.json"), Backups: filepath.Join(blocker, "Backups")})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := &profileStore{path: filepath.Join(blocker, "profile.json"), backup: filepath.Join(blocker, "Backups", "profile.json.bak"), profile: defaultProfile()}
 	before := store.Get()
 	updated := before
 	updated.Settings.Server = "original"
@@ -1005,6 +1065,27 @@ func TestProfileWriteFailureKeepsInMemoryState(t *testing.T) {
 	after := store.Get()
 	if after.Settings.Server != before.Settings.Server || len(after.Favorites) != len(before.Favorites) {
 		t.Fatalf("failed write changed in-memory profile: before=%#v after=%#v", before, after)
+	}
+}
+
+func TestProfileAPIRejectsUnsupportedSchemasWithoutWriting(t *testing.T) {
+	for _, schema := range []int{0, -1, profileSchemaVersion + 1} {
+		t.Run(strconv.Itoa(schema), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "profile.json")
+			store := &profileStore{path: path, profile: defaultProfile()}
+			before := store.Get()
+			app := &application{profile: store}
+			request := httptest.NewRequest(http.MethodPut, "/api/user-data", strings.NewReader(fmt.Sprintf(`{"schemaVersion":%d,"favorites":["item:77"]}`, schema)))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			app.handleUserData(response, request)
+			if response.Code != http.StatusBadRequest || !reflect.DeepEqual(before, store.Get()) {
+				t.Fatal("unsupported schema changed the profile")
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatal("unsupported schema wrote a profile")
+			}
+		})
 	}
 }
 
@@ -2126,8 +2207,8 @@ func TestSearchStartsEmptyAndRecentlyViewedCanBeCleared(t *testing.T) {
 		"resetTransientCatalogFilters()",
 		"state.itemFilters = defaultItemFilters()",
 		"state.monsterFilters = defaultMonsterFilters()",
-		"localStorage.removeItem('iris-item-filters')",
-		"localStorage.removeItem('iris-monster-filters')",
+		"removeLocalValue('iris-item-filters')",
+		"removeLocalValue('iris-monster-filters')",
 		"itemFilters: {}",
 		"monsterFilters: {}",
 		"globalSearch.value = ''",
