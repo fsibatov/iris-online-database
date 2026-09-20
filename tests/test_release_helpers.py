@@ -1148,6 +1148,31 @@ class FrontendSmokeDiagnosticsTests(unittest.TestCase):
         frontend_smoke_test.capture_failure_state(page, state)
         self.assertIsNone(state.page_state)
 
+    def test_failed_screenshot_does_not_hide_browser_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = frontend_smoke_test.FixtureState(Path(directory))
+            state.stage = "layout/dark/320px/dialog:about/open"
+            page = Mock()
+            page.evaluate.return_value = {"focus": "moreButton"}
+            page.screenshot.side_effect = PlaywrightError("browser has been closed")
+            frontend_smoke_test.capture_failure_state(page, state)
+            self.assertEqual(state.page_state, {"focus": "moreButton"})
+
+    def test_screenshot_output_cannot_pollute_repository(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["frontend_smoke_test.py", "--screenshots", str(ROOT / "screenshots")],
+            ),
+            patch.object(frontend_smoke_test, "FixtureServer") as server,
+            patch("sys.stderr", io.StringIO()),
+            self.assertRaises(SystemExit) as error,
+        ):
+            frontend_smoke_test.main()
+        self.assertEqual(error.exception.code, 2)
+        server.assert_not_called()
+
     def test_page_errors_are_isolated_between_browser_contexts(self):
         state = frontend_smoke_test.FixtureState()
         first_context, second_context = Mock(), Mock()

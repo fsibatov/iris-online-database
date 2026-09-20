@@ -128,6 +128,7 @@ jobs:
           $oldTmp = $env:TMP
           $oldTmpDir = $env:TMPDIR
           $gateExitCode = 0
+          $env:IRIS_UI_SCREENSHOTS = Join-Path $env:RUNNER_TEMP "iris-ui-smoke"
           try {
             $env:TEMP = $gateTemp
             $env:TMP = $gateTemp
@@ -141,6 +142,15 @@ jobs:
             Remove-Item -LiteralPath $gateTemp -Recurse -Force -ErrorAction SilentlyContinue
           }
           if ($gateExitCode -ne 0) { exit $gateExitCode }
+
+      - name: Save frontend regression screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: iris-ui-smoke
+          path: ${{ runner.temp }}/iris-ui-smoke
+          if-no-files-found: ignore
+          retention-days: 7
 
   windows-race:
     name: Windows race detector

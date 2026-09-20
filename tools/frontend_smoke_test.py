@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import threading
+from contextlib import suppress
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -219,12 +221,13 @@ TRANSFORMATION_CATALOG = {
 
 
 class FixtureState:
-    def __init__(self) -> None:
+    def __init__(self, screenshots: Path | None = None) -> None:
         self.profile = profile()
         self.community_failures = False
         self.stage = "initialization"
         self.page_errors: list[str] = []
         self.page_state: dict[str, object] | None = None
+        self.screenshots = screenshots
 
 
 class FixtureServer(ThreadingHTTPServer):
@@ -446,6 +449,18 @@ def capture_failure_state(page, state: FixtureState) -> None:
         )
     except PlaywrightError:
         state.page_state = None
+    with suppress(PlaywrightError, OSError):
+        save_screenshot(page, state, "failure")
+
+
+def save_screenshot(page, state: FixtureState, suffix: str = "") -> None:
+    if state.screenshots is None:
+        return
+    state.screenshots.mkdir(parents=True, exist_ok=True)
+    name = re.sub(r"[^a-zA-Z0-9_-]+", "-", state.stage).strip("-")
+    if suffix:
+        name += f"-{suffix}"
+    page.screenshot(path=str(state.screenshots / f"{name}.png"), animations="disabled")
 
 
 def refresh_news(page) -> None:
@@ -611,6 +626,7 @@ def exercise_layout(page, state: FixtureState, mode: str) -> None:
                     "battleground contains a redundant label or server time",
                 )
                 require_header_text(page)
+                save_screenshot(page, state)
                 require(
                     page.locator("#battlegroundCountdown").evaluate(
                         r"""node => {
@@ -646,6 +662,7 @@ def exercise_layout(page, state: FixtureState, mode: str) -> None:
                         "information dialogs change their opening position",
                     )
                 dialog_top = box["y"]
+                save_screenshot(page, state)
                 for selector, before in overlay_baseline.items():
                     box = page.locator(selector).bounding_box()
                     require(
@@ -682,6 +699,7 @@ def exercise_layout(page, state: FixtureState, mode: str) -> None:
             before = page.locator(".topbar").bounding_box()
             page.locator(".filter-button").click()
             page.wait_for_selector("#filterDrawer", state="visible")
+            save_screenshot(page, state)
             box = page.locator(".topbar").bounding_box()
             require(
                 before is not None
@@ -1094,8 +1112,16 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.parse_args()
-    state = FixtureState()
+    parser.add_argument(
+        "--screenshots", type=Path, default=os.environ.get("IRIS_UI_SCREENSHOTS")
+    )
+    arguments = parser.parse_args()
+    screenshots = (
+        Path(arguments.screenshots).resolve() if arguments.screenshots else None
+    )
+    if screenshots is not None and (screenshots == ROOT or ROOT in screenshots.parents):
+        parser.error("Screenshots must be saved outside the source repository.")
+    state = FixtureState(screenshots)
     server = FixtureServer(state)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
