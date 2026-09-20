@@ -710,7 +710,7 @@ class ReleaseHelperTests(unittest.TestCase):
             'Invoke-Checked "go" @("mod", "tidy", "-diff")',
             '@("check", "--no-cache", ".")',
             '@("format", "--check", "--no-cache", ".")',
-            'git merge-base --is-ancestor "origin/main" HEAD',
+            "git merge-base --is-ancestor $RemoteBranch HEAD",
             "commit.gpgSign=false",
             '"commit", "--amend", "--no-edit"',
             "Assert-CleanTree",

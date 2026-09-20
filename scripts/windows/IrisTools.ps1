@@ -1291,10 +1291,13 @@ function Repair-ReleaseSources {
     try {
         $BeforeHead = (& git rev-parse HEAD | Out-String).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $BeforeHead) { throw "Git HEAD could not be resolved before auto-fix." }
-        $RemoteMain = (& git rev-parse "origin/main" | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or -not $RemoteMain) { throw "origin/main could not be resolved before auto-fix." }
-        & git merge-base --is-ancestor "origin/main" HEAD *> $null
-        if ($LASTEXITCODE -ne 0) { throw "Release HEAD is not based on the fetched origin/main." }
+        $Branch = (& git branch --show-current | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $Branch) { throw "Git branch could not be resolved before auto-fix." }
+        $RemoteBranch = "origin/$Branch"
+        $RemoteHead = (& git rev-parse $RemoteBranch | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $RemoteHead) { throw "$RemoteBranch could not be resolved before auto-fix." }
+        & git merge-base --is-ancestor $RemoteBranch HEAD *> $null
+        if ($LASTEXITCODE -ne 0) { throw "Release HEAD is not based on the fetched $RemoteBranch." }
 
         $GoFiles = @(Get-ChildItem -LiteralPath $Root -Filter "*.go" -File -Recurse | ForEach-Object { $_.FullName })
         if ($GoFiles.Count -gt 0) {
@@ -1321,7 +1324,7 @@ function Repair-ReleaseSources {
         }
         $PublishedRefs = @(& git for-each-ref "--contains=$BeforeHead" "--format=%(refname)" refs/remotes/origin)
         if ($LASTEXITCODE -ne 0) { throw "Published commit detection failed." }
-        if ($BeforeHead -eq $RemoteMain -or $PublishedRefs.Count -gt 0) {
+        if ($BeforeHead -eq $RemoteHead -or $PublishedRefs.Count -gt 0) {
             throw "Safe auto-fix changed an already-published commit; automatic amendment is disabled."
         }
 
@@ -1585,6 +1588,11 @@ function Prepare-Release {
     try {
         Invoke-Checked $AuditPython @("-B", "tools/restore_repository.py", "--name", $ReleaseGitName, "--email", $ReleaseGitEmail) 600
         Invoke-GitFetchMain
+        $Branch = (& git branch --show-current | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "Git branch detection failed." }
+        if ($Branch -eq $SourceBranch -and $Branch -ne "main") {
+            Invoke-Checked "git" @("-C", $Root, "fetch", "--prune", "--refetch", "origin", "${Branch}:refs/remotes/origin/$Branch") 300
+        }
         Repair-ReleaseSources
         Test-Release -SkipToolingCheck
         Build-Release

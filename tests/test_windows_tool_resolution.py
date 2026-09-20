@@ -84,6 +84,102 @@ Write-Output "Go executable resolution: PASS"
 
 
 class WindowsToolResolutionTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows command interpreter is required")
+    def test_root_release_menu_can_exit_without_running_an_action(self):
+        result = subprocess.run(
+            ["cmd.exe", "/d", "/c", str(ROOT / "00_RELEASE_WINDOWS.bat")],
+            cwd=ROOT.parent,
+            input="0\n",
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PREPARE RELEASE", result.stdout)
+
+    @unittest.skipUnless(
+        POWERSHELL and shutil.which("git"), "PowerShell and Git are required"
+    )
+    def test_preparation_checks_its_own_remote_branch_before_auto_fix(self):
+        script = r"""
+param([string]$SourceRoot, [string]$Root)
+$ErrorActionPreference = "Stop"
+$SourceBranch = "ui-audit-2.1"
+$AuditEnv = $Root
+$Tokens = $null
+$Errors = $null
+$Ast = [Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $SourceRoot "scripts/windows/IrisTools.ps1"), [ref]$Tokens, [ref]$Errors)
+if ($Errors.Count) { throw "Invalid PowerShell source." }
+foreach ($Name in @("Assert-CleanTree", "Repair-ReleaseSources")) {
+    $Definition = $Ast.Find({
+        param($Node)
+        $Node -is [Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -eq $Name
+    }, $true)
+    Invoke-Expression $Definition.Extent.Text
+}
+$script:Commands = 0
+function Invoke-Checked { $script:Commands++ }
+function Clear-PythonGenerated {}
+function Clear-BuildGenerated {}
+Repair-ReleaseSources
+if ($script:Commands -eq 0) { throw "Unrelated main update blocked preparation." }
+git -C $Root update-ref refs/remotes/origin/ui-audit-2.1 origin/main
+if ($LASTEXITCODE) { throw "Fixture remote update failed." }
+$script:Commands = 0
+$Rejected = $false
+try { Repair-ReleaseSources } catch {
+    if ($_.Exception.Message -notlike "Release HEAD is not based on the fetched origin/ui-audit-2.1*") { throw }
+    $Rejected = $true
+}
+if (-not $Rejected -or $script:Commands -ne 0) { throw "Outdated source reached auto-fix." }
+Write-Output "Preparation ancestry guard: PASS"
+"""
+        with tempfile.TemporaryDirectory(prefix="iris-prepare-ancestry-") as directory:
+            root = Path(directory) / "repository"
+            root.mkdir()
+
+            def git(*arguments):
+                return subprocess.run(
+                    ["git", "-C", str(root), *arguments],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+
+            git("init", "-b", "ui-audit-2.1")
+            git("config", "user.name", "Fixture")
+            git("config", "user.email", "fixture@example.invalid")
+            git("-c", "commit.gpgSign=false", "commit", "--allow-empty", "-m", "base")
+            git("update-ref", "refs/remotes/origin/ui-audit-2.1", "HEAD")
+            git("switch", "-c", "main")
+            git("-c", "commit.gpgSign=false", "commit", "--allow-empty", "-m", "news")
+            git("update-ref", "refs/remotes/origin/main", "HEAD")
+            git("switch", "ui-audit-2.1")
+            probe = Path(directory) / "probe.ps1"
+            probe.write_text(script, encoding="utf-8-sig")
+            result = subprocess.run(
+                [
+                    POWERSHELL,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-File",
+                    str(probe),
+                    str(ROOT),
+                    str(root),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Preparation ancestry guard: PASS", result.stdout)
+
     @unittest.skipUnless(
         POWERSHELL and shutil.which("git"), "PowerShell and Git are required"
     )
