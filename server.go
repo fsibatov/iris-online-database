@@ -42,11 +42,7 @@ func (a *application) handleUpdateCheck(w http.ResponseWriter, r *http.Request) 
 	force := r.URL.Query().Get("refresh") == "1"
 	result := a.updates.Check(ctx, force)
 	if result.Failure != "" && result.Failure != updateFailureCanceled && a.logger != nil {
-		if result.diagnostic != "" {
-			a.logger.Printf("проверка обновлений: %s: %s", result.Failure, result.diagnostic)
-		} else {
-			a.logger.Printf("проверка обновлений: %s", result.Failure)
-		}
+		a.logger.Printf("проверка обновлений: %s", result.Failure)
 	}
 	writeJSON(w, result)
 }

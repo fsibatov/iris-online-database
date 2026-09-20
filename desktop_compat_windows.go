@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -29,7 +30,7 @@ func checkDesktopCompatibility() error {
 	}
 	installed, err := webviewloader.GetAvailableCoreWebView2BrowserVersionString("")
 	if err != nil {
-		return fmt.Errorf("проверка WebView2: %w", err)
+		return errors.New("не удалось проверить WebView2. Восстановите компонент официальным установщиком Microsoft")
 	}
 	if installed != "" {
 		major, err := strconv.Atoi(strings.SplitN(installed, ".", 2)[0])

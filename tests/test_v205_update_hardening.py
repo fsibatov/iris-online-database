@@ -37,7 +37,8 @@ class Version205UpdateHardeningTests(unittest.TestCase):
             self.assertIn(text, self.script)
         self.assertIn("diagnostic        string", self.update_go)
         self.assertNotIn("diagnostic        string `json:", self.update_go)
-        self.assertIn("result.diagnostic", self.server_go)
+        self.assertNotIn("result.diagnostic", self.server_go)
+        self.assertIn("result.Failure", self.server_go)
 
     def test_rate_limit_is_respected_without_retry_storm(self):
         self.assertIn("updateRetryCooldown(c.result)", self.update_go)
