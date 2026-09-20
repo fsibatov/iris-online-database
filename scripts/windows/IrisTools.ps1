@@ -1591,7 +1591,7 @@ function Prepare-Release {
         $Branch = (& git branch --show-current | Out-String).Trim()
         if ($LASTEXITCODE -ne 0) { throw "Git branch detection failed." }
         if ($Branch -eq $SourceBranch -and $Branch -ne "main") {
-            Invoke-Checked "git" @("-C", $Root, "fetch", "--prune", "--refetch", "origin", "${Branch}:refs/remotes/origin/$Branch") 300
+            Invoke-Checked "git" @("-C", $Root, "fetch", "--prune", "--refetch", "origin", "refs/heads/${Branch}:refs/remotes/origin/$Branch") 300
         }
         Repair-ReleaseSources
         Test-Release -SkipToolingCheck
@@ -1603,7 +1603,7 @@ function Prepare-Release {
 }
 
 function Invoke-GitFetchMain {
-    Invoke-Checked "git" @("-C", $Root, "fetch", "--prune", "--refetch", "origin", "main:refs/remotes/origin/main") 300
+    Invoke-Checked "git" @("-C", $Root, "fetch", "--prune", "--refetch", "origin", "refs/heads/main:refs/remotes/origin/main") 300
 }
 
 function Assert-ReleaseSigningIdentity {
