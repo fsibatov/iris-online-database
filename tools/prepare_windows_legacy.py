@@ -51,7 +51,7 @@ def verified_sources(goroot: Path, config: dict) -> dict[str, Path]:
 def validate_overlay(directory: Path, sources: dict[str, Path], config: dict) -> Path:
     overlay = directory / "overlay.json"
     expected = {
-        str(source.resolve()): str((directory / relative).resolve())
+        str(source.absolute()): str((directory / relative).resolve())
         for relative, source in sources.items()
     }
     document = json.loads(overlay.read_text(encoding="utf-8"))
@@ -80,10 +80,11 @@ def prepare_overlay(go: str, directory: Path) -> Path:
     values = json.loads(info.stdout)
     if values["GOVERSION"] != "go" + config["go_version"]:
         raise ValueError("Compatibility build requires the pinned official Go version")
-    goroot = Path(values["GOROOT"]).resolve()
+    # Go matches overlay keys lexically, including junctions in its GOROOT.
+    goroot = Path(values["GOROOT"]).absolute()
     sources = verified_sources(goroot, config)
     directory = directory.resolve()
-    if directory.is_relative_to(ROOT) or directory.is_relative_to(goroot):
+    if directory.is_relative_to(ROOT) or directory.is_relative_to(goroot.resolve()):
         raise ValueError("Compatibility output must be outside project and official Go")
     if directory.exists():
         return validate_overlay(directory, sources, config)
@@ -135,7 +136,7 @@ def prepare_overlay(go: str, directory: Path) -> Path:
             if digest(staging / relative) != hashes["patched_sha256"]:
                 raise ValueError(f"Applied patch checksum mismatch: {relative}")
         replacements = {
-            str(source.resolve()): str(directory / relative)
+            str(source.absolute()): str(directory / relative)
             for relative, source in sources.items()
         }
         (staging / "overlay.json").write_text(

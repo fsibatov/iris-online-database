@@ -148,6 +148,33 @@ class WindowsLegacyPreparationTests(unittest.TestCase):
             self.prepare()
         self.assertEqual(self.source.read_bytes(), self.original)
 
+    def test_goroot_directory_link_preserves_compiler_paths_and_output_guard(self):
+        link = self.root / "linked Go"
+        if os.name == "nt":
+            self.native_run(
+                ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(self.goroot)],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+        else:
+            link.symlink_to(self.goroot, target_is_directory=True)
+        self.goroot = link
+        overlay = self.prepare()
+        replacements = json.loads(overlay.read_text(encoding="utf-8"))["Replace"]
+        self.assertEqual(
+            replacements,
+            {str(link / self.relative): str(self.directory / self.relative)},
+        )
+        self.assertNotIn(str(self.source.resolve()), replacements)
+        self.assertEqual(self.prepare(), overlay)
+        self.assertEqual(len(self.git_calls), 2)
+        self.directory = link / "unsafe-overlay"
+        with self.assertRaisesRegex(ValueError, "outside project and official Go"):
+            self.prepare()
+        self.assertFalse(self.directory.exists())
+        self.assertEqual(self.source.read_bytes(), self.original)
+
     def test_checksum_failure_does_not_publish_partial_overlay(self):
         self.config["files"][self.relative]["patched_sha256"] = "0" * 64
         with self.assertRaisesRegex(ValueError, "Applied patch checksum mismatch"):
