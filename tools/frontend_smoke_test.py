@@ -551,8 +551,19 @@ def exercise_layout(page, state: FixtureState, mode: str) -> None:
         if page.locator("html").get_attribute("data-theme") != theme:
             page.locator("#moreButton").click()
             page.locator('[data-menu-action="theme"]').click()
-        for width in (320, 380, 768, 1280):
-            page.set_viewport_size({"width": width, "height": 820})
+        require(
+            page.locator("html").get_attribute("data-theme") == theme,
+            f"requested theme was not applied: {theme}",
+        )
+        for width, height in (
+            (320, 820),
+            (390, 844),
+            (720, 520),
+            (1024, 768),
+            (1280, 820),
+            (1440, 1000),
+        ):
+            page.set_viewport_size({"width": width, "height": height})
             baseline = {}
             for route in ("home", "transformations", "item/2001"):
                 state.stage = f"layout/{mode}/{theme}/{width}px/route:{route}"

@@ -16,6 +16,7 @@
 /build/bin/
 /build/generated/
 /web/wailsjs/
+/ui-audit-screenshots/
 /.venv/
 /iris-online-database
 /resource_windows_*.syso

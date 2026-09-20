@@ -89,6 +89,8 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
 
   if (!['list', 'cards'].includes(state.view)) state.view = 'list';
   if (!['dark', 'light'].includes(state.theme)) state.theme = 'dark';
+  state.server = normalizeServerKey(state.server);
+  if (!['kiss', 'original'].includes(state.server)) state.server = 'kiss';
 
   const main = document.getElementById('mainContent');
   const sectionTabs = document.getElementById('sectionTabs');
@@ -493,6 +495,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
       try {
         response = await fetch(path, { ...options, headers, signal: controller.signal });
       } catch (error) {
+        if (controller.signal.aborted) throw controller.signal.reason;
         if (error?.name === 'AbortError' || error?.name === 'TimeoutError') throw error;
         throw new Error('Не удалось связаться с приложением. Попробуйте ещё раз.');
       }
@@ -505,6 +508,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
       try {
         return await response.json();
       } catch (_) {
+        if (controller.signal.aborted) throw controller.signal.reason;
         throw new Error('Не удалось прочитать данные приложения.');
       }
     } finally {
@@ -518,7 +522,8 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
   }
 
   function errorPage(error) {
-    main.innerHTML = `<section class="page"><div class="state-message"><span class="state-symbol" aria-hidden="true">!</span><h1>Не удалось загрузить данные</h1><p>${escapeHTML(error?.message || 'Попробуйте ещё раз.')}</p><button class="primary-button" type="button" data-action="reload">Повторить</button></div></section>`;
+    const message = error?.name === 'TimeoutError' ? 'Загрузка заняла слишком много времени. Попробуйте ещё раз.' : error?.status === 404 ? 'Запись не найдена на выбранном сервере.' : 'Попробуйте ещё раз. Если ошибка повторится, перезапустите приложение.';
+    main.innerHTML = `<section class="page"><div class="state-message"><span class="state-symbol" aria-hidden="true">!</span><h1>Не удалось загрузить данные</h1><p>${message}</p><button class="primary-button" type="button" data-action="reload">Повторить</button></div></section>`;
   }
 
   function notFoundPage() {
@@ -599,13 +604,13 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     const serverLabel = serverName(activeServerMeta());
     const recentlyViewed = viewed.length
       ? `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><div class="home-section-heading"><h2 id="viewedTitle">Недавно просмотренные</h2><button class="text-button compact-button" type="button" data-action="clear-recently-viewed" aria-label="Очистить недавно просмотренные">Очистить</button></div><div class="recent-viewed-list">${viewed.map(entry => `<a href="#${entry.type}/${entry.id}"><span class="recent-viewed-icon">${recentViewedTypeIcon(entry.type)}</span><span>${entry.type === 'title' ? `<span class="title-name-line title-name-line--compact">${titleIndexBadge(entry.id)}<strong>${escapeHTML(entry.name)}</strong></span>` : `<strong>${escapeHTML(entry.name)}</strong>`}<small>${escapeHTML(recentViewedTypeLabel(entry.type))}</small></span>${icons.chevron}</a>`).join('')}</div></section>`
-      : `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><p class="home-start-hint">Здесь появятся открытые предметы, рецепты, монстры, титулы и карты превращения.</p></section>`;
+      : `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><p class="home-start-hint">Здесь появятся карточки, которые вы открывали.</p></section>`;
     const updateNotice = state.updateInfo.updateAvailable && state.updateInfo.latestVersion
-      ? `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="${escapeHTML(trustedUpdateReleaseURL())}" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`
+      ? `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Скачайте обновление со страницы релиза на GitHub.</span></div><a class="secondary-button" href="${escapeHTML(trustedUpdateReleaseURL())}" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`
       : '';
     const serverDifference = `<section class="home-server-difference home-compact-section" aria-labelledby="serverDifferenceTitle">
       <h2 id="serverDifferenceTitle">Сервер</h2>
-      <p>Выберите The Original или Iris Kiss Kiss в верхней панели. Названия и характеристики предметов берутся из общего справочника, а монстры и источники получения — из данных выбранного сервера.</p>
+      <p>Сервер выбирается в верхней панели. Названия и характеристики предметов общие, а монстры и источники получения зависят от сервера.</p>
     </section>`;
     const vkNews = `<section class="home-vk-news home-compact-section" aria-labelledby="vkNewsTitle">
       <div class="home-section-heading home-section-heading--news">
@@ -732,12 +737,13 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     }
     suggestionTimer = setTimeout(async () => {
       const controller = new AbortController();
+      const server = state.server;
       state.suggestionController = controller;
       try {
-        const data = await api(`/api/search?q=${encodeURIComponent(query)}&server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
-        if (globalSearch.value.trim() === query) renderSuggestions(data, query);
+        const data = await api(`/api/search?q=${encodeURIComponent(query)}&server=${encodeURIComponent(server)}`, { signal: controller.signal });
+        if (!controller.signal.aborted && state.suggestionController === controller && state.server === server && globalSearch.value.trim() === query) renderSuggestions(data, query);
       } catch (error) {
-        if (error?.name !== 'AbortError') closeSuggestions();
+        if (!controller.signal.aborted && state.suggestionController === controller && error?.name !== 'AbortError') closeSuggestions();
       }
     }, SEARCH_DEBOUNCE);
   }
@@ -825,7 +831,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     const filters = catalogFilters(kind);
     state.catalog = { kind, data };
     main.innerHTML = `<section class="page catalog-page" data-catalog-kind="${kind}">
-      ${pageHeader(catalogTitle(kind), kind === 'items' ? 'Каталог предметов Iris Online.' : kind === 'recipes' ? 'Рецепты Iris Online и материалы для изготовления.' : kind === 'titles' ? 'Каталог титулов Iris Online.' : kind === 'transformations' ? 'Карты превращения, формы и навыки.' : 'Каталог монстров Iris Online.')}
+      ${pageHeader(catalogTitle(kind))}
       <section class="catalog-controls" aria-label="Управление каталогом">
         <label class="catalog-search"><span class="visually-hidden">Поиск в каталоге</span>${icons.search}<input type="search" data-catalog-search value="${escapeHTML(filters.q)}" placeholder="Поиск по каталогу"></label>
         <button class="secondary-button filter-button" type="button" data-action="open-filters">${icons.filter}<span>Фильтры</span><strong data-filter-count>${activeFilterCount(kind) || ''}</strong></button>
@@ -833,7 +839,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
           <label class="sort-control"><span class="visually-hidden">Сортировать по</span><select class="control-select" data-catalog-sort aria-label="Сортировать по">${sortOptions(kind, filters.sort)}</select></label>
           <label class="sort-order-control"><span class="visually-hidden">Порядок сортировки</span><select class="control-select" data-catalog-order aria-label="Порядок сортировки">${sortOrderOptions(filters.order)}</select></label>
         </div>
-        <div class="view-switch" role="group" aria-label="Вид каталога"><button type="button" data-view="list" class="${state.view === 'list' ? 'active' : ''}" aria-label="Компактный список">${icons.list}</button><button type="button" data-view="cards" class="${state.view === 'cards' ? 'active' : ''}" aria-label="Плитка">${icons.grid}</button></div>
+        <div class="view-switch" role="group" aria-label="Вид каталога"><button type="button" data-view="list" class="${state.view === 'list' ? 'active' : ''}" aria-pressed="${state.view === 'list'}" aria-label="Компактный список">${icons.list}</button><button type="button" data-view="cards" class="${state.view === 'cards' ? 'active' : ''}" aria-pressed="${state.view === 'cards'}" aria-label="Плитка">${icons.grid}</button></div>
       </section>
       <div class="catalog-status"><span data-catalog-count>Найдено: ${formatNumber(data.total)}</span><div class="active-filters" data-active-filters>${activeFilterChips(kind)}</div><span class="visually-hidden" role="status" aria-live="polite" data-catalog-live></span></div>
       <div class="catalog-results" data-catalog-results aria-live="polite">${catalogResultsHTML(kind, data)}</div>
@@ -1177,6 +1183,10 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     else state.itemFilters = defaultItemFilters();
     const search = main.querySelector('[data-catalog-search]');
     if (search) search.value = '';
+    const sort = main.querySelector('[data-catalog-sort]');
+    if (sort) sort.innerHTML = sortOptions(kind, catalogFilters(kind).sort);
+    const order = main.querySelector('[data-catalog-order]');
+    if (order) order.value = catalogFilters(kind).order;
     refreshCatalog({ refreshFilters: true });
   }
 
@@ -2078,7 +2088,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
   async function favoritesPage(signal) {
     const keys = [...state.favorites];
     if (!keys.length) {
-      main.innerHTML = `<section class="page">${pageHeader('Избранное', 'Сохранённые предметы, монстры, рецепты, титулы и карты превращения.')}<div class="state-message compact"><span class="state-symbol">☆</span><h2>Избранное пусто</h2><p>Добавляйте предметы, монстров, рецепты, титулы и карты превращения кнопкой со звездой.</p><a class="primary-button" href="#items">Открыть предметы</a></div></section>`;
+      main.innerHTML = `<section class="page">${pageHeader('Избранное')}<div class="state-message compact"><span class="state-symbol">☆</span><h2>Избранное пусто</h2><p>Нажмите на звезду рядом с записью, чтобы сохранить её здесь.</p><a class="primary-button" href="#items">Открыть предметы</a></div></section>`;
       return;
     }
     const data = await api('/api/favorites', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys, server: state.server, page: state.favoritePage, pageSize: FAVORITES_PAGE_SIZE }) });
@@ -2244,6 +2254,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
   }
 
   function openMoreMenu() {
+    closeSuggestions();
     moreMenu.hidden = false;
     moreButton.setAttribute('aria-expanded', 'true');
     requestAnimationFrame(() => moreMenu.querySelector('button, a[href]')?.focus());
@@ -2279,7 +2290,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     if (!candidate) return fallback;
     try {
       const parsed = new URL(candidate);
-      const trustedPath = /^\/fsibatov\/iris-online-database\/releases\/tag\/v\d+\.\d+\.\d+$/.test(parsed.pathname);
+      const trustedPath = /^\/fsibatov\/iris-online-database\/releases\/tag\/v?\d+\.\d+(?:\.\d+)?$/.test(parsed.pathname);
       if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com' || (parsed.port && parsed.port !== '443') || parsed.username || parsed.password || parsed.search || parsed.hash || !trustedPath) return fallback;
       return parsed.href;
     } catch {
@@ -2296,7 +2307,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     if (!activity) return;
     const releaseUrl = trustedUpdateReleaseURL();
     const host = document.createElement('div');
-    host.innerHTML = `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="${escapeHTML(releaseUrl)}" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`;
+    host.innerHTML = `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Скачайте обновление со страницы релиза на GitHub.</span></div><a class="secondary-button" href="${escapeHTML(releaseUrl)}" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`;
     activity.before(host.firstElementChild);
   }
 
@@ -2613,10 +2624,14 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
 
   function showProfileSaveFailure(failed) {
     const notice = document.getElementById('profileSaveNotice');
-    if (notice) notice.hidden = !failed;
+    if (!notice) return;
+    notice.hidden = !failed;
+    const message = notice.querySelector?.('span');
+    if (message) message.textContent = state.profileLoaded ? 'Изменения пока не сохранены.' : 'Не удалось загрузить настройки. Сохранение приостановлено.';
   }
 
   function persistPendingProfile(payload = profilePayload()) {
+    if (!state.profileLoaded) return false;
     const saved = writeLocalValue(PROFILE_PENDING_KEY, JSON.stringify({ revision: profileRevision, savedAt: Date.now(), profile: payload }));
     if (!saved && profileDirty) showProfileSaveFailure(true);
     return saved;
@@ -2659,6 +2674,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
   }
 
   function scheduleProfileSave(delay = PROFILE_DEBOUNCE) {
+    if (!state.profileLoaded) return;
     writeLocalValue('iris-history', JSON.stringify(state.history));
     profileDirty = true;
     profileRevision += 1;
@@ -2666,7 +2682,20 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     queueProfileSave(delay);
   }
 
-  function retryProfileSave() {
+  async function retryProfileSave() {
+    if (!state.profileLoaded) {
+      const button = document.getElementById('retryProfileSave');
+      if (button?.disabled) return;
+      if (button) button.disabled = true;
+      try {
+        await loadUserProfile();
+        showProfileSaveFailure(false);
+        renderServers();
+        await renderRoute({ retainOnError: false, resetScroll: true });
+      } catch (_) { showProfileSaveFailure(true); }
+      finally { if (button) button.disabled = false; }
+      return;
+    }
     profileFailures = 0;
     profileFailureStatus = 0;
     queueProfileSave(0);
@@ -2710,6 +2739,11 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     globalSearch.value = '';
     closeSuggestions();
     if (!['list', 'cards'].includes(state.view)) state.view = 'list';
+    if (!['dark', 'light'].includes(state.theme)) state.theme = 'dark';
+    state.server = normalizeServerKey(state.server);
+    if (!['kiss', 'original'].includes(state.server)) state.server = 'kiss';
+    state.history = Array.isArray(state.history) ? state.history.filter(value => typeof value === 'string').slice(0, 50) : [];
+    state.favorites = new Set([...state.favorites].filter(value => typeof value === 'string' && /^(?:item|monster|title|transformation):\d{1,20}$/.test(value)).slice(0, 5000));
     normalizeDependentFilters('items');
     normalizeDependentFilters('monsters');
     normalizeDependentFilters('recipes');
@@ -2745,7 +2779,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     if (applicationClosing) return;
     applicationClosing = true;
     resetTransientCatalogFilters();
-    persistPendingProfile();
+    if (profileDirty || profileSaving) persistPendingProfile();
     saveProfileBestEffort();
     abortPendingWork();
   }
@@ -2780,7 +2814,10 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     if (viewButton) {
       state.view = viewButton.dataset.view;
       writeLocalValue('iris-view', state.view);
-      main.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button === viewButton));
+      main.querySelectorAll('[data-view]').forEach(button => {
+        button.classList.toggle('active', button === viewButton);
+        button.setAttribute('aria-pressed', String(button === viewButton));
+      });
       const data = state.catalog?.data;
       const results = main.querySelector('[data-catalog-results]');
       if (data && results) results.innerHTML = catalogResultsHTML(state.catalog.kind, data);
@@ -2911,6 +2948,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
   overlayBackdrop.addEventListener('click', closeFilters);
 
   globalSearch.addEventListener('input', updateSuggestions);
+  globalSearch.addEventListener('focus', () => closeMoreMenu());
   globalSearch.addEventListener('keydown', event => {
     if (event.key === 'ArrowDown') { event.preventDefault(); if (!suggestions.hidden) setActiveSuggestion(activeSuggestion + 1); }
     else if (event.key === 'ArrowUp') { event.preventDefault(); if (!suggestions.hidden) setActiveSuggestion(activeSuggestion < 0 ? suggestionRoutes.length - 1 : activeSuggestion - 1); }
@@ -2951,7 +2989,8 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
       catalogFilters(kind).page = 1;
       const params = new URLSearchParams(decodeRouteHash().split('?')[1] || '');
       params.delete('page');
-      replaceRouteHash(kind + (params.size ? `?${params}` : ''));
+      const query = params.toString();
+      replaceRouteHash(kind + (query ? `?${query}` : ''));
     }
     const serverLabel = serverSelect.options[serverSelect.selectedIndex]?.text || nextServer;
     showToast(`Выбран сервер ${serverLabel}.`);
@@ -3063,7 +3102,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
 
     try {
       await loadUserProfile();
-    } catch (_) { state.profileLoaded = true; }
+    } catch (_) { showProfileSaveFailure(true); }
     renderRoute();
     renderVersionStatus();
     void checkForUpdates();

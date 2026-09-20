@@ -84,6 +84,10 @@ func runDesktop() error {
 	}
 
 	bridge := &DesktopBridge{}
+	background := options.NewRGB(12, 17, 28)
+	if app.profile.Get().Settings.Theme == "light" {
+		background = options.NewRGB(243, 245, 248)
+	}
 	err = wails.Run(&options.App{
 		Title:                            "Iris Online Database",
 		Width:                            1280,
@@ -91,7 +95,7 @@ func runDesktop() error {
 		MinWidth:                         720,
 		MinHeight:                        520,
 		WindowStartState:                 options.Normal,
-		BackgroundColour:                 options.NewRGB(16, 20, 27),
+		BackgroundColour:                 background,
 		EnableDefaultContextMenu:         false,
 		EnableFraudulentWebsiteDetection: false,
 		BindingsAllowedOrigins:           "",
@@ -143,7 +147,7 @@ func runDesktop() error {
 	})
 	if err != nil {
 		_ = app.shutdown()
-		return fmt.Errorf("desktop runtime: %w", err)
+		return fmt.Errorf("не удалось открыть окно приложения; проверьте установку Microsoft WebView2 Runtime")
 	}
 	return nil
 }

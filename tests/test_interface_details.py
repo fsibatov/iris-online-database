@@ -124,7 +124,7 @@ class InterfaceDetailTests(unittest.TestCase):
                 ".source-overview"
             )
         ]
-        self.assertNotIn("grid-template-columns: repeat(2", game_css)
+        self.assertNotRegex(game_css, r"\.property-row[^}]*grid-template-columns")
         self.assertNotRegex(game_css, r"\.property-row[^}]*border-bottom")
         self.assertRegex(
             game_css, r"\.property-row\s*\{[^}]*display:\s*flex", re.DOTALL
@@ -187,10 +187,8 @@ class InterfaceDetailTests(unittest.TestCase):
         self.assertIn("Последняя запись ВКонтакте", home)
         self.assertIn("Проверить новую запись", home)
         self.assertIn('<h2 id="serverDifferenceTitle">Сервер</h2>', home)
-        self.assertIn(
-            "Названия и характеристики предметов берутся из общего справочника", home
-        )
-        self.assertIn("из данных выбранного сервера", home)
+        self.assertIn("Названия и характеристики предметов общие", home)
+        self.assertIn("источники получения зависят от сервера", home)
         self.assertNotIn("Характеристики предметов одинаковы", home)
         self.assertNotIn("The Original — 609 монстров", home)
         self.assertNotIn("Iris Kiss Kiss — 677 монстров", home)
@@ -369,7 +367,7 @@ class InterfaceDetailTests(unittest.TestCase):
         )
         self.assertIn(".title-index-badge {", self.styles)
         self.assertIn(
-            ".title-index-badge--large { height: clamp(20px, 2.88vw, 30px);",
+            ".title-index-badge--large { height: clamp(20px, 2.02vw, 26px);",
             self.styles,
         )
         self.assertIn("font-variant-numeric: tabular-nums", self.styles)
@@ -394,7 +392,7 @@ class InterfaceDetailTests(unittest.TestCase):
             "await renderRoute({ retainOnError: false, resetScroll: true })",
             self.script,
         )
-        self.assertIn("&server=${encodeURIComponent(state.server)}", self.script)
+        self.assertIn("&server=${encodeURIComponent(server)}", self.script)
 
     def test_home_primary_matches_main_home_width(self):
         self.assertRegex(
@@ -784,7 +782,7 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
             "path === 'items' || path === 'monsters' || path === 'recipes'", self.script
         )
         self.assertIn("path.startsWith('recipe/')", self.script)
-        self.assertIn("Рецепты Iris Online и материалы для изготовления.", self.script)
+        self.assertIn("if (kind === 'recipes') return 'Рецепты';", self.script)
         self.assertIn(
             "knownSource: ''",
             self.script[
@@ -809,7 +807,7 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
         self.assertIn("grid-template-columns: 18px minmax(0, 1fr);", self.styles)
         self.assertIn("single-source-block", self.script)
         self.assertIn("drops.length === 1", self.script)
-        self.assertIn("grid-template-columns: repeat(6, minmax(0, 1fr));", self.styles)
+        self.assertIn("grid-template-columns: repeat(7, minmax(0, 1fr));", self.styles)
 
 
 if __name__ == "__main__":

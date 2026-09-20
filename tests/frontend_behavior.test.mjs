@@ -7,6 +7,45 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
 const script = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../web/styles.css', import.meta.url), 'utf8');
 
+test('cached theme is applied before styles load, including blocked storage', () => {
+  const bootstrap = readFileSync(new URL('../web/theme.js', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8');
+  const themeScript = html.indexOf('src="/theme.js"');
+  assert.ok(themeScript >= 0 && themeScript < html.indexOf('href="/styles.css"'));
+  for (const saved of ['light', 'dark', 'invalid', null, new Error('blocked')]) {
+    const document = { documentElement: { dataset: { theme: 'dark' } } };
+    vm.runInNewContext(bootstrap, { document, localStorage: { getItem() { if (saved instanceof Error) throw saved; return saved; } } });
+    assert.equal(document.documentElement.dataset.theme, saved === 'light' ? 'light' : 'dark');
+  }
+});
+
+test('release links preserve minor-version tags and reject unrelated destinations', () => {
+  const context = { URL };
+  vm.createContext(context);
+  vm.runInContext(sourceFunction('trustedUpdateReleaseURL'), context);
+  const base = 'https://github.com/fsibatov/iris-online-database/releases/';
+  for (const tag of ['v2.1', 'v2.1.0', '2.1']) {
+    assert.equal(context.trustedUpdateReleaseURL({ releaseUrl: base + 'tag/' + tag }), base + 'tag/' + tag);
+  }
+  for (const releaseUrl of [base + 'tag/v2.1?redirect=evil', base + 'tag/v2.1#fragment', 'https://github.com.evil.test/fsibatov/iris-online-database/releases/tag/v2.1', base + 'tag/v2.1-beta', base + 'tag/v2.1/extra']) {
+    assert.equal(context.trustedUpdateReleaseURL({ releaseUrl }), base + 'latest');
+  }
+});
+
+test('opening the menu cancels suggestions before moving focus', () => {
+  const calls = [];
+  const context = {
+    closeSuggestions() { calls.push('suggestions closed'); },
+    moreMenu: { hidden: true, querySelector() { return { focus() { calls.push('menu focused'); } }; } },
+    moreButton: { setAttribute() {} }, requestAnimationFrame(fn) { fn(); },
+  };
+  vm.createContext(context);
+  vm.runInContext(sourceFunction('openMoreMenu'), context);
+  context.openMoreMenu();
+  assert.equal(context.moreMenu.hidden, false);
+  assert.deepEqual(calls, ['suggestions closed', 'menu focused']);
+});
+
 function sourceFunction(name) {
   const match = script.match(new RegExp(`^  (?:async )?function ${name}\\([^]*?^  }`, 'm'));
   assert.ok(match, name);
@@ -130,6 +169,123 @@ test('blocked local storage does not break profile loading or writing', () => {
     if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
     else delete globalThis.localStorage;
   }
+});
+
+test('an unread profile cannot be replaced by defaults or a pending draft', () => {
+  const { context, drafts, writes, clock } = profileFixture();
+  context.state.profileLoaded = false;
+  context.scheduleProfileSave(0);
+  assert.equal(context.persistPendingProfile(), false);
+  assert.equal(drafts.size, 0);
+  assert.equal(writes.length, 0);
+  assert.equal(clock.timers.size, 0);
+  assert.equal(context.profileRevision, 1);
+});
+
+test('manual retry reads an unavailable profile before enabling writes', async () => {
+  const { context, notice, clock, writes } = profileFixture();
+  context.state.profileLoaded = false;
+  let loads = 0, renders = 0, serverRenders = 0;
+  context.loadUserProfile = async () => {
+    loads += 1;
+    if (loads === 1) throw new Error('read failed');
+    context.state.profileLoaded = true;
+  };
+  context.renderServers = () => { serverRenders += 1; };
+  context.renderRoute = async options => {
+    assert.equal(serverRenders, 1);
+    assert.equal(options.resetScroll, true);
+    renders += 1;
+  };
+  await context.retryProfileSave();
+  assert.equal(notice.hidden, false);
+  assert.equal(context.state.profileLoaded, false);
+  await context.retryProfileSave();
+  assert.equal(context.state.profileLoaded, true);
+  assert.equal(notice.hidden, true);
+  assert.equal(renders, 1);
+  assert.equal(serverRenders, 1);
+  assert.equal(writes.length, 0);
+  assert.equal(clock.timers.size, 0);
+});
+
+test('a clean shutdown does not create a stale pending profile', () => {
+  const context = {
+    applicationClosing: false, profileDirty: false, profileSaving: false,
+    resetTransientCatalogFilters() {}, saveProfileBestEffort() {}, abortPendingWork() {},
+    persistPendingProfile() { assert.fail('clean profile must not become pending'); },
+  };
+  vm.createContext(context);
+  vm.runInContext(sourceFunction('prepareForWindowClose'), context);
+  context.prepareForWindowClose();
+  assert.equal(context.applicationClosing, true);
+});
+
+test('API cancellation while reading JSON preserves the cancellation reason', async () => {
+  for (const name of ['AbortError', 'TimeoutError']) {
+    const body = deferred(), started = deferred(), clock = timerQueue();
+    const controller = new AbortController();
+    const reason = new DOMException('stopped', name);
+    const context = {
+      ...clock, AbortController, DOMException, REQUEST_TIMEOUT: 15000,
+      fetch: async () => ({ ok: true, status: 200, json() { started.resolve(); return body.promise; } }),
+    };
+    vm.createContext(context);
+    vm.runInContext(sourceFunction('api'), context);
+    const request = context.api('/api/items', { signal: controller.signal });
+    const assertion = assert.rejects(request, error => error === reason);
+    await started.promise;
+    controller.abort(reason);
+    body.reject(reason);
+    await assertion;
+    assert.equal(clock.timers.size, 0);
+  }
+});
+
+test('superseded suggestions cannot reopen or close the current results', async () => {
+  const clock = timerQueue(), requests = [], rendered = [];
+  const context = {
+    ...clock, AbortController, suggestionTimer: null, SEARCH_DEBOUNCE: 270,
+    globalSearch: { value: 'меч' }, state: { server: 'kiss' },
+    api(path, options) { const response = deferred(); requests.push({ ...response, path, signal: options.signal }); return response.promise; },
+    renderSuggestions(data) { rendered.push(data); },
+    closeSuggestions() { assert.fail('stale reply changed suggestions'); },
+  };
+  vm.createContext(context);
+  vm.runInContext(sourceFunction('updateSuggestions'), context);
+  context.updateSuggestions();
+  const first = clock.next();
+  context.state.server = 'original';
+  context.updateSuggestions();
+  const second = clock.next();
+  requests[1].resolve('original');
+  await second;
+  requests[0].resolve('kiss');
+  await first;
+  assert.deepEqual(rendered, ['original']);
+  context.updateSuggestions();
+  const failed = clock.next();
+  context.updateSuggestions();
+  const latest = clock.next();
+  requests[3].resolve('current');
+  await latest;
+  requests[2].reject(new Error('late read error'));
+  await failed;
+  assert.deepEqual(rendered, ['original', 'current']);
+});
+
+test('filter reset updates both sorting controls and results together', () => {
+  const search = { value: 'меч' }, sort = { innerHTML: '' }, order = { value: 'desc' };
+  const context = {
+    state: { catalog: { kind: 'items' }, itemFilters: { sort: 'level', order: 'desc', page: 8 } },
+    main: { querySelector(selector) { return { '[data-catalog-search]': search, '[data-catalog-sort]': sort, '[data-catalog-order]': order }[selector]; } },
+    refreshCatalog() { assert.equal(search.value, ''); assert.equal(order.value, 'asc'); },
+  };
+  vm.createContext(context);
+  for (const name of ['defaultItemFilters', 'catalogFilters', 'sortOptions', 'resetFilters']) vm.runInContext(sourceFunction(name), context);
+  context.resetFilters();
+  assert.match(sort.innerHTML, /value="name" selected/);
+  assert.equal(context.state.itemFilters.page, 1);
 });
 
 function routeFixture(route) {
@@ -277,6 +433,15 @@ test('a late catalogue reply cannot restore the previous server', async () => {
   assert.equal(rendered.length, 1);
   assert.equal(rendered[0].data.server, 'kiss');
   assert.deepEqual(focused, ['kiss']);
+});
+
+test('server changes retain the query on WebView2 109 without URLSearchParams.size', async () => {
+  const { context, requests } = routeFixture('items?q=sword&page=8');
+  context.URLSearchParams = class extends URLSearchParams { get size() { return undefined; } };
+  const changing = context.changeServer();
+  assert.equal(context.decodeRouteHash(), 'items?q=sword');
+  requests[0].resolve({ total: 1 });
+  await changing;
 });
 
 test('battleground timer pauses when hidden and resumes once', () => {
