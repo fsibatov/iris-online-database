@@ -1,8 +1,8 @@
-# Iris Online Database 2.0.6
+# Iris Online Database 2.1
 
 Iris Online Database — неофициальная локальная база предметов, монстров, титулов, рецептов, сундуков, комплектов и источников добычи Iris Online.
 
-Версия 2.0 — настольное приложение для Windows. `IrisOnlineDatabase.exe` открывает собственное окно на Wails 2.14.0 и Microsoft WebView2: без адресной строки, внешней вкладки браузера и TCP-порта для интерфейса. HTML/CSS/JavaScript и игровые данные встроены в EXE; основной поиск и база работают без интернета.
+Версия 2.1 — настольное приложение для Windows. `IrisOnlineDatabase.exe` открывает собственное окно на Wails 2.14.0 и Microsoft WebView2: без адресной строки, внешней вкладки браузера и TCP-порта для интерфейса. HTML/CSS/JavaScript и игровые данные встроены в EXE; основной поиск и база работают без интернета.
 
 ## Возможности
 
@@ -21,15 +21,15 @@ Iris Online Database — неофициальная локальная база 
 
 ## Запуск
 
-Сборка v2.0.6 создаёт пять вариантов EXE:
+Сборка v2.1 создаёт пять вариантов EXE:
 
 | Файл | Система |
 | --- | --- |
-| `IrisOnlineDB-2.0.6-Windows-x64.exe` | Windows 10/11, Intel/AMD x64 |
-| `IrisOnlineDB-2.0.6-Windows-x86.exe` | Windows 10, x86 |
-| `IrisOnlineDB-2.0.6-Windows-arm64.exe` | Windows 10/11, ARM64 |
-| `IrisOnlineDB-2.0.6-Windows-7-8.1-x64.exe` | Windows 7 SP1, 8, 8.1, Intel/AMD x64 |
-| `IrisOnlineDB-2.0.6-Windows-7-8.1-x86.exe` | Windows 7 SP1, 8, 8.1, x86 |
+| `IrisOnlineDB-2.1-Windows-x64.exe` | Windows 10/11, Intel/AMD x64 |
+| `IrisOnlineDB-2.1-Windows-x86.exe` | Windows 10, x86 |
+| `IrisOnlineDB-2.1-Windows-arm64.exe` | Windows 10/11, ARM64 |
+| `IrisOnlineDB-2.1-Windows-7-8.1-x64.exe` | Windows 7 SP1, 8, 8.1, Intel/AMD x64 |
+| `IrisOnlineDB-2.1-Windows-7-8.1-x86.exe` | Windows 7 SP1, 8, 8.1, x86 |
 
 Скачайте подходящий EXE и запустите двойным щелчком. Установщик самой базы не нужен. `SHA256SUMS.txt` содержит контрольные суммы пяти EXE; при публикации меню выпуска подписывает манифест тем же GPG-ключом, что и тег.
 
@@ -70,7 +70,7 @@ WebView использует внутренний виртуальный адр�
 - [Устранение проблем](docs/TROUBLESHOOTING.md)
 - [Политика безопасности](SECURITY.md)
 - [Участие в разработке](CONTRIBUTING.md)
-- [Изменения v2.0.6](CHANGELOG.md)
+- [Изменения v2.1](CHANGELOG.md)
 
 На Windows запустите `powershell -ExecutionPolicy Bypass -File .\IrisTools.ps1`. Меню проверяет и устанавливает инструменты, запускает строгую проверку, собирает EXE во внешнюю папку и не создаёт вторую копию исходников. Необязательный `01_TEST.bat` поставляется отдельно от архива исходников: положите его рядом с папкой `iris-online-database` и запустите двойным щелчком. Он только вызывает канонический `IrisTools.ps1 -Action Test`, сохраняет код завершения и оставляет окно открытым.
 

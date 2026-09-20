@@ -79,6 +79,38 @@ class RepositoryRestoreTests(unittest.TestCase):
         self.assertEqual(before, source_snapshot(self.root))
         self.assertEqual(self.git(self.root, "rev-parse", "HEAD"), head)
 
+    def test_candidate_archive_keeps_main_untouched(self):
+        self.git(self.remote, "checkout", "-b", "ui-audit-2.1")
+        before = source_snapshot(self.root)
+        self.assertTrue(
+            restore_repository(
+                self.root,
+                "Fixture",
+                "fixture@example.invalid",
+                str(self.remote),
+                branch="ui-audit-2.1",
+            )
+        )
+        self.assertEqual(before, source_snapshot(self.root))
+        self.assertEqual(
+            self.git(self.root, "branch", "--show-current").strip(), "ui-audit-2.1"
+        )
+        self.assertEqual(self.git(self.remote, "rev-parse", "main").strip(), self.base)
+        self.assertEqual(self.git(self.root, "status", "--porcelain").strip(), "")
+
+    def test_invalid_source_branch_leaves_archive_untouched(self):
+        before = source_snapshot(self.root)
+        with self.assertRaises(ValueError):
+            restore_repository(
+                self.root,
+                "Fixture",
+                "fixture@example.invalid",
+                str(self.remote),
+                branch="--upload-pack=unexpected",
+            )
+        self.assertEqual(before, source_snapshot(self.root))
+        self.assertFalse((self.root / ".git").exists())
+
     def test_newer_main_rejects_stale_archive_without_partial_git(self):
         (self.remote / "newer.txt").write_text("new remote work\n")
         self.git(self.remote, "add", ".")

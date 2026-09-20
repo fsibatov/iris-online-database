@@ -3,7 +3,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.6';
+  const APP_VERSION = '2.1';
   const PAGE_SIZE = 24;
   const FAVORITES_PAGE_SIZE = 24;
   const SOURCE_BATCH = 20;

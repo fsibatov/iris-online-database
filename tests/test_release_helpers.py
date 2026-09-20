@@ -6,6 +6,7 @@ import json
 import os
 import re
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -46,7 +47,7 @@ class ReleaseHelperTests(unittest.TestCase):
 
     def test_version_is_coherent_across_runtime_and_release_metadata(self):
         version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+        self.assertRegex(version, r"^\d+\.\d+(?:\.\d+)?$")
         server = (ROOT / "server.go").read_text(encoding="utf-8")
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
         script = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
@@ -58,7 +59,10 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn(f"Версия {version}", html)
         self.assertIn(f"const APP_VERSION = '{version}'", script)
         self.assertEqual(wails["info"]["productVersion"], version)
-        self.assertEqual(resources["fixed"]["product_version"], f"{version}.0")
+        self.assertEqual(
+            resources["fixed"]["product_version"],
+            ".".join(map(str, version_tuple(version))),
+        )
         self.assertEqual(resources["info"]["0419"]["ProductVersion"], version)
 
     def test_release_uses_only_current_changelog_section_for_notes(self):
@@ -87,11 +91,13 @@ class ReleaseHelperTests(unittest.TestCase):
     def test_desktop_build_contract_has_no_production_listener(self):
         windows_main = (ROOT / "main_windows.go").read_text(encoding="utf-8")
         server = (ROOT / "server.go").read_text(encoding="utf-8")
-        combined = windows_main + server
+        other_main = (ROOT / "main_other.go").read_text(encoding="utf-8")
+        combined = windows_main + server + other_main
         self.assertIn("wails.Run", windows_main)
         self.assertIn("SingleInstanceLock", windows_main)
         self.assertIn("WebviewUserDataPath", windows_main)
         self.assertNotIn("net.Listen(", combined)
+        self.assertNotIn("http.ListenAndServe(", combined)
         self.assertNotIn("127.0.0.1:8765", combined)
         self.assertNotIn("-no-browser", combined)
         self.assertNotIn("-addr", combined)
@@ -101,9 +107,26 @@ class ReleaseHelperTests(unittest.TestCase):
         manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_text(
             encoding="utf-8"
         )
-        header = icon.read_bytes()[:6]
+        payload = icon.read_bytes()
+        header = payload[:6]
         self.assertEqual(header[:4], b"\x00\x00\x01\x00")
-        self.assertGreater(int.from_bytes(header[4:6], "little"), 0)
+        count = int.from_bytes(header[4:6], "little")
+        sizes = set()
+        for index in range(count):
+            width, height, _, _, planes, depth, length, offset = struct.unpack_from(
+                "<BBBBHHII", payload, 6 + index * 16
+            )
+            size = width or 256
+            self.assertEqual(size, height or 256)
+            self.assertEqual((planes, depth), (1, 32))
+            self.assertGreaterEqual(offset, 6 + count * 16)
+            self.assertLessEqual(offset + length, len(payload))
+            self.assertEqual(payload[offset : offset + 8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(
+                struct.unpack_from(">II", payload, offset + 16), (size, size)
+            )
+            sizes.add(size)
+        self.assertEqual(sizes, {16, 20, 24, 32, 40, 48, 64, 128, 256})
         self.assertIn("permonitorv2", manifest.lower())
         self.assertIn("longPathAware", manifest)
         self.assertIn('level="asInvoker"', manifest)
@@ -695,7 +718,7 @@ class ReleaseHelperTests(unittest.TestCase):
             self.assertIn(marker, repair)
         self.assertNotIn("--unsafe-fixes", repair)
         self.assertIn("unexpected untracked files", repair)
-        self.assertIn("already-published origin/main", repair)
+        self.assertIn("already-published commit", repair)
         self.assertLess(
             repair.index('check", "--fix"'), repair.index('check", "--no-cache"')
         )
@@ -755,7 +778,9 @@ class ReleaseHelperTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('$ReleaseGitName = "fsibatov"', script)
-        self.assertIn('$ReleaseGitEmail = "farushik01@gmail.com"', script)
+        self.assertIn(
+            '$ReleaseGitEmail = "137914856+fsibatov@users.noreply.github.com"', script
+        )
         self.assertIn(
             '$ReleaseGpgExecutable = "C:\\Program Files\\Git\\usr\\bin\\gpg.exe"',
             script,

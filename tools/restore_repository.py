@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -24,7 +25,11 @@ def source_snapshot(root: Path) -> dict[str, str]:
 
 
 def restore_repository(
-    root: Path, name: str, email: str, repository: str = REPOSITORY_URL
+    root: Path,
+    name: str,
+    email: str,
+    repository: str = REPOSITORY_URL,
+    branch: str = "main",
 ) -> bool:
     root = root.resolve()
     git = shutil.which("git")
@@ -61,6 +66,7 @@ def restore_repository(
             )
         return result
 
+    run(root, "check-ref-format", "--branch", branch)
     destination = root / ".git"
     if os.path.lexists(destination):
         top = run(root, "rev-parse", "--show-toplevel").stdout.strip()
@@ -89,7 +95,7 @@ def restore_repository(
             "--no-checkout",
             "--single-branch",
             "--branch",
-            "main",
+            branch,
             "--no-hardlinks",
             "--",
             repository,
@@ -104,7 +110,7 @@ def restore_repository(
         ).stdout.strip()
         if remote_head != base and status:
             raise ValueError(
-                "GitHub main changed since this archive was prepared. "
+                f"GitHub {branch} changed since this archive was prepared. "
                 "Update the archive before restoring Git; local files are preserved."
             )
         if source_snapshot(root) != before:
@@ -144,7 +150,13 @@ def main() -> int:
     parser.add_argument("--email", required=True)
     arguments = parser.parse_args()
     try:
-        restored = restore_repository(ROOT, arguments.name, arguments.email)
+        config = json.loads((ROOT / "build/release.json").read_text(encoding="utf-8"))
+        branch = config.get("sourceBranch", "main")
+        if not isinstance(branch, str) or not branch:
+            raise ValueError("Archive source branch is invalid.")
+        restored = restore_repository(
+            ROOT, arguments.name, arguments.email, branch=branch
+        )
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"Git repository recovery: FAIL: {error}")
         return 1

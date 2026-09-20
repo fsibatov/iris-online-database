@@ -7,6 +7,8 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Version = (Get-Content -LiteralPath (Join-Path $Root "VERSION") -Raw).Trim()
+$ReleaseConfig = Get-Content -LiteralPath (Join-Path $Root "build\release.json") -Raw | ConvertFrom-Json
+$SourceBranch = if ($ReleaseConfig.sourceBranch) { [string]$ReleaseConfig.sourceBranch } else { "main" }
 $GoPin = (Get-Content -LiteralPath (Join-Path $Root ".go-version") -Raw).Trim()
 $env:GOTOOLCHAIN = "local"
 $WailsPin = "v2.14.0"
@@ -38,7 +40,7 @@ $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $ToolRoot "playwright"
 $PinnedGitleaksDirectory = Join-Path $ToolRoot "gitleaks-$GitleaksPin"
 $RepositorySlug = "fsibatov/iris-online-database"
 $ReleaseGitName = "fsibatov"
-$ReleaseGitEmail = "farushik01@gmail.com"
+$ReleaseGitEmail = "137914856+fsibatov@users.noreply.github.com"
 $ReleaseGpgExecutable = "C:\Program Files\Git\usr\bin\gpg.exe"
 $ReleaseGpgFingerprint = "B0A5D341B2EE901172F485DE9BC0EBCFE2795291"
 
@@ -1254,6 +1256,7 @@ function Install-Tools {
 }
 
 function Assert-CleanTree {
+    param([switch]$RequireMain)
     Push-Location $Root
     try {
         if ($env:OS -eq "Windows_NT") {
@@ -1267,7 +1270,8 @@ function Assert-CleanTree {
         if ($Status) { throw "The Git working tree must be clean." }
         $Branch = (& git branch --show-current).Trim()
         if ($LASTEXITCODE -ne 0) { throw "Git branch detection failed." }
-        if ($Branch -ne "main") { throw "Release operations require branch main." }
+        if ($RequireMain -and $Branch -ne "main") { throw "Publishing requires branch main; preparation does not publish the audit branch." }
+        if ($Branch -notin @("main", $SourceBranch)) { throw "Preparation requires the configured source branch or main." }
     } finally { Pop-Location }
 }
 
@@ -1315,8 +1319,10 @@ function Repair-ReleaseSources {
         if (@($Status | Where-Object { $_ -match '^\?\?' }).Count -gt 0) {
             throw "Safe auto-fix produced unexpected untracked files; review is required."
         }
-        if ($BeforeHead -eq $RemoteMain) {
-            throw "Safe auto-fix changed the already-published origin/main commit; automatic amendment is disabled."
+        $PublishedRefs = @(& git for-each-ref "--contains=$BeforeHead" "--format=%(refname)" refs/remotes/origin)
+        if ($LASTEXITCODE -ne 0) { throw "Published commit detection failed." }
+        if ($BeforeHead -eq $RemoteMain -or $PublishedRefs.Count -gt 0) {
+            throw "Safe auto-fix changed an already-published commit; automatic amendment is disabled."
         }
 
         Invoke-Checked "git" @("diff", "--check") 60
@@ -1446,6 +1452,7 @@ function Test-Release {
         Invoke-Checked $AuditPython @("-B", "tools/validate_workflows.py") 120
         Invoke-Checked "node" @("--check", "web/app.js") 120
         Invoke-Checked "node" @("--check", "web/profile.js") 120
+        Invoke-Checked "node" @("--check", "web/theme.js") 120
         Invoke-Checked "node" @("--test", "tests/frontend_behavior.test.mjs") 120
         foreach ($Audit in @("data_presentation_audit.py", "frontend_smoke_test.py")) {
             Invoke-Checked $AuditPython @("-B", ("tools/" + $Audit)) 900
@@ -1457,7 +1464,7 @@ function Test-Release {
         Invoke-Checked $AuditPython @("-B", "tools/repository_audit.py") 120
         Assert-CleanTree
         if ((& git rev-parse HEAD).Trim() -ne $BeforeHead) { throw "HEAD changed during the RELEASE gate." }
-        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--write") 120
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--write", "--expected-branch", ((& git branch --show-current).Trim())) 120
         Write-Host "RELEASE gate: PASS" -ForegroundColor Green
     } finally {
         Pop-Location
@@ -1484,7 +1491,7 @@ function Build-Release {
     $WailsExecutable = Get-PinnedWailsExecutable
     Push-Location $Root
     try {
-        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify", "--expected-branch", ((& git branch --show-current).Trim())) 120
         if (-not $OutputDirectory) { $script:OutputDirectory = Join-Path (Split-Path $Root -Parent) "iris-online-database-release-$Version" }
         $OutputFull = [IO.Path]::GetFullPath($OutputDirectory)
         if ($OutputFull.StartsWith($Root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Release output must be outside the source tree." }
@@ -1565,7 +1572,7 @@ function Build-Release {
         Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version, "--expected-commit", $Head) 120
         Invoke-Checked $AuditPython @("-B", "tools/verify_windows_resources.py", "--directory", $OutputFull, "--version", $Version) 120
         if ((& git rev-parse HEAD).Trim() -ne $Head) { throw "HEAD changed during release artifact build." }
-        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify", "--expected-branch", ((& git branch --show-current).Trim())) 120
         Write-Host "Release build: PASS (Windows 10/11 x64, x86, arm64; Windows 7/8/8.1 x64, x86)" -ForegroundColor Green
         Write-Host $OutputFull
     } finally { Pop-Location }
@@ -1588,7 +1595,7 @@ function Prepare-Release {
 }
 
 function Invoke-GitFetchMain {
-    Invoke-Checked "git" @("-C", $Root, "fetch", "--prune", "--refetch", "origin", "main") 300
+    Invoke-Checked "git" @("-C", $Root, "fetch", "--prune", "--refetch", "origin", "main:refs/remotes/origin/main") 300
 }
 
 function Assert-ReleaseSigningIdentity {
@@ -1735,7 +1742,7 @@ function Get-GitHubCheckRuns {
 }
 
 function Publish-Commit {
-    Assert-CleanTree
+    Assert-CleanTree -RequireMain
     Ensure-AuditEnvironment
     Push-Location $Root
     try {
@@ -1753,7 +1760,7 @@ function Publish-Commit {
 }
 
 function Create-Release {
-    Assert-CleanTree
+    Assert-CleanTree -RequireMain
     Ensure-AuditEnvironment
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw "GitHub CLI (gh) is required." }
     Push-Location $Root

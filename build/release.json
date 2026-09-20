@@ -1,3 +1,4 @@
 {
-  "title": "Iris Online DB v{version} (Актуальная версия)"
+  "title": "Iris Online DB v{version} (Актуальная версия)",
+  "sourceBranch": "ui-audit-2.1"
 }

@@ -84,6 +84,72 @@ Write-Output "Go executable resolution: PASS"
 
 
 class WindowsToolResolutionTests(unittest.TestCase):
+    @unittest.skipUnless(
+        POWERSHELL and shutil.which("git"), "PowerShell and Git are required"
+    )
+    def test_preparation_branch_cannot_publish(self):
+        script = r"""
+param([string]$SourceRoot, [string]$Root)
+$ErrorActionPreference = "Stop"
+$SourceBranch = "ui-audit-2.1"
+$Tokens = $null
+$Errors = $null
+$Ast = [Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $SourceRoot "scripts/windows/IrisTools.ps1"), [ref]$Tokens, [ref]$Errors)
+if ($Errors.Count) { throw "Invalid PowerShell source." }
+foreach ($Name in @("Assert-CleanTree", "Publish-Commit", "Create-Release")) {
+    $Definition = $Ast.Find({
+        param($Node)
+        $Node -is [Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -eq $Name
+    }, $true)
+    Invoke-Expression $Definition.Extent.Text
+}
+git -C $Root init -b $SourceBranch | Out-Null
+if ($LASTEXITCODE) { throw "Fixture initialization failed." }
+Assert-CleanTree
+foreach ($Operation in @("Publish-Commit", "Create-Release")) {
+    $Rejected = $false
+    try { & $Operation } catch {
+        if ($_.Exception.Message -notlike "Publishing requires branch main*") { throw }
+        $Rejected = $true
+    }
+    if (-not $Rejected) { throw "Candidate publication was allowed." }
+}
+git -C $Root symbolic-ref HEAD refs/heads/main
+if ($LASTEXITCODE) { throw "Fixture branch switch failed." }
+Assert-CleanTree -RequireMain
+Set-Content -LiteralPath (Join-Path $Root "untracked.txt") -Value "local edit"
+$Rejected = $false
+try { Assert-CleanTree } catch { $Rejected = $true }
+if (-not $Rejected) { throw "Dirty preparation was allowed." }
+Write-Output "Preparation branch guard: PASS"
+"""
+        with tempfile.TemporaryDirectory(prefix="iris-branch-guard-") as directory:
+            root = Path(directory) / "repository"
+            root.mkdir()
+            probe = Path(directory) / "probe.ps1"
+            probe.write_text(script, encoding="utf-8-sig")
+            result = subprocess.run(
+                [
+                    POWERSHELL,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-File",
+                    str(probe),
+                    str(ROOT),
+                    str(root),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Preparation branch guard: PASS", result.stdout)
+
     @unittest.skipUnless(POWERSHELL, "PowerShell is unavailable")
     def test_legacy_preparation_resolves_one_go_executable(self):
         with tempfile.TemporaryDirectory(prefix="iris-go-resolution-") as directory:

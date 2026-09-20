@@ -116,7 +116,9 @@ jobs:
           $ErrorActionPreference = "Stop"
           git config --local core.filemode false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git checkout -B main HEAD
+          $releaseConfig = Get-Content build/release.json -Raw | ConvertFrom-Json
+          $sourceBranch = if ($releaseConfig.sourceBranch) { [string]$releaseConfig.sourceBranch } else { "main" }
+          git checkout -B $sourceBranch HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           $driveRoot = [IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)

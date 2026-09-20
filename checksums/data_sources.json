@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "referenceArchive": {
-    "name": "Iris Resourses(3).7z",
-    "sha256": "f2e0fadedd32800f3f57471050d36ffa4b811656653793cca9387fac044664e4"
+    "name": "Iris Resourses.rar",
+    "sha256": "2df78a9b5d4cf659462c8c08a42b2e0e6c5463209079c046576cf5e3aa3c3565"
   },
   "referenceCommit": "4bb96ba2622f67f846511c5d33afcb7074c60662",
-  "verifiedAt": "2026-09-07",
+  "verifiedAt": "2026-09-15",
   "liveServerStateVerified": false,
   "sourceFiles": [
     {

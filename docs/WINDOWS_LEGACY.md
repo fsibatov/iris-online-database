@@ -2,7 +2,7 @@
 
 ## Запуск
 
-Используйте `IrisOnlineDB-2.0.6-Windows-7-8.1-x64.exe` для Intel/AMD x64 или `IrisOnlineDB-2.0.6-Windows-7-8.1-x86.exe` для x86. Нужны Windows 7 SP1, Windows 8 или Windows 8.1 и Microsoft WebView2 Runtime 109. Для Windows 7 установите обновления, включающие KB2533623 или его замену. Windows XP, Vista, RT и ARM32 не входят в поддерживаемые цели.
+Используйте `IrisOnlineDB-2.1-Windows-7-8.1-x64.exe` для Intel/AMD x64 или `IrisOnlineDB-2.1-Windows-7-8.1-x86.exe` для x86. Нужны Windows 7 SP1, Windows 8 или Windows 8.1 и Microsoft WebView2 Runtime 109. Для Windows 7 установите обновления, включающие KB2533623 или его замену. Windows XP, Vista, RT и ARM32 не входят в поддерживаемые цели.
 
 Если WebView2 отсутствует, приложение предложит встроенный официальный установщик Microsoft. Установка требует интернета и может требовать разрешения администратора. По документации Microsoft Evergreen выбирает 109 на старых ОС. Если установлен более ранний Runtime, приложение сообщает его версию и просит обновление. При сетевой ошибке установщика повторите установку и запуск; сама база работает без сети после установки Runtime.
 

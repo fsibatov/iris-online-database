@@ -136,10 +136,8 @@ def decode_manifest(payload: bytes) -> str:
 
 def version_tuple(version: str) -> tuple[int, int, int, int]:
     parts = version.split(".")
-    if len(parts) not in (3, 4) or any(not part.isdigit() for part in parts):
-        raise ValueError(
-            "release version must contain three or four numeric components"
-        )
+    if len(parts) not in (2, 3, 4) or any(not part.isdigit() for part in parts):
+        raise ValueError("release version must contain two to four numeric components")
     values = [int(part) for part in parts]
     if any(value > 0xFFFF for value in values):
         raise ValueError("release version component exceeds Windows resource range")

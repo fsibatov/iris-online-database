@@ -34,6 +34,18 @@ class QualityContractTests(unittest.TestCase):
             encoding="utf-8"
         )
 
+    def test_frame_ancestors_is_enforced_by_header_not_meta(self):
+        meta = re.search(
+            r'<meta http-equiv="Content-Security-Policy" content="([^"]+)"',
+            self.html,
+        )
+        self.assertIsNotNone(meta)
+        self.assertNotIn("frame-ancestors", meta.group(1))
+        self.assertIn("frame-ancestors 'none'", self.server)
+        self.assertIn("script-src 'self'", meta.group(1))
+        self.assertNotIn("unsafe-eval", meta.group(1))
+        self.assertNotIn("unsafe-inline", meta.group(1))
+
     def test_version_is_consistent_in_user_facing_sources(self):
         version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
         app_match = re.search(r"const APP_VERSION = '([^']+)';", self.script)
@@ -43,16 +55,16 @@ class QualityContractTests(unittest.TestCase):
         self.assertIn(f"Версия {version}", self.html)
         self.assertIn(f"v{version}", self.readme)
         self.assertIn(f'"productVersion": "{version}"', self.wails)
-        self.assertIn(f'"file_version": "{version}.0"', self.windows_info)
-        self.assertIn(f'"product_version": "{version}.0"', self.windows_info)
+        fixed_version = ".".join((version.split(".") + ["0"] * 4)[:4])
+        self.assertIn(f'"file_version": "{fixed_version}"', self.windows_info)
+        self.assertIn(f'"product_version": "{fixed_version}"', self.windows_info)
         self.assertIn(f'"FileVersion": "{version}"', self.windows_info)
         self.assertIn(f'"ProductVersion": "{version}"', self.windows_info)
-        self.assertIn("C:\\IrisRelease\\X.Y.Z", self.build_docs)
-        self.assertIn("IrisOnlineDB-X.Y.Z-Windows-x64.exe", self.release_docs)
-        self.assertIn("IrisOnlineDB-X.Y.Z-Windows-x86.exe", self.release_docs)
-        self.assertIn("IrisOnlineDB-X.Y.Z-Windows-arm64.exe", self.release_docs)
-        self.assertIn("`vX.Y.Z` tag", self.release_docs)
-        self.assertNotIn(f"C:\\IrisRelease\\{version}", self.build_docs)
+        self.assertIn(f"C:\\IrisRelease\\{version}", self.build_docs)
+        self.assertIn("IrisOnlineDB-<версия>-Windows-x64.exe", self.release_docs)
+        self.assertIn("IrisOnlineDB-<версия>-Windows-x86.exe", self.release_docs)
+        self.assertIn("IrisOnlineDB-<версия>-Windows-arm64.exe", self.release_docs)
+        self.assertIn("`v<версия>`", self.release_docs)
         self.assertNotIn(f"IrisOnlineDB-{version}-Windows-x64.exe", self.release_docs)
         self.assertNotIn(f"`v{version}` tag", self.release_docs)
 
@@ -143,10 +155,8 @@ class QualityContractTests(unittest.TestCase):
         ]
         self.assertIn("Рецепты — в отдельном разделе.", home)
         self.assertIn('<h2 id="serverDifferenceTitle">Сервер</h2>', home)
-        self.assertIn(
-            "Названия и характеристики предметов берутся из общего справочника", home
-        )
-        self.assertIn("из данных выбранного сервера", home)
+        self.assertIn("Названия и характеристики предметов общие", home)
+        self.assertIn("источники получения зависят от сервера", home)
         self.assertNotIn("Характеристики предметов одинаковы", home)
         self.assertNotIn("The Original — 609 монстров", home)
         self.assertNotIn("Iris Kiss Kiss — 677 монстров", home)
