@@ -335,6 +335,16 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 }
             self.send_json(data)
             return
+        if parsed.path == "/api/monsters":
+            self.send_json(
+                {
+                    "monsters": [MONSTER_LARGE_LOOT["monster"]],
+                    "total": 1,
+                    "page": 1,
+                    "pages": 1,
+                }
+            )
+            return
         if parsed.path == "/api/items":
             self.send_json(
                 {
@@ -873,6 +883,8 @@ def exercise_item_navigation(page, base_url: str, state: FixtureState) -> None:
 
         state.stage = f"navigation/{theme}/{width}px/loot-server-switch"
         page.locator("#serverSelect").select_option("original")
+        page.locator('.page[data-route="monsters"][data-server="original"]').wait_for()
+        page.locator('.result-main[href="#monster/43"]').click()
         page.locator(
             '.page[data-route="monster/43"][data-server="original"]'
         ).wait_for()
@@ -882,6 +894,8 @@ def exercise_item_navigation(page, base_url: str, state: FixtureState) -> None:
             1
         )
         page.locator("#serverSelect").select_option("kiss")
+        page.locator('.page[data-route="monsters"][data-server="kiss"]').wait_for()
+        page.locator('.result-main[href="#monster/43"]').click()
         page.locator('.page[data-route="monster/43"][data-server="kiss"]').wait_for()
         expect(page.locator(".monster-drops[open]")).to_have_count(1)
         expect(rows).to_have_count(60)
