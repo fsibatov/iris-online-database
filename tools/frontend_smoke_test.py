@@ -10,11 +10,11 @@ from contextlib import suppress
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 CURRENT_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -86,6 +86,29 @@ MONSTER = {
         }
     ],
     "worldRuleCount": 0,
+}
+
+MONSTER_LARGE_LOOT = {
+    **MONSTER,
+    "monster": {**MONSTER["monster"], "id": 43},
+    "slots": [
+        {
+            "choices": [
+                {
+                    "items": [
+                        {
+                            "itemId": 5000 + index,
+                            "item": f"Тестовая добыча {index + 1}",
+                            "baseSelectionChance": 1,
+                            "baseAttemptChance": 1,
+                        }
+                        for index in range(65)
+                    ]
+                },
+                {"items": [{"itemId": 2003, "item": "Тестовый усиленный посох"}]},
+            ]
+        }
+    ],
 }
 
 CHEST_ITEM = {
@@ -302,6 +325,40 @@ class FixtureHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/monsters/42":
             self.send_json(MONSTER)
+            return
+        if parsed.path == "/api/monsters/43":
+            data = MONSTER_LARGE_LOOT
+            if parse_qs(parsed.query).get("server") == ["original"]:
+                data = {
+                    **data,
+                    "slots": [{"choices": data["slots"][0]["choices"][1:]}],
+                }
+            self.send_json(data)
+            return
+        if parsed.path == "/api/items":
+            self.send_json(
+                {
+                    "items": [
+                        item["item"] for item in (CHEST_ITEM, RUNE_ITEM, ENHANCED_ITEM)
+                    ],
+                    "total": 3,
+                    "page": 1,
+                    "pages": 1,
+                }
+            )
+            return
+        if re.fullmatch(r"/api/items/50(?:[0-5][0-9]|6[0-4])", parsed.path):
+            item_id = int(parsed.path.rsplit("/", 1)[1])
+            self.send_json(
+                {
+                    **RUNE_ITEM,
+                    "item": {
+                        **RUNE_ITEM["item"],
+                        "id": item_id,
+                        "name": f"Тестовая добыча {item_id - 4999}",
+                    },
+                }
+            )
             return
         if parsed.path == "/api/items/2001":
             self.send_json(CHEST_ITEM)
@@ -726,6 +783,114 @@ def exercise_layout(page, state: FixtureState, mode: str) -> None:
     page.wait_for_selector('.home-page[data-route="home"]')
 
 
+def exercise_item_navigation(page, base_url: str, state: FixtureState) -> None:
+    for theme, width, height in (("dark", 1280, 820), ("light", 720, 520)):
+        state.stage = f"navigation/{theme}/{width}px/catalog"
+        page.set_viewport_size({"width": width, "height": height})
+        page.goto(f"{base_url}#items", wait_until="networkidle")
+        page.reload(wait_until="networkidle")
+        page.locator("#serverSelect").select_option("kiss")
+        page.locator('.page[data-route="items"][data-server="kiss"]').wait_for()
+        if page.locator("html").get_attribute("data-theme") != theme:
+            page.locator("#moreButton").click()
+            page.locator('[data-menu-action="theme"]').click()
+        expect(page.locator("html")).to_have_attribute("data-theme", theme)
+        page.locator('[data-view="list"]').click()
+        page.locator('.result-main[data-item-id="2001"]').click()
+        page.locator('.page[data-route="item/2001"]').wait_for()
+        page.locator("[data-route-back]").click()
+        selected = page.locator('.result-row.is-selected a[aria-current="true"]')
+        expect(selected).to_have_attribute("data-item-id", "2001")
+        save_screenshot(page, state)
+
+        state.stage = f"navigation/{theme}/{width}px/cards"
+        page.locator('[data-view="cards"]').click()
+        expect(selected).to_have_attribute("data-item-id", "2001")
+        page.locator('.result-main[data-item-id="2002"]').click()
+        page.locator('.page[data-route="item/2002"]').wait_for()
+        page.go_back()
+        expect(selected).to_have_count(1)
+        expect(selected).to_have_attribute("data-item-id", "2002")
+        with page.expect_response(lambda response: "/api/items?" in response.url):
+            page.locator("[data-catalog-order]").select_option("desc")
+        page.locator("[data-catalog-results]:not([aria-busy])").wait_for()
+        expect(selected).to_have_attribute("data-item-id", "2002")
+        page.locator("#serverSelect").select_option("original")
+        page.locator('.page[data-route="items"][data-server="original"]').wait_for()
+        expect(selected).to_have_count(0)
+        page.locator("#serverSelect").select_option("kiss")
+        page.locator('.page[data-route="items"][data-server="kiss"]').wait_for()
+        expect(selected).to_have_attribute("data-item-id", "2002")
+        save_screenshot(page, state)
+
+        state.stage = f"navigation/{theme}/{width}px/loot-expanded"
+        page.evaluate("location.hash = 'monster/43'")
+        page.locator('.page[data-route="monster/43"]').wait_for()
+        page.locator('[data-open-details="monster-drops"]').click()
+        group = page.locator('[data-drop-group="0"]')
+        group.locator("summary").click()
+        rows = group.locator("a[data-item-id]")
+        expect(rows).to_have_count(30)
+        page.locator('[data-drop-more="0"]').click()
+        expect(rows).to_have_count(60)
+        page.locator('[data-drop-group="1"] summary').click()
+        expect(page.locator('[data-drop-group="1"] a')).to_have_count(1)
+        item = group.locator('[data-item-id="5050"]')
+        item.scroll_into_view_if_needed()
+        scroll_top = page.evaluate("scrollY")
+        item.click()
+        page.locator('.page[data-route="item/5050"]').wait_for()
+        page.locator("[data-route-back]").click()
+        page.locator('.page[data-route="monster/43"] .monster-drops[open]').wait_for()
+        expect(page.locator("[data-drop-group][open]")).to_have_count(2)
+        expect(rows).to_have_count(60)
+        expect(item).to_have_attribute("aria-current", "true")
+        require(
+            abs(page.evaluate("scrollY") - scroll_top) <= 1,
+            "returning to expanded loot did not restore the scroll position",
+        )
+        require(
+            item.evaluate("node => getComputedStyle(node).boxShadow != 'none'"),
+            "selected loot item has no visible highlight",
+        )
+        save_screenshot(page, state)
+        group.locator("summary").click()
+        group.locator("summary").click()
+        expect(rows).to_have_count(60)
+
+        state.stage = f"navigation/{theme}/{width}px/loot-preview"
+        page.locator('.drop-preview-list [data-item-id="5000"]').click()
+        page.locator('.page[data-route="item/5000"]').wait_for()
+        page.go_back()
+        page.locator('.page[data-route="monster/43"]').wait_for()
+        expect(
+            page.locator('a[data-item-id="5000"][aria-current="true"]')
+        ).to_have_count(2)
+        expect(
+            page.locator('a[data-item-id="5050"][aria-current="true"]')
+        ).to_have_count(0)
+        save_screenshot(page, state)
+
+        state.stage = f"navigation/{theme}/{width}px/loot-server-switch"
+        page.locator("#serverSelect").select_option("original")
+        page.locator(
+            '.page[data-route="monster/43"][data-server="original"]'
+        ).wait_for()
+        expect(page.locator(".monster-drops[open]")).to_have_count(0)
+        expect(page.locator("a.is-selected")).to_have_count(0)
+        expect(page.locator('.drop-preview-list a[data-item-id="2003"]')).to_have_count(
+            1
+        )
+        page.locator("#serverSelect").select_option("kiss")
+        page.locator('.page[data-route="monster/43"][data-server="kiss"]').wait_for()
+        expect(page.locator(".monster-drops[open]")).to_have_count(1)
+        expect(rows).to_have_count(60)
+        expect(
+            page.locator('a[data-item-id="5000"][aria-current="true"]')
+        ).to_have_count(2)
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+
 def exercise_frontend(base_url: str, state: FixtureState) -> None:
     with sync_playwright() as playwright:
         state.stage = "browser/hidden-scrollbars/launch"
@@ -1049,6 +1214,8 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 "full loot action is missing",
             )
 
+            exercise_item_navigation(page, base_url, state)
+
             state.stage = "news/stale-response"
             page.evaluate("location.hash = 'home'")
             page.wait_for_selector(".vk-news-card")
@@ -1084,7 +1251,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
             )
             require(not errors, "desktop frontend raised a JavaScript error")
             context.close()
-        except (PlaywrightError, RuntimeError):
+        except (PlaywrightError, RuntimeError, AssertionError):
             capture_failure_state(page, state)
             raise
         finally:
@@ -1103,7 +1270,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
             exercise_layout(page, state, "visible-scrollbars")
             require(not errors, "scrollbar layout raised a JavaScript error")
             context.close()
-        except (PlaywrightError, RuntimeError):
+        except (PlaywrightError, RuntimeError, AssertionError):
             capture_failure_state(page, state)
             raise
         finally:
@@ -1132,7 +1299,7 @@ def main() -> int:
         except PlaywrightError as error:
             category = playwright_failure_category(error)
             return report_failure(state, error, category)
-        except RuntimeError as error:
+        except (RuntimeError, AssertionError) as error:
             return report_failure(state, error, "REGRESSION")
     finally:
         server.shutdown()

@@ -307,6 +307,7 @@ function routeFixture(route) {
     normalizeServerKey: value => value,
     writeLocalValue: noop, scheduleProfileSave: noop, showToast: noop,
     closeFilters: noop, closeMoreMenu: noop, closeSuggestions: noop,
+    rememberRouteView: noop, restoreRouteView: noop,
     routeBase: () => context.state.route.split('?')[0],
     decodeRouteHash: () => hash,
     replaceRouteHash(value) { hash = value; },
@@ -402,6 +403,91 @@ test('scroll history stays bounded and refreshes recently used entries', () => {
   context.rememberRouteScroll();
   assert.equal(context.routeScrollPositions.get(20), 730);
   assert.equal([...context.routeScrollPositions.keys()].at(-1), 20);
+});
+
+function viewFixture() {
+  const accordions = [{ open: true }, { open: false }];
+  const groups = [{ open: true }, { open: false }];
+  const links = ['2001', '2002'].map(itemId => ({
+    dataset: { itemId }, selected: false, attributes: new Map(),
+    closest() { return null; },
+    classList: { toggle(_name, value) { links.find(link => link.dataset.itemId === itemId).selected = value; } },
+    setAttribute(name, value) { this.attributes.set(name, value); },
+    removeAttribute(name) { this.attributes.delete(name); },
+  }));
+  const page = {
+    dataset: { route: 'monster/42', server: 'kiss' }, busy: false,
+    hasAttribute() { return this.busy; },
+    querySelectorAll() { return accordions; },
+    querySelector(selector) { return groups[Number(selector.match(/"(\d+)"/)[1])]; },
+  };
+  const restored = [];
+  const context = {
+    state: { route: 'monster/42', server: 'kiss', monsterDrops: { groups: [{ shown: 60 }, { shown: 30 }] } },
+    routeViewStates: new Map(),
+    main: {
+      querySelector(selector) { return selector === '.page' ? page : page.querySelector(selector); },
+      querySelectorAll(selector) { return selector === 'a[data-item-id]' ? links : accordions; },
+    },
+    renderMonsterDropShell() {
+      context.state.monsterDrops.groups = [65, 12].map(count => ({ shown: 0, choice: { items: Array(count) } }));
+    },
+    renderMonsterDropGroup(index) { restored.push({ index, shown: context.state.monsterDrops.groups[index].shown }); },
+  };
+  vm.createContext(context);
+  for (const name of ['rememberRouteView', 'applyItemSelection', 'restoreRouteView']) vm.runInContext(sourceFunction(name), context);
+  return { context, page, accordions, groups, links, restored };
+}
+
+test('selected items are scoped to their page and server and only the latest is marked', () => {
+  const { context, page, links } = viewFixture();
+  page.dataset.route = context.state.route = 'items?page=2';
+  context.rememberRouteView('2001');
+  assert.deepEqual(links.map(link => link.selected), [true, false]);
+  assert.equal(links[0].attributes.get('aria-current'), 'true');
+  context.rememberRouteView('2002');
+  assert.deepEqual(links.map(link => link.selected), [false, true]);
+  assert.equal(links[0].attributes.has('aria-current'), false);
+  context.state.server = 'original';
+  context.restoreRouteView();
+  assert.deepEqual(links.map(link => link.selected), [false, false]);
+  context.state.server = 'kiss';
+  context.state.route = 'monster/42';
+  context.restoreRouteView();
+  assert.deepEqual(links.map(link => link.selected), [false, false]);
+  context.state.route = 'items?page=2';
+  context.restoreRouteView();
+  assert.deepEqual(links.map(link => link.selected), [false, true]);
+});
+
+test('returning to monster loot restores open branches and loaded counts without rendering closed groups', () => {
+  const { context, accordions, groups, links, restored } = viewFixture();
+  context.rememberRouteView('2002');
+  accordions.forEach(details => { details.open = false; });
+  groups.forEach(details => { details.open = false; });
+  context.state.monsterDrops = { groups: [] };
+  context.restoreRouteView();
+  assert.deepEqual(accordions.map(details => details.open), [true, false]);
+  assert.deepEqual(groups.map(details => details.open), [true, false]);
+  assert.deepEqual(restored, [{ index: 0, shown: 60 }]);
+  assert.equal(context.state.monsterDrops.groups[1].shown, 12);
+  assert.equal(links[1].selected, true);
+});
+
+test('view history is bounded and busy pages cannot replace their saved state', () => {
+  const { context, page } = viewFixture();
+  for (let index = 0; index < 70; index += 1) {
+    page.dataset.route = context.state.route = `monster/${index}`;
+    context.rememberRouteView('2001');
+  }
+  assert.equal(context.routeViewStates.size, 50);
+  assert.equal(context.routeViewStates.has('kiss:monster/19'), false);
+  page.dataset.route = context.state.route = 'monster/20';
+  context.rememberRouteView('2002');
+  assert.equal([...context.routeViewStates.keys()].at(-1), 'kiss:monster/20');
+  page.busy = true;
+  context.rememberRouteView('2001');
+  assert.equal(context.routeViewStates.get('kiss:monster/20').selectedItem, '2002');
 });
 
 test('server changes refresh every catalogue and preserve filters', async () => {

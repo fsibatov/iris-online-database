@@ -790,6 +790,12 @@ a.link-row:hover { background: var(--surface-2); }
 .drop-items { display: grid; padding: 0 10px 10px; }
 .drop-items a { min-width: 0; min-height: 46px; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 7px 4px; border-top: 1px solid var(--border); }
 .drop-items a:hover { color: var(--accent); }
+.result-row.is-selected,
+.drop-preview-list a.is-selected,
+.drop-items a.is-selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 var(--accent);
+}
 .drop-items strong { min-width: 0; overflow-wrap: anywhere; }
 .drop-items small { color: var(--muted); white-space: nowrap; }
 .lazy-list-status { padding: 10px 4px 4px; color: var(--muted); font-size: 13px; }

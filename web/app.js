@@ -21,6 +21,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
   const BATTLEGROUND_FIRST_START_MS = 3 * 60 * 1000;
   const BATTLEGROUND_SERVER_OFFSET_MS = 3 * 60 * 60 * 1000;
   const routeScrollPositions = new Map();
+  const routeViewStates = new Map();
   let routeHistoryIndex = 0;
 
   function safeJSON(value, fallback) {
@@ -236,6 +237,53 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     routeScrollPositions.delete(routeHistoryIndex);
     routeScrollPositions.set(routeHistoryIndex, Math.max(0, window.scrollY));
     if (routeScrollPositions.size > 50) routeScrollPositions.delete(routeScrollPositions.keys().next().value);
+  }
+
+  function rememberRouteView(selectedItem) {
+    const page = main.querySelector('.page');
+    if (!page?.dataset.route || !page.dataset.server || page.hasAttribute('aria-busy')) return;
+    const key = `${page.dataset.server}:${page.dataset.route}`;
+    const previous = routeViewStates.get(key);
+    const accordions = [...page.querySelectorAll('.detail-accordions > details')].map(details => details.open);
+    const groups = page.dataset.route.startsWith('monster/') ? (state.monsterDrops?.groups || []).map((group, index) => ({
+      shown: group.shown,
+      open: Boolean(page.querySelector(`[data-drop-group="${index}"]`)?.open),
+    })) : [];
+    routeViewStates.delete(key);
+    routeViewStates.set(key, { selectedItem: selectedItem ?? previous?.selectedItem ?? '', accordions, groups });
+    if (routeViewStates.size > 50) routeViewStates.delete(routeViewStates.keys().next().value);
+    if (selectedItem !== undefined) applyItemSelection();
+  }
+
+  function applyItemSelection() {
+    const selectedItem = routeViewStates.get(`${state.server}:${state.route}`)?.selectedItem;
+    main.querySelectorAll('a[data-item-id]').forEach(link => {
+      const selected = link.dataset.itemId === selectedItem;
+      (link.closest('.result-row') || link).classList.toggle('is-selected', selected);
+      if (selected) link.setAttribute('aria-current', 'true');
+      else link.removeAttribute('aria-current');
+    });
+  }
+
+  function restoreRouteView() {
+    const saved = routeViewStates.get(`${state.server}:${state.route}`);
+    if (saved) {
+      main.querySelectorAll('.detail-accordions > details').forEach((details, index) => {
+        details.open = Boolean(saved.accordions[index]);
+      });
+      if (state.route.startsWith('monster/') && saved.groups.length) {
+        renderMonsterDropShell();
+        saved.groups.forEach((value, index) => {
+          const group = state.monsterDrops?.groups[index];
+          const details = main.querySelector(`[data-drop-group="${index}"]`);
+          if (!group || !details) return;
+          group.shown = Math.min(value.shown, (group.choice.items || []).length);
+          if (value.open) renderMonsterDropGroup(index);
+          details.open = value.open;
+        });
+      }
+    }
+    applyItemSelection();
   }
 
   function navigateToRoute(value) {
@@ -948,7 +996,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     const secondary = [item.typeLine || item.category, item.level ? `Ранг ${item.level}` : ''].filter(Boolean).join(' · ');
     const tertiary = [qualityBadge(item.quality, item.qualityId), primaryItemStat(item) ? `<span>${escapeHTML(primaryItemStat(item))}</span>` : '', itemSetBadge(item.setSize)].filter(Boolean).join('');
     return `<article class="result-row">
-      <a class="result-main" href="#item/${item.id}" aria-label="Открыть предмет: ${escapeHTML(item.name)}">
+      <a class="result-main" href="#item/${item.id}" data-item-id="${item.id}" aria-label="Открыть предмет: ${escapeHTML(item.name)}">
         <span class="result-icon">${icons.item}</span>
         <span class="result-copy"><strong>${highlight(item.name, query)}</strong><span class="result-secondary">${escapeHTML(secondary)}</span><span class="result-tertiary">${tertiary}</span></span>
         <span class="result-arrow">${icons.chevron}</span>
@@ -1151,6 +1199,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
       if (controller.signal.aborted || state.catalog?.kind !== catalog.kind) return;
       state.catalog.data = data;
       if (results) results.innerHTML = catalogResultsHTML(catalog.kind, data);
+      applyItemSelection();
       const count = main.querySelector('[data-catalog-count]');
       if (count) count.textContent = `Найдено: ${formatNumber(data.total)}`;
       const paging = main.querySelector('[data-catalog-pagination]');
@@ -2019,7 +2068,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
       </header>
       ${gameProperties(presentation, 'Характеристики монстра')}
-      ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Предметы с наибольшим шансом</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}" aria-label="${escapeHTML(drop.item)} — ${formatChance(drop.chance)}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small aria-hidden="true">— ${formatChance(drop.chance)}</small></a>`).join('')}</div></section>` : ''}
+      ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Предметы с наибольшим шансом</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}" data-item-id="${drop.itemId}" aria-label="${escapeHTML(drop.item)} — ${formatChance(drop.chance)}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small aria-hidden="true">— ${formatChance(drop.chance)}</small></a>`).join('')}</div></section>` : ''}
       <section class="detail-accordions">
         ${slots.length ? accordion('Обычная добыча', formatCount(slots.length, 'вариант', 'варианта', 'вариантов'), `<div data-monster-drops-host><p class="empty-copy">Список загрузится после открытия раздела.</p></div>`, false, 'monster-drops lazy-monster-drops') : ''}
         ${description ? accordion('Описание', '', `<p class="reading-text">${multilineHTML(description)}</p>`, false) : ''}
@@ -2073,16 +2122,17 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     if (!group || !host) return;
     const items = group.choice.items || [];
     if (showAll) group.shown = items.length;
-    else if (!group.rendered) group.shown = Math.min(DROP_BATCH, items.length);
+    else if (!group.rendered) group.shown = Math.min(Math.max(DROP_BATCH, group.shown), items.length);
     else group.shown = Math.min(items.length, group.shown + DROP_BATCH);
     group.rendered = true;
     if (!items.length) {
       host.innerHTML = '<p class="empty-copy">Состав группы не найден.</p>';
       return;
     }
-    const rows = items.slice(0, group.shown).map(item => `<a href="#item/${item.itemId}"><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`).join('');
+    const rows = items.slice(0, group.shown).map(item => `<a href="#item/${item.itemId}" data-item-id="${item.itemId}"><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`).join('');
     const remaining = items.length - group.shown;
     host.innerHTML = `${rows}<div class="lazy-list-status" aria-live="polite">Показано ${formatNumber(group.shown)} из ${formatNumber(items.length)}</div>${remaining > 0 ? `<div class="lazy-list-actions"><button class="secondary-button" type="button" data-drop-more="${groupIndex}">Показать ещё ${formatNumber(Math.min(DROP_BATCH, remaining))}</button><button class="text-button" type="button" data-drop-all="${groupIndex}">Показать всё</button></div>` : ''}`;
+    applyItemSelection();
   }
 
   async function favoritesPage(signal) {
@@ -2112,6 +2162,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
   }
 
   async function renderRoute({ preservePage = true, retainOnError = true, resetScroll = false } = {}) {
+    rememberRouteView();
     closeFilters();
     closeMoreMenu();
     closeSuggestions();
@@ -2228,6 +2279,8 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
       else notFoundPage();
       if (!controller.signal.aborted && requestId === state.requestId) {
         main.querySelector('.page')?.setAttribute('data-route', state.route);
+        main.querySelector('.page')?.setAttribute('data-server', state.server);
+        restoreRouteView();
         window.scrollTo({ top: scrollTop, behavior: 'auto' });
         main.focus({ preventScroll: true });
       }
@@ -2821,6 +2874,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
       const data = state.catalog?.data;
       const results = main.querySelector('[data-catalog-results]');
       if (data && results) results.innerHTML = catalogResultsHTML(state.catalog.kind, data);
+      applyItemSelection();
       scheduleProfileSave();
       return;
     }
@@ -2873,7 +2927,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
     const details = event.target;
     if (!(details instanceof HTMLDetailsElement) || !details.open) return;
     if (details.matches('.lazy-monster-drops')) renderMonsterDropShell();
-    if (details.matches('[data-drop-group]')) renderMonsterDropGroup(Number(details.dataset.dropGroup));
+    if (details.matches('[data-drop-group]') && !state.monsterDrops?.groups[Number(details.dataset.dropGroup)]?.rendered) renderMonsterDropGroup(Number(details.dataset.dropGroup));
   }, true);
 
   main.addEventListener('input', event => {
@@ -3031,6 +3085,7 @@ import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } 
       return;
     }
     const internalLink = event.target.closest('a[href^="#"]');
+    if (internalLink?.hasAttribute('data-item-id') && main.contains(internalLink)) rememberRouteView(internalLink.dataset.itemId);
     if (internalLink && navigateToRoute(internalLink.getAttribute('href'))) {
       event.preventDefault();
       return;
