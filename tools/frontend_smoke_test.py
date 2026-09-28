@@ -796,7 +796,7 @@ def exercise_layout(page, state: FixtureState, mode: str) -> None:
 def exercise_item_navigation(page, base_url: str, state: FixtureState) -> None:
     for theme, width, height in (("dark", 1280, 820), ("light", 720, 520)):
         state.stage = f"navigation/{theme}/{width}px/catalog"
-        page.set_viewport_size({"width": width, "height": height})
+        page.set_viewport_size({"width": 1280, "height": 820})
         page.goto(f"{base_url}#items", wait_until="networkidle")
         page.reload(wait_until="networkidle")
         page.locator("#serverSelect").select_option("kiss")
@@ -806,6 +806,7 @@ def exercise_item_navigation(page, base_url: str, state: FixtureState) -> None:
             page.locator('[data-menu-action="theme"]').click()
         expect(page.locator("html")).to_have_attribute("data-theme", theme)
         page.locator('[data-view="list"]').click()
+        page.set_viewport_size({"width": width, "height": height})
         page.locator('.result-main[data-item-id="2001"]').click()
         page.locator('.page[data-route="item/2001"]').wait_for()
         page.locator("[data-route-back]").click()
@@ -814,7 +815,9 @@ def exercise_item_navigation(page, base_url: str, state: FixtureState) -> None:
         save_screenshot(page, state)
 
         state.stage = f"navigation/{theme}/{width}px/cards"
+        page.set_viewport_size({"width": 1280, "height": 820})
         page.locator('[data-view="cards"]').click()
+        page.set_viewport_size({"width": width, "height": height})
         expect(selected).to_have_attribute("data-item-id", "2001")
         page.locator('.result-main[data-item-id="2002"]').click()
         page.locator('.page[data-route="item/2002"]').wait_for()
