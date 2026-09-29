@@ -1312,10 +1312,17 @@ a.link-row:hover { background: var(--surface-2); }
 .battleground-name { min-width: 0; flex: 1; color: var(--text); font-weight: 700; }
 .battleground-countdown { width: 5ch; flex: 0 0 5ch; color: var(--good); font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
 .version-status {
-  width: 248px;
+  width: 220px;
   padding-right: 3px;
 }
-.version-status-number { flex: 0 0 auto; color: var(--text); font-weight: 700; }
+.version-status-number {
+  flex: 0 0 auto;
+  margin-right: 2px;
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 700;
+}
 .version-status-dot { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%; background: var(--soft); }
 .version-status[data-status="current"] .version-status-dot { background: var(--good); box-shadow: 0 0 0 3px rgba(99, 217, 170, .16); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 16%, transparent); }
 .version-status[data-status="checking"] .version-status-dot { background: var(--accent); }
