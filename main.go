@@ -583,6 +583,7 @@ type appStore struct {
 	titleSearch      []catalog.Document
 	monsterTypeNames map[int]string
 	categoryItems    map[string]int
+	itemDuplicates   map[int]int
 	itemRecipes      map[int][]itemRecipeMaterialSource
 	itemUsedSkills   map[int][]int
 	questRewards     map[int][]questRewardSource
@@ -666,7 +667,11 @@ func ensureLoaded() error {
 			store.itemsByID[item.ID] = item
 			store.itemNames[item.ID] = item.Name
 			store.itemSearch[i] = catalog.NewDocument(fmt.Sprintf("%d %s %s %s %s %s", item.ID, item.Name, presented.TypeLine, item.Category, presented.Subcategory, item.Quality))
-			if _, isRecipe := store.itemRecipes[item.ID]; !isRecipe && !isTitleItem(item) && !isTransformationItem(item.ID) && !isTestItem(item) {
+		}
+		store.prepareCatalogDuplicates()
+		for i := range store.data.Items {
+			item := &store.data.Items[i]
+			if isCatalogItem(item, "") {
 				store.categoryItems[item.Category]++
 			}
 		}
@@ -2128,10 +2133,6 @@ func orderedCatalogNameLess(left, right string, descending bool) (bool, bool) {
 	return less, true
 }
 
-func isTestItem(item *Item) bool {
-	return item != nil && strings.TrimSpace(item.Subcategory) == "---------"
-}
-
 func isTitleItem(item *Item) bool {
 	return item != nil && item.TitleIndex > 0
 }
@@ -2365,10 +2366,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]any, 0, 6)
 	for i := range store.data.Items {
 		item := &store.data.Items[i]
-		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe {
-			continue
-		}
-		if isTitleItem(item) || isTransformationItem(item.ID) || isTestItem(item) {
+		if !isCatalogItem(item, q) {
 			continue
 		}
 		if preparedQuery.Matches(store.itemSearch[i]) {
@@ -2643,10 +2641,7 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 	qualities := map[string]int{}
 	for i := range store.data.Items {
 		item := &store.data.Items[i]
-		if _, isRecipe := store.itemRecipes[item.ID]; isRecipe {
-			continue
-		}
-		if isTitleItem(item) || isTransformationItem(item.ID) || isTestItem(item) {
+		if !isCatalogItem(item, query) {
 			continue
 		}
 		if scope == "weapons" && item.Category != "Оружие/щит" {
@@ -3005,7 +3000,7 @@ func recipeProduct(item *Item) *Item {
 		if _, isRecipe := store.itemRecipes[candidate.ID]; isRecipe {
 			continue
 		}
-		if isTitleItem(candidate) || isTestItem(candidate) {
+		if isTitleItem(candidate) || isHiddenItem(candidate) {
 			continue
 		}
 		if recipeProductNameKey(candidate.Name) != key {
@@ -3030,7 +3025,7 @@ func handleItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item := store.itemsByID[id]
-	if item == nil || isTestItem(item) {
+	if item == nil || isHiddenItem(item) {
 		http.Error(w, "Запись не найдена.\n", http.StatusNotFound)
 		return
 	}
@@ -3455,7 +3450,7 @@ func handleFavorites(w http.ResponseWriter, r *http.Request) {
 		}
 		switch parts[0] {
 		case "item":
-			if item := store.itemsByID[id]; item != nil && !isTestItem(item) {
+			if item := store.itemsByID[id]; item != nil && !isHiddenItem(item) {
 				if isTransformationItem(id) {
 					canonical := fmt.Sprintf("transformation:%d", id)
 					migratedKeys[key] = canonical
