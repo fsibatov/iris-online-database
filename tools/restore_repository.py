@@ -77,7 +77,11 @@ def restore_repository(
     base_file = root / "tools" / "archive_base.txt"
     base = base_file.read_text(encoding="ascii").strip()
     if not re.fullmatch(r"[0-9a-f]{40}", base):
-        raise ValueError("Archive base commit is invalid.")
+        raise ValueError(
+            "Archive commit metadata is missing or invalid. "
+            "Use a source ZIP created with build_source_archive.py; "
+            "local files are preserved."
+        )
     if not (root / "VERSION").is_file() or not (root / "wails.json").is_file():
         raise ValueError("The complete project archive is required.")
     findings, _ = audit(root)
@@ -109,9 +113,15 @@ def restore_repository(
             staging, work_tree, "status", "--porcelain=v1", "--untracked-files=all"
         ).stdout.strip()
         if remote_head != base and status:
+            differences = status.splitlines()
+            summary = "\n".join(differences[:12])
+            if len(differences) > 12:
+                summary += f"\n... and {len(differences) - 12} more paths"
             raise ValueError(
-                f"GitHub {branch} changed since this archive was prepared. "
-                "Update the archive before restoring Git; local files are preserved."
+                f"Archive sources differ from GitHub {branch}. "
+                f"Archive commit: {base[:12]}; branch: {remote_head[:12]}. "
+                "Use a fresh source ZIP in a separate folder; "
+                f"local files are preserved.\nDifferences:\n{summary}"
             )
         if source_snapshot(root) != before:
             raise ValueError("Source files changed during Git recovery. Try again.")

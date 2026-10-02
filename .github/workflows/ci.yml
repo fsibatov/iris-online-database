@@ -133,7 +133,31 @@ jobs:
             $env:TEMP = $gateTemp
             $env:TMP = $gateTemp
             $env:TMPDIR = $gateTemp
-            powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Test
+            $archivePath = Join-Path $gateTemp "source.zip"
+            $archiveDirectory = Join-Path $gateTemp "source"
+            python -B tools/build_source_archive.py --output $archivePath
+            if ($LASTEXITCODE -ne 0) { throw "Source archive creation failed." }
+            Expand-Archive -LiteralPath $archivePath -DestinationPath $archiveDirectory
+            $sourceRoot = Join-Path $archiveDirectory "iris-online-database"
+            $recoveryCheck = @'
+          import subprocess
+          import sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          sys.path.insert(0, str(root / "tools"))
+          from restore_repository import restore_repository, source_snapshot
+          before = source_snapshot(root)
+          restored = restore_repository(root, "CI Archive", "ci-archive@example.invalid", sys.argv[2], sys.argv[3])
+          if not restored or source_snapshot(root) != before:
+              raise SystemExit("Source archive recovery changed source files.")
+          status = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"])
+          if status.strip():
+              raise SystemExit("Recovered source tree is not clean.")
+          print("Source archive recovery: PASS")
+          '@
+            $recoveryCheck | python -B - $sourceRoot $env:GITHUB_WORKSPACE $sourceBranch
+            if ($LASTEXITCODE -ne 0) { throw "Source archive recovery failed." }
+            powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $sourceRoot "IrisTools.ps1") -Action Test
             $gateExitCode = $LASTEXITCODE
           } finally {
             $env:TEMP = $oldTemp
