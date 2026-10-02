@@ -157,8 +157,13 @@ jobs:
           '@
             $recoveryCheck | python -B - $sourceRoot $env:GITHUB_WORKSPACE $sourceBranch
             if ($LASTEXITCODE -ne 0) { throw "Source archive recovery failed." }
-            powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $sourceRoot "IrisTools.ps1") -Action Test
-            $gateExitCode = $LASTEXITCODE
+            Push-Location $sourceRoot
+            try {
+              powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\IrisTools.ps1 -Action Test
+              $gateExitCode = $LASTEXITCODE
+            } finally {
+              Pop-Location
+            }
           } finally {
             $env:TEMP = $oldTemp
             $env:TMP = $oldTmp
