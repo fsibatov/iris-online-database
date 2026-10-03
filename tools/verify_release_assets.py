@@ -1,5 +1,3 @@
-"""Verify the exact Windows release asset set and SHA-256 manifest."""
-
 from __future__ import annotations
 
 import argparse
@@ -23,6 +21,16 @@ def verify_release_assets(directory: Path, version: str) -> None:
 
     expected = set(expected_asset_names(version))
     actual = {entry.name for entry in directory.iterdir() if entry.is_file()}
+    signature_name = "SHA256SUMS.txt.asc"
+    if signature_name in actual:
+        signature = (directory / signature_name).read_bytes()
+        if (
+            len(signature) > 16384
+            or not signature.startswith(b"-----BEGIN PGP SIGNATURE-----")
+            or b"-----END PGP SIGNATURE-----" not in signature
+        ):
+            raise SystemExit("checksum signature envelope is invalid")
+        expected.add(signature_name)
     if actual != expected:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
@@ -49,7 +57,7 @@ def verify_release_assets(directory: Path, version: str) -> None:
         raise SystemExit("SHA256SUMS.txt must be ASCII") from error
     lines = [line for line in text.splitlines() if line]
     if len(lines) != len(executable_names):
-        raise SystemExit("SHA256SUMS.txt must contain exactly three entries")
+        raise SystemExit("SHA256SUMS.txt must contain one entry per release executable")
 
     manifest: dict[str, str] = {}
     for line in lines:
@@ -69,7 +77,7 @@ def verify_release_assets(directory: Path, version: str) -> None:
         if manifest[name] != actual_digest:
             raise SystemExit(f"SHA-256 mismatch: {name}")
 
-    print("Release assets/SHA256: PASS files=4")
+    print(f"Release assets/SHA256: PASS files={len(actual)}")
 
 
 def main() -> None:

@@ -14,6 +14,7 @@ permissions:
 
 env:
   GOTOOLCHAIN: local
+  CGO_ENABLED: '0'
 
 jobs:
   analyze:
@@ -23,18 +24,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [go, python]
+        language: [go, python, javascript-typescript]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Setup pinned Go
         if: matrix.language == 'go'
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
         with:
           go-version-file: .go-version
           cache: true
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28
         with:
           languages: ${{ matrix.language }}
       - name: Build Windows Go sources
@@ -50,6 +51,10 @@ jobs:
           $oldTmpDir = $env:TMPDIR
           $goTestExitCode = 0
           $goBuildExitCode = 0
+          $legacyDirectory = Join-Path $env:RUNNER_TEMP "iris-codeql-windows7-overlay"
+          python -B tools/prepare_windows_legacy.py --directory $legacyDirectory
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $legacyOverlay = Join-Path $legacyDirectory "overlay.json"
           try {
             $env:TEMP = $testTemp
             $env:TMP = $testTemp
@@ -57,8 +62,12 @@ jobs:
             go test -count=1 ./...
             $goTestExitCode = $LASTEXITCODE
             if ($goTestExitCode -eq 0) {
-              go build -trimpath -o (Join-Path $env:RUNNER_TEMP "iris-codeql.exe") .
+              go build "-tags=desktop,wv2runtime.embed,production" -trimpath -o (Join-Path $env:RUNNER_TEMP "iris-codeql.exe") .
               $goBuildExitCode = $LASTEXITCODE
+              if ($goBuildExitCode -eq 0) {
+                go build "-overlay=$legacyOverlay" "-tags=desktop,wv2runtime.embed,production,windows_legacy" -trimpath -o (Join-Path $env:RUNNER_TEMP "iris-codeql-windows7.exe") .
+                $goBuildExitCode = $LASTEXITCODE
+              }
             }
           } finally {
             $env:TEMP = $oldTemp
@@ -69,4 +78,4 @@ jobs:
           if ($goTestExitCode -ne 0) { exit $goTestExitCode }
           if ($goBuildExitCode -ne 0) { exit $goBuildExitCode }
       - name: Analyze
-        uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28

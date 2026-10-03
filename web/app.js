@@ -1,7 +1,9 @@
+import { readLocalValue, writeLocalValue, removeLocalValue, profileRetryDelay } from './profile.js';
+
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.5';
+  const APP_VERSION = '2.1';
   const PAGE_SIZE = 24;
   const FAVORITES_PAGE_SIZE = 24;
   const SOURCE_BATCH = 20;
@@ -18,6 +20,8 @@
   const BATTLEGROUND_INTERVAL_MS = 30 * 60 * 1000;
   const BATTLEGROUND_FIRST_START_MS = 3 * 60 * 1000;
   const BATTLEGROUND_SERVER_OFFSET_MS = 3 * 60 * 60 * 1000;
+  const routeScrollPositions = new Map();
+  const routeViewStates = new Map();
   let routeHistoryIndex = 0;
 
   function safeJSON(value, fallback) {
@@ -50,21 +54,21 @@
     state.recipeFilters = defaultRecipeFilters();
     state.titleFilters = defaultTitleFilters();
     state.transformationFilters = defaultTransformationFilters();
-    localStorage.removeItem('iris-item-filters');
-    localStorage.removeItem('iris-monster-filters');
+    removeLocalValue('iris-item-filters');
+    removeLocalValue('iris-monster-filters');
   }
 
-  const legacyFavorites = safeJSON(localStorage.getItem('iris-favorites') || '[]', []);
+  const legacyFavorites = safeJSON(readLocalValue('iris-favorites') || '[]', []);
   const state = {
     meta: null,
     effectSpecs: {},
     route: 'home',
-    server: localStorage.getItem('iris-server') || 'kiss',
-    theme: localStorage.getItem('iris-theme') || 'dark',
-    view: localStorage.getItem('iris-view') || 'list',
+    server: readLocalValue('iris-server') || 'kiss',
+    theme: readLocalValue('iris-theme') || 'dark',
+    view: readLocalValue('iris-view') || 'list',
     favorites: new Set(Array.isArray(legacyFavorites) ? legacyFavorites : []),
     history: [],
-    recentlyViewed: safeJSON(localStorage.getItem(RECENT_VIEWED_KEY) || '[]', []),
+    recentlyViewed: safeJSON(readLocalValue(RECENT_VIEWED_KEY) || '[]', []),
     profileLoaded: false,
     itemFilters: defaultItemFilters(),
     monsterFilters: defaultMonsterFilters(),
@@ -86,18 +90,17 @@
 
   if (!['list', 'cards'].includes(state.view)) state.view = 'list';
   if (!['dark', 'light'].includes(state.theme)) state.theme = 'dark';
+  state.server = normalizeServerKey(state.server);
+  if (!['kiss', 'original'].includes(state.server)) state.server = 'kiss';
 
   const main = document.getElementById('mainContent');
   const sectionTabs = document.getElementById('sectionTabs');
   const mobileNav = document.getElementById('mobileNav');
-  const headerSearchHost = document.getElementById('headerSearchHost');
-  const searchWidget = document.getElementById('searchWidget');
   const globalSearch = document.getElementById('globalSearch');
   const suggestions = document.getElementById('searchSuggestions');
   const serverSelect = document.getElementById('serverSelect');
   const battlegroundStatus = document.getElementById('battlegroundStatus');
   const battlegroundName = document.getElementById('battlegroundName');
-  const battlegroundStart = document.getElementById('battlegroundStart');
   const battlegroundCountdown = document.getElementById('battlegroundCountdown');
   const versionStatus = document.getElementById('versionStatus');
   const versionStatusText = document.getElementById('versionStatusText');
@@ -219,6 +222,7 @@
   }
 
   function initializeRouteHistory() {
+    window.history.scrollRestoration = 'manual';
     const entry = currentRouteHistoryEntry();
     if (entry) {
       routeHistoryIndex = entry.index;
@@ -229,6 +233,59 @@
     window.history.replaceState(routeHistoryState(0, route), '', `#${route}`);
   }
 
+  function rememberRouteScroll() {
+    routeScrollPositions.delete(routeHistoryIndex);
+    routeScrollPositions.set(routeHistoryIndex, Math.max(0, window.scrollY));
+    if (routeScrollPositions.size > 50) routeScrollPositions.delete(routeScrollPositions.keys().next().value);
+  }
+
+  function rememberRouteView(selectedItem) {
+    const page = main.querySelector('.page');
+    if (!page?.dataset.route || !page.dataset.server || page.hasAttribute('aria-busy')) return;
+    const key = `${page.dataset.server}:${page.dataset.route}`;
+    const previous = routeViewStates.get(key);
+    const accordions = [...page.querySelectorAll('.detail-accordions > details')].map(details => details.open);
+    const groups = page.dataset.route.startsWith('monster/') ? (state.monsterDrops?.groups || []).map((group, index) => ({
+      shown: group.shown,
+      open: Boolean(page.querySelector(`[data-drop-group="${index}"]`)?.open),
+    })) : [];
+    routeViewStates.delete(key);
+    routeViewStates.set(key, { selectedItem: selectedItem ?? previous?.selectedItem ?? '', accordions, groups });
+    if (routeViewStates.size > 50) routeViewStates.delete(routeViewStates.keys().next().value);
+    if (selectedItem !== undefined) applyItemSelection();
+  }
+
+  function applyItemSelection() {
+    const selectedItem = routeViewStates.get(`${state.server}:${state.route}`)?.selectedItem;
+    main.querySelectorAll('a[data-item-id]').forEach(link => {
+      const selected = link.dataset.itemId === selectedItem;
+      (link.closest('.result-row') || link).classList.toggle('is-selected', selected);
+      if (selected) link.setAttribute('aria-current', 'true');
+      else link.removeAttribute('aria-current');
+    });
+  }
+
+  function restoreRouteView() {
+    const saved = routeViewStates.get(`${state.server}:${state.route}`);
+    if (saved) {
+      main.querySelectorAll('.detail-accordions > details').forEach((details, index) => {
+        details.open = Boolean(saved.accordions[index]);
+      });
+      if (state.route.startsWith('monster/') && saved.groups.length) {
+        renderMonsterDropShell();
+        saved.groups.forEach((value, index) => {
+          const group = state.monsterDrops?.groups[index];
+          const details = main.querySelector(`[data-drop-group="${index}"]`);
+          if (!group || !details) return;
+          group.shown = Math.min(value.shown, (group.choice.items || []).length);
+          if (value.open) renderMonsterDropGroup(index);
+          details.open = value.open;
+        });
+      }
+    }
+    applyItemSelection();
+  }
+
   function navigateToRoute(value) {
     const route = normalizeRouteValue(value);
     if (!isInternalAppRoute(route)) return false;
@@ -236,13 +293,16 @@
       renderRoute();
       return true;
     }
+    rememberRouteScroll();
     routeHistoryIndex += 1;
+    routeScrollPositions.delete(routeHistoryIndex);
     window.history.pushState(routeHistoryState(routeHistoryIndex, route), '', `#${route}`);
     renderRoute();
     return true;
   }
 
   function handleRouteHashChange() {
+    rememberRouteScroll();
     const route = decodeRouteHash();
     const entry = currentRouteHistoryEntry();
     if (entry) routeHistoryIndex = entry.index;
@@ -343,32 +403,24 @@
 
   function battlegroundState(now = new Date()) {
     const serverNow = now.getTime() + BATTLEGROUND_SERVER_OFFSET_MS;
-    const shifted = new Date(serverNow);
-    const dayStart = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
-    const firstStart = dayStart + BATTLEGROUND_FIRST_START_MS;
-    const slot = serverNow <= firstStart ? 0 : Math.ceil((serverNow - firstStart) / BATTLEGROUND_INTERVAL_MS);
-    const target = firstStart + slot * BATTLEGROUND_INTERVAL_MS;
-    const targetDate = new Date(target);
-    const remaining = Math.max(0, target - serverNow);
+    const slot = Math.ceil((serverNow - BATTLEGROUND_FIRST_START_MS) / BATTLEGROUND_INTERVAL_MS);
+    const remaining = slot * BATTLEGROUND_INTERVAL_MS + BATTLEGROUND_FIRST_START_MS - serverNow;
     const minutes = Math.floor(remaining / 60000);
     const seconds = Math.floor((remaining % 60000) / 1000);
     const pad = value => String(value).padStart(2, '0');
     return {
-      name: BATTLEGROUND_NAMES[slot % BATTLEGROUND_NAMES.length],
-      start: `${pad(targetDate.getUTCHours())}:${pad(targetDate.getUTCMinutes())}`,
+      name: BATTLEGROUND_NAMES[((slot % BATTLEGROUND_NAMES.length) + BATTLEGROUND_NAMES.length) % BATTLEGROUND_NAMES.length],
       countdown: `${pad(minutes)}:${pad(seconds)}`,
     };
   }
 
   function renderBattlegroundStatus() {
-    if (!battlegroundStatus || !battlegroundName || !battlegroundStart || !battlegroundCountdown) return;
+    if (!battlegroundStatus || !battlegroundName || !battlegroundCountdown) return;
     const next = battlegroundState();
-    battlegroundName.textContent = next.name;
-    battlegroundStart.textContent = next.start;
-    battlegroundCountdown.textContent = next.countdown;
-    const label = `Ближайшее состязание: ${next.name} в ${next.start} по времени сервера, через ${next.countdown}`;
-    battlegroundStatus.setAttribute('aria-label', label);
-    battlegroundStatus.title = label;
+    if (battlegroundName.textContent !== next.name) battlegroundName.textContent = next.name;
+    if (battlegroundCountdown.textContent !== next.countdown) battlegroundCountdown.textContent = next.countdown;
+    const label = `${next.name}: до начала ${next.countdown}`;
+    if (battlegroundStatus.getAttribute('aria-label') !== label) battlegroundStatus.setAttribute('aria-label', label);
   }
 
   function highlight(value, query) {
@@ -491,6 +543,7 @@
       try {
         response = await fetch(path, { ...options, headers, signal: controller.signal });
       } catch (error) {
+        if (controller.signal.aborted) throw controller.signal.reason;
         if (error?.name === 'AbortError' || error?.name === 'TimeoutError') throw error;
         throw new Error('Не удалось связаться с приложением. Попробуйте ещё раз.');
       }
@@ -503,6 +556,7 @@
       try {
         return await response.json();
       } catch (_) {
+        if (controller.signal.aborted) throw controller.signal.reason;
         throw new Error('Не удалось прочитать данные приложения.');
       }
     } finally {
@@ -516,7 +570,8 @@
   }
 
   function errorPage(error) {
-    main.innerHTML = `<section class="page"><div class="state-message"><span class="state-symbol" aria-hidden="true">!</span><h1>Не удалось загрузить данные</h1><p>${escapeHTML(error?.message || 'Попробуйте ещё раз.')}</p><button class="primary-button" type="button" data-action="reload">Повторить</button></div></section>`;
+    const message = error?.name === 'TimeoutError' ? 'Загрузка заняла слишком много времени. Попробуйте ещё раз.' : error?.status === 404 ? 'Запись не найдена на выбранном сервере.' : 'Попробуйте ещё раз. Если ошибка повторится, перезапустите приложение.';
+    main.innerHTML = `<section class="page"><div class="state-message"><span class="state-symbol" aria-hidden="true">!</span><h1>Не удалось загрузить данные</h1><p>${message}</p><button class="primary-button" type="button" data-action="reload">Повторить</button></div></section>`;
   }
 
   function notFoundPage() {
@@ -544,12 +599,6 @@
       const key = normalizeServerKey(server.key);
       return `<option value="${escapeHTML(key)}" ${state.server === key ? 'selected' : ''}>${escapeHTML(serverName(server))}</option>`;
     }).join('');
-  }
-
-  function positionSearchWidget(home = false) {
-    const target = home ? document.getElementById('homeSearchHost') : headerSearchHost;
-    if (target && searchWidget.parentElement !== target) target.append(searchWidget);
-    searchWidget.classList.toggle('home-search-widget', home);
   }
 
   function recentViewedTypeIcon(type) {
@@ -586,13 +635,13 @@
     const key = `${type}:${numericID}:${server}`;
     const next = [{ type, id: numericID, name: cleanName, ...(cleanMeta ? { meta: cleanMeta } : {}), ...(server ? { server } : {}) }, ...normalizedRecentViewedEntries().filter(entry => `${entry.type}:${entry.id}:${entry.type === 'monster' ? normalizeServerKey(entry.server) : ''}` !== key)].slice(0, RECENT_VIEWED_LIMIT);
     state.recentlyViewed = next;
-    localStorage.setItem(RECENT_VIEWED_KEY, JSON.stringify(next));
+    writeLocalValue(RECENT_VIEWED_KEY, JSON.stringify(next));
     if (state.profileLoaded) scheduleProfileSave(0);
   }
 
   function clearRecentlyViewed() {
     state.recentlyViewed = [];
-    localStorage.setItem(RECENT_VIEWED_KEY, '[]');
+    writeLocalValue(RECENT_VIEWED_KEY, '[]');
     if (state.profileLoaded) scheduleProfileSave(0);
     if (routeBase() === 'home') homePage();
     showToast('Список недавно просмотренных очищен.');
@@ -603,13 +652,13 @@
     const serverLabel = serverName(activeServerMeta());
     const recentlyViewed = viewed.length
       ? `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><div class="home-section-heading"><h2 id="viewedTitle">Недавно просмотренные</h2><button class="text-button compact-button" type="button" data-action="clear-recently-viewed" aria-label="Очистить недавно просмотренные">Очистить</button></div><div class="recent-viewed-list">${viewed.map(entry => `<a href="#${entry.type}/${entry.id}"><span class="recent-viewed-icon">${recentViewedTypeIcon(entry.type)}</span><span>${entry.type === 'title' ? `<span class="title-name-line title-name-line--compact">${titleIndexBadge(entry.id)}<strong>${escapeHTML(entry.name)}</strong></span>` : `<strong>${escapeHTML(entry.name)}</strong>`}<small>${escapeHTML(recentViewedTypeLabel(entry.type))}</small></span>${icons.chevron}</a>`).join('')}</div></section>`
-      : `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><p class="home-start-hint">Здесь появятся открытые предметы, рецепты, монстры, титулы и карты превращения.</p></section>`;
+      : `<section class="home-compact-section recently-viewed" aria-labelledby="viewedTitle"><h2 id="viewedTitle">Недавно просмотренные</h2><p class="home-start-hint">Здесь появятся карточки, которые вы открывали.</p></section>`;
     const updateNotice = state.updateInfo.updateAvailable && state.updateInfo.latestVersion
-      ? `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="${escapeHTML(trustedUpdateReleaseURL())}" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`
+      ? `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Скачайте обновление со страницы релиза на GitHub.</span></div><a class="secondary-button" href="${escapeHTML(trustedUpdateReleaseURL())}" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`
       : '';
     const serverDifference = `<section class="home-server-difference home-compact-section" aria-labelledby="serverDifferenceTitle">
       <h2 id="serverDifferenceTitle">Сервер</h2>
-      <p>Выберите The Original или Iris Kiss Kiss в верхней панели. Названия и характеристики предметов берутся из общего справочника, а монстры и источники получения — из данных выбранного сервера.</p>
+      <p>Сервер выбирается в верхней панели. Названия и характеристики предметов общие, а монстры и источники получения зависят от сервера.</p>
     </section>`;
     const vkNews = `<section class="home-vk-news home-compact-section" aria-labelledby="vkNewsTitle">
       <div class="home-section-heading home-section-heading--news">
@@ -636,10 +685,8 @@
     </section>`;
     main.innerHTML = `<section class="page home-page">
       <div class="home-primary">
-        <p class="eyebrow">Iris Online</p>
-        <h1>Поиск по Iris Online</h1>
+        <h1>База данных Iris Online</h1>
         <p>Ищите предметы, монстров, титулы и карты превращения по названию или ID. Рецепты — в отдельном разделе.</p>
-        <div id="homeSearchHost" class="home-search-host"></div>
       </div>
       ${updateNotice}
       ${serverDifference}
@@ -647,7 +694,6 @@
       <p class="home-database-status">Текущий сервер: <strong data-home-server-name>${escapeHTML(serverLabel)}</strong> · данные хранятся на этом компьютере</p>
       ${vkNews}
     </section>`;
-    positionSearchWidget(true);
     void checkVkNews();
   }
 
@@ -739,12 +785,13 @@
     }
     suggestionTimer = setTimeout(async () => {
       const controller = new AbortController();
+      const server = state.server;
       state.suggestionController = controller;
       try {
-        const data = await api(`/api/search?q=${encodeURIComponent(query)}&server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
-        if (globalSearch.value.trim() === query) renderSuggestions(data, query);
+        const data = await api(`/api/search?q=${encodeURIComponent(query)}&server=${encodeURIComponent(server)}`, { signal: controller.signal });
+        if (!controller.signal.aborted && state.suggestionController === controller && state.server === server && globalSearch.value.trim() === query) renderSuggestions(data, query);
       } catch (error) {
-        if (error?.name !== 'AbortError') closeSuggestions();
+        if (!controller.signal.aborted && state.suggestionController === controller && error?.name !== 'AbortError') closeSuggestions();
       }
     }, SEARCH_DEBOUNCE);
   }
@@ -757,12 +804,12 @@
       api(`/api/titles?${params(query)}`, { signal }),
       api(`/api/transformations?${params(query)}`, { signal }),
     ]);
+    if (signal?.aborted) return;
     const total = Number(itemsData.total || 0) + Number(monstersData.total || 0) + Number(titlesData.total || 0) + Number(transformationsData.total || 0);
     main.innerHTML = `<section class="page search-results-page">
       ${pageHeader(`Результаты поиска`, total ? `По запросу «${query}» найдено: ${formatNumber(total)}.` : `По запросу «${query}» ничего не найдено.`)}
       ${total ? `<div class="search-result-sections">${searchResultSection('Предметы', 'items', itemsData.items || [], itemsData.total, query)}${searchResultSection('Монстры', 'monsters', monstersData.monsters || [], monstersData.total, query)}${searchResultSection('Титулы', 'titles', titlesData.titles || [], titlesData.total, query)}${searchResultSection('Карты превращения', 'transformations', transformationsData.transformations || [], transformationsData.total, query)}</div>` : `<div class="state-message compact"><span class="state-symbol">0</span><h2>Нет совпадений</h2><p>Проверьте написание, используйте часть названия или ID.</p></div>`}
     </section>`;
-    positionSearchWidget(false);
   }
 
   function searchResultSection(title, route, records, total, query) {
@@ -832,7 +879,7 @@
     const filters = catalogFilters(kind);
     state.catalog = { kind, data };
     main.innerHTML = `<section class="page catalog-page" data-catalog-kind="${kind}">
-      ${pageHeader(catalogTitle(kind), kind === 'items' ? 'Каталог предметов Iris Online.' : kind === 'recipes' ? 'Рецепты Iris Online и материалы для изготовления.' : kind === 'titles' ? 'Каталог титулов Iris Online.' : kind === 'transformations' ? 'Карты превращения, формы и навыки.' : 'Каталог монстров Iris Online.')}
+      ${pageHeader(catalogTitle(kind))}
       <section class="catalog-controls" aria-label="Управление каталогом">
         <label class="catalog-search"><span class="visually-hidden">Поиск в каталоге</span>${icons.search}<input type="search" data-catalog-search value="${escapeHTML(filters.q)}" placeholder="Поиск по каталогу"></label>
         <button class="secondary-button filter-button" type="button" data-action="open-filters">${icons.filter}<span>Фильтры</span><strong data-filter-count>${activeFilterCount(kind) || ''}</strong></button>
@@ -840,14 +887,12 @@
           <label class="sort-control"><span class="visually-hidden">Сортировать по</span><select class="control-select" data-catalog-sort aria-label="Сортировать по">${sortOptions(kind, filters.sort)}</select></label>
           <label class="sort-order-control"><span class="visually-hidden">Порядок сортировки</span><select class="control-select" data-catalog-order aria-label="Порядок сортировки">${sortOrderOptions(filters.order)}</select></label>
         </div>
-        <div class="view-switch" role="group" aria-label="Вид каталога"><button type="button" data-view="list" class="${state.view === 'list' ? 'active' : ''}" aria-label="Компактный список">${icons.list}</button><button type="button" data-view="cards" class="${state.view === 'cards' ? 'active' : ''}" aria-label="Плитка">${icons.grid}</button></div>
+        <div class="view-switch" role="group" aria-label="Вид каталога"><button type="button" data-view="list" class="${state.view === 'list' ? 'active' : ''}" aria-pressed="${state.view === 'list'}" aria-label="Компактный список">${icons.list}</button><button type="button" data-view="cards" class="${state.view === 'cards' ? 'active' : ''}" aria-pressed="${state.view === 'cards'}" aria-label="Плитка">${icons.grid}</button></div>
       </section>
-      <div class="active-filters" data-active-filters>${activeFilterChips(kind)}</div>
-      <div class="catalog-status"><span data-catalog-count>Найдено: ${formatNumber(data.total)}</span><span class="catalog-live" aria-live="polite" data-catalog-live></span></div>
+      <div class="catalog-status"><span data-catalog-count>Найдено: ${formatNumber(data.total)}</span><div class="active-filters" data-active-filters>${activeFilterChips(kind)}</div><span class="visually-hidden" role="status" aria-live="polite" data-catalog-live></span></div>
       <div class="catalog-results" data-catalog-results aria-live="polite">${catalogResultsHTML(kind, data)}</div>
       <div data-catalog-pagination>${pagination(data.page, data.pages)}</div>
     </section>`;
-    positionSearchWidget(false);
     renderFilterDrawer(kind, data.filters || {});
   }
 
@@ -951,7 +996,7 @@
     const secondary = [item.typeLine || item.category, item.level ? `Ранг ${item.level}` : ''].filter(Boolean).join(' · ');
     const tertiary = [qualityBadge(item.quality, item.qualityId), primaryItemStat(item) ? `<span>${escapeHTML(primaryItemStat(item))}</span>` : '', itemSetBadge(item.setSize)].filter(Boolean).join('');
     return `<article class="result-row">
-      <a class="result-main" href="#item/${item.id}" aria-label="Открыть предмет: ${escapeHTML(item.name)}">
+      <a class="result-main" href="#item/${item.id}" data-item-id="${item.id}" aria-label="Открыть предмет: ${escapeHTML(item.name)}">
         <span class="result-icon">${icons.item}</span>
         <span class="result-copy"><strong>${highlight(item.name, query)}</strong><span class="result-secondary">${escapeHTML(secondary)}</span><span class="result-tertiary">${tertiary}</span></span>
         <span class="result-arrow">${icons.chevron}</span>
@@ -1078,8 +1123,8 @@
            <label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только рецепты с указанным источником получения.</small></span></label>`
         : `<label class="field"><span>Категория</span><select class="control-select" name="category">${optionList(filterData.categories, filters.category, 'Любая')}</select></label>
            ${kind === 'items'
-             ? `<label class="field"><span>Подкатегория</span><select class="control-select" name="subcategory" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.subcategories, filters.subcategory, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="field"><span>Редкость</span><select class="control-select" name="quality" ${dependentLocked ? 'disabled' : ''}>${qualityOptionList(filterData.qualities, filters.quality, 'Любая')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label><label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только предметы с указанным источником получения.</small></span></label>`
-             : `<label class="field"><span>Тип монстра</span><select class="control-select" name="type" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.types, filters.type, 'Любой')}</select>${dependentLocked ? '<small>Сначала выберите категорию.</small>' : ''}</label>`}`;
+             ? `<label class="field"><span>Подкатегория</span><select class="control-select" name="subcategory" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.subcategories, filters.subcategory, 'Любая')}</select>${dependentLocked ? '<small class="visually-hidden">Сначала выберите категорию.</small>' : ''}</label><label class="field"><span>Редкость</span><select class="control-select" name="quality" ${dependentLocked ? 'disabled' : ''}>${qualityOptionList(filterData.qualities, filters.quality, 'Любая')}</select>${dependentLocked ? '<small class="visually-hidden">Сначала выберите категорию.</small>' : ''}</label><label class="filter-checkbox"><input name="knownSource" type="checkbox" value="1" ${filters.knownSource === '1' ? 'checked' : ''}><span><strong>Известно, где получить</strong><small>Только предметы с указанным источником получения.</small></span></label>`
+             : `<label class="field"><span>Тип монстра</span><select class="control-select" name="type" ${dependentLocked ? 'disabled' : ''}>${optionList(filterData.types, filters.type, 'Любой')}</select>${dependentLocked ? '<small class="visually-hidden">Сначала выберите категорию.</small>' : ''}</label>`}`;
     const showRange = kind !== 'transformations';
     const minLabel = kind === 'monsters' || kind === 'titles' ? 'Уровень от' : kind === 'recipes' ? 'Уровень мастерства от' : 'Ранг от';
     const maxLabel = kind === 'monsters' || kind === 'titles' ? 'Уровень до' : kind === 'recipes' ? 'Уровень мастерства до' : 'Ранг до';
@@ -1091,8 +1136,23 @@
 
   let filterReturnFocus = null;
   let dialogReturnFocus = null;
+
+  function setOverlayScrollLocked(locked) {
+    const root = document.documentElement;
+    if (root.classList.contains('overlay-open') === locked) return;
+    if (locked) {
+      const scrollbarWidth = Math.max(0, window.innerWidth - document.body.getBoundingClientRect().width);
+      root.style.setProperty('--overlay-scrollbar-width', `${scrollbarWidth}px`);
+      root.classList.add('overlay-open');
+    } else {
+      root.classList.remove('overlay-open');
+      root.style.removeProperty('--overlay-scrollbar-width');
+    }
+  }
+
   function setBackgroundInert(inert) {
-    [document.querySelector('.topbar'), main, document.querySelector('.mobile-nav')].forEach(element => {
+    setOverlayScrollLocked(inert || infoDialog.open);
+    [document.querySelector('.app-shell'), document.querySelector('.skip-link')].forEach(element => {
       if (!element) return;
       if (inert) element.setAttribute('inert', '');
       else element.removeAttribute('inert');
@@ -1104,18 +1164,16 @@
     filterReturnFocus = document.activeElement;
     filterDrawer.hidden = false;
     overlayBackdrop.hidden = false;
-    document.body.classList.add('overlay-open');
     setBackgroundInert(true);
-    requestAnimationFrame(() => filterDrawer.querySelector('select:not(:disabled), input, button')?.focus());
+    requestAnimationFrame(() => filterDrawer.querySelector('select:not(:disabled), input, button')?.focus({ preventScroll: true }));
   }
 
   function closeFilters() {
     if (filterDrawer.hidden) return;
     filterDrawer.hidden = true;
     overlayBackdrop.hidden = true;
-    document.body.classList.remove('overlay-open');
     setBackgroundInert(false);
-    filterReturnFocus?.focus?.();
+    filterReturnFocus?.focus?.({ preventScroll: true });
     filterReturnFocus = null;
   }
 
@@ -1128,6 +1186,7 @@
       state.route = route;
       replaceRouteHash(route);
     }
+    main.querySelector('.catalog-page')?.setAttribute('data-route', route);
     state.catalogController?.abort();
     const controller = new AbortController();
     state.catalogController = controller;
@@ -1140,6 +1199,7 @@
       if (controller.signal.aborted || state.catalog?.kind !== catalog.kind) return;
       state.catalog.data = data;
       if (results) results.innerHTML = catalogResultsHTML(catalog.kind, data);
+      applyItemSelection();
       const count = main.querySelector('[data-catalog-count]');
       if (count) count.textContent = `Найдено: ${formatNumber(data.total)}`;
       const paging = main.querySelector('[data-catalog-pagination]');
@@ -1148,7 +1208,11 @@
       if (chips) chips.innerHTML = activeFilterChips(catalog.kind);
       const filterCount = main.querySelector('[data-filter-count]');
       if (filterCount) filterCount.textContent = activeFilterCount(catalog.kind) || '';
-      if (refreshFilters) renderFilterDrawer(catalog.kind, data.filters || {});
+      if (refreshFilters) {
+        const activeField = filterDrawerBody.contains(document.activeElement) ? document.activeElement.name : '';
+        renderFilterDrawer(catalog.kind, data.filters || {});
+        if (activeField) filterDrawerBody.querySelector(`[name="${CSS.escape(activeField)}"]`)?.focus({ preventScroll: true });
+      }
       if (live && announce) live.textContent = `Показано ${formatNumber(catalogRecords(catalog.kind, data).length)} из ${formatNumber(data.total)}.`;
       scheduleProfileSave();
     } catch (error) {
@@ -1156,7 +1220,7 @@
       if (live) live.textContent = 'Не удалось обновить каталог.';
       showToast('Не удалось обновить каталог.');
     } finally {
-      results?.removeAttribute('aria-busy');
+      if (state.catalogController === controller) results?.removeAttribute('aria-busy');
     }
   }
 
@@ -1168,6 +1232,10 @@
     else state.itemFilters = defaultItemFilters();
     const search = main.querySelector('[data-catalog-search]');
     if (search) search.value = '';
+    const sort = main.querySelector('[data-catalog-sort]');
+    if (sort) sort.innerHTML = sortOptions(kind, catalogFilters(kind).sort);
+    const order = main.querySelector('[data-catalog-order]');
+    if (order) order.value = catalogFilters(kind).order;
     refreshCatalog({ refreshFilters: true });
   }
 
@@ -1724,7 +1792,6 @@
         ${accordion('Технические сведения', `ID ${item.id}`, `${kvList([...itemTechnicalRows(item), ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server]])}`, false)}
       </section>
     </section>`;
-    positionSearchWidget(false);
   }
 
   function transformationBuffRows(card) {
@@ -1791,7 +1858,6 @@
       ${drops.length ? `<section class="source-overview"><div><span class="eyebrow">Лучший источник</span><h2>${escapeHTML(sourceSummary || 'Источник получения')}</h2><p>${formatCount(drops.length, 'источник', 'источника', 'источников')}</p></div><button class="secondary-button" type="button" data-open-details="transformation-sources">Показать все источники</button></section>` : ''}
       <section class="detail-accordions">${drops.length ? accordion('Источники получения', formatCount(drops.length, 'вариант', 'варианта', 'вариантов'), sourcesContent(), false, 'transformation-sources') : ''}${accordion('Технические сведения', `ID ${id}`, kvList(technicalRows), false)}</section>
     </section>`;
-    positionSearchWidget(false);
   }
 
   function titleDetail(data) {
@@ -1835,7 +1901,6 @@
         ]), false)}
       </section>
     </section>`;
-    positionSearchWidget(false);
   }
 
   function effectLabel(option) {
@@ -2003,14 +2068,13 @@
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
       </header>
       ${gameProperties(presentation, 'Характеристики монстра')}
-      ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Предметы с наибольшим шансом</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}" aria-label="${escapeHTML(drop.item)} — ${formatChance(drop.chance)}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small aria-hidden="true">— ${formatChance(drop.chance)}</small></a>`).join('')}</div></section>` : ''}
+      ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Предметы с наибольшим шансом</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}" data-item-id="${drop.itemId}" aria-label="${escapeHTML(drop.item)} — ${formatChance(drop.chance)}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small aria-hidden="true">— ${formatChance(drop.chance)}</small></a>`).join('')}</div></section>` : ''}
       <section class="detail-accordions">
         ${slots.length ? accordion('Обычная добыча', formatCount(slots.length, 'вариант', 'варианта', 'вариантов'), `<div data-monster-drops-host><p class="empty-copy">Список загрузится после открытия раздела.</p></div>`, false, 'monster-drops lazy-monster-drops') : ''}
         ${description ? accordion('Описание', '', `<p class="reading-text">${multilineHTML(description)}</p>`, false) : ''}
         ${accordion('Технические сведения', `ID ${monster.id}`, `${kvList([...monsterTechnicalRows(monster), ['Сервер', serverSelect.options[serverSelect.selectedIndex]?.text || state.server]])}`, false)}
       </section>
     </section>`;
-    positionSearchWidget(false);
   }
 
   function topMonsterDrops(slots, limit) {
@@ -2058,26 +2122,27 @@
     if (!group || !host) return;
     const items = group.choice.items || [];
     if (showAll) group.shown = items.length;
-    else if (!group.rendered) group.shown = Math.min(DROP_BATCH, items.length);
+    else if (!group.rendered) group.shown = Math.min(Math.max(DROP_BATCH, group.shown), items.length);
     else group.shown = Math.min(items.length, group.shown + DROP_BATCH);
     group.rendered = true;
     if (!items.length) {
       host.innerHTML = '<p class="empty-copy">Состав группы не найден.</p>';
       return;
     }
-    const rows = items.slice(0, group.shown).map(item => `<a href="#item/${item.itemId}"><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`).join('');
+    const rows = items.slice(0, group.shown).map(item => `<a href="#item/${item.itemId}" data-item-id="${item.itemId}"><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`).join('');
     const remaining = items.length - group.shown;
     host.innerHTML = `${rows}<div class="lazy-list-status" aria-live="polite">Показано ${formatNumber(group.shown)} из ${formatNumber(items.length)}</div>${remaining > 0 ? `<div class="lazy-list-actions"><button class="secondary-button" type="button" data-drop-more="${groupIndex}">Показать ещё ${formatNumber(Math.min(DROP_BATCH, remaining))}</button><button class="text-button" type="button" data-drop-all="${groupIndex}">Показать всё</button></div>` : ''}`;
+    applyItemSelection();
   }
 
   async function favoritesPage(signal) {
     const keys = [...state.favorites];
     if (!keys.length) {
-      main.innerHTML = `<section class="page">${pageHeader('Избранное', 'Сохранённые предметы, монстры, рецепты, титулы и карты превращения.')}<div class="state-message compact"><span class="state-symbol">☆</span><h2>Избранное пусто</h2><p>Добавляйте предметы, монстров, рецепты, титулы и карты превращения кнопкой со звездой.</p><a class="primary-button" href="#items">Открыть предметы</a></div></section>`;
-      positionSearchWidget(false);
+      main.innerHTML = `<section class="page">${pageHeader('Избранное')}<div class="state-message compact"><span class="state-symbol">☆</span><h2>Избранное пусто</h2><p>Нажмите на звезду рядом с записью, чтобы сохранить её здесь.</p><a class="primary-button" href="#items">Открыть предметы</a></div></section>`;
       return;
     }
     const data = await api('/api/favorites', { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys, server: state.server, page: state.favoritePage, pageSize: FAVORITES_PAGE_SIZE }) });
+    if (signal?.aborted) return;
     const migratedKeys = data.migratedKeys && typeof data.migratedKeys === 'object' ? data.migratedKeys : {};
     let favoritesMigrated = false;
     Object.entries(migratedKeys).forEach(([legacyKey, canonicalKey]) => {
@@ -2087,22 +2152,24 @@
       favoritesMigrated = true;
     });
     if (favoritesMigrated) {
-      localStorage.setItem('iris-favorites', JSON.stringify([...state.favorites]));
+      writeLocalValue('iris-favorites', JSON.stringify([...state.favorites]));
       scheduleProfileSave(0);
     }
     state.favoritePage = Math.max(1, Number(data.page || 1));
     const rows = (data.rows || []).map(row => row.kind === 'monster' ? monsterRow(row) : row.kind === 'recipe' ? recipeRow(row) : row.kind === 'title' ? titleRow(row) : row.kind === 'transformation' ? transformationRow(row) : itemRow(row));
     const missing = Number(data.missing || 0);
     main.innerHTML = `<section class="page">${pageHeader('Избранное', `В избранном: ${formatNumber(data.total)}.`)}${missing ? `<p class="muted-copy">Не удалось показать ${formatCount(missing, 'запись', 'записи', 'записей')}. Эти записи остаются сохранёнными в профиле.</p>` : ''}<div class="result-list">${rows.join('')}</div>${pagination(data.page, data.pages, 'favorite-page')}</section>`;
-    positionSearchWidget(false);
   }
 
-  async function renderRoute() {
+  async function renderRoute({ preservePage = true, retainOnError = true, resetScroll = false } = {}) {
+    rememberRouteView();
     closeFilters();
     closeMoreMenu();
     closeSuggestions();
     const previousRoute = state.route;
     const raw = decodeRouteHash();
+    const scrollTop = resetScroll ? 0 : previousRoute === raw ? window.scrollY : routeScrollPositions.get(routeHistoryIndex) || 0;
+    const previousView = { catalog: state.catalog, sourceSections: state.sourceSections, monsterDrops: state.monsterDrops, itemEnhancement: state.itemEnhancement };
     const targetPath = raw.split('?')[0];
     const visiblePage = main.querySelector('.page');
     const visibleDetail = main.querySelector('.detail-page');
@@ -2114,9 +2181,9 @@
       || (visibleDetail.dataset.route?.startsWith('transformation/') && targetPath.startsWith('transformation/'))
     ));
     const preserveCatalogPage = Boolean(visibleCatalog && ['items', 'monsters', 'recipes', 'titles', 'transformations'].includes(targetPath));
-    const preservePageTransition = Boolean(visiblePage && !preserveItemDetail && !preserveCatalogPage && targetPath !== 'home');
-    const preserveVisiblePage = preserveItemDetail || preserveCatalogPage || preservePageTransition;
-    const visibleRoute = visibleDetail?.dataset.route || visibleCatalog?.dataset.catalogKind || previousRoute;
+    const preservePageTransition = Boolean(visiblePage && !preserveItemDetail && !preserveCatalogPage);
+    const preserveVisiblePage = preservePage && (preserveItemDetail || preserveCatalogPage || preservePageTransition);
+    const visibleRoute = visiblePage?.dataset.route || previousRoute;
 
     state.routeController?.abort();
     state.catalogController?.abort();
@@ -2124,7 +2191,7 @@
     if (!preserveItemDetail) {
       state.sourceSections = [];
       state.monsterDrops = null;
-        state.itemEnhancement = null;
+      state.itemEnhancement = null;
     }
     if (preserveVisiblePage && visiblePage) {
       visiblePage.setAttribute('aria-busy', 'true');
@@ -2191,8 +2258,8 @@
         const id = path.slice(7);
         const data = await api(`/api/items/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
         if (controller.signal.aborted || requestId !== state.requestId) return;
-        if (!Array.isArray(data.recipe) || !data.recipe.length) { notFoundPage(); return; }
-        itemDetail(data, 'recipes');
+        if (!Array.isArray(data.recipe) || !data.recipe.length) notFoundPage();
+        else itemDetail(data, 'recipes');
       } else if (path.startsWith('monster/')) {
         const id = path.slice(8);
         const data = await api(`/api/monsters/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
@@ -2210,11 +2277,18 @@
         transformationDetail(data);
       } else if (path === 'favorites') await favoritesPage(controller.signal);
       else notFoundPage();
-      if (!controller.signal.aborted && requestId === state.requestId) main.focus({ preventScroll: true });
+      if (!controller.signal.aborted && requestId === state.requestId) {
+        main.querySelector('.page')?.setAttribute('data-route', state.route);
+        main.querySelector('.page')?.setAttribute('data-server', state.server);
+        restoreRouteView();
+        window.scrollTo({ top: scrollTop, behavior: 'auto' });
+        main.focus({ preventScroll: true });
+      }
     } catch (error) {
       if (error?.name === 'AbortError') return;
       if (requestId !== state.requestId) return;
-      if (preserveVisiblePage) {
+      if (preserveVisiblePage && retainOnError) {
+        Object.assign(state, previousView);
         visiblePage?.removeAttribute('aria-busy');
         visiblePage?.removeAttribute('inert');
         state.route = visibleRoute;
@@ -2233,6 +2307,7 @@
   }
 
   function openMoreMenu() {
+    closeSuggestions();
     moreMenu.hidden = false;
     moreButton.setAttribute('aria-expanded', 'true');
     requestAnimationFrame(() => moreMenu.querySelector('button, a[href]')?.focus());
@@ -2253,7 +2328,7 @@
   function toggleTheme() {
     state.theme = state.theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = state.theme;
-    localStorage.setItem('iris-theme', state.theme);
+    writeLocalValue('iris-theme', state.theme);
     updateThemeChrome();
     if (routeBase() === 'home' && state.vkNews.available) {
       state.vkNews.refreshToken += 1;
@@ -2268,7 +2343,7 @@
     if (!candidate) return fallback;
     try {
       const parsed = new URL(candidate);
-      const trustedPath = /^\/fsibatov\/iris-online-database\/releases\/tag\/v\d+\.\d+\.\d+$/.test(parsed.pathname);
+      const trustedPath = /^\/fsibatov\/iris-online-database\/releases\/tag\/v?\d+\.\d+(?:\.\d+)?$/.test(parsed.pathname);
       if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com' || (parsed.port && parsed.port !== '443') || parsed.username || parsed.password || parsed.search || parsed.hash || !trustedPath) return fallback;
       return parsed.href;
     } catch {
@@ -2285,7 +2360,7 @@
     if (!activity) return;
     const releaseUrl = trustedUpdateReleaseURL();
     const host = document.createElement('div');
-    host.innerHTML = `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Откройте страницу релиза GitHub, чтобы скачать новую версию.</span></div><a class="secondary-button" href="${escapeHTML(releaseUrl)}" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`;
+    host.innerHTML = `<section class="home-update-notice" aria-label="Доступно обновление"><div><strong>Доступна версия ${escapeHTML(state.updateInfo.latestVersion)}</strong><span>Скачайте обновление со страницы релиза на GitHub.</span></div><a class="secondary-button" href="${escapeHTML(releaseUrl)}" target="_blank" rel="noopener noreferrer external">Открыть релиз ${icons.external}</a></section>`;
     activity.before(host.firstElementChild);
   }
 
@@ -2336,13 +2411,13 @@
       detail = text;
     } else if (info.failure) {
       status = info.stale && info.checked ? 'stale' : 'error';
-      text = info.stale && info.checked ? 'Требует проверки' : 'Не проверена';
+      text = info.stale && info.checked ? 'Проверить' : 'Не проверена';
       detail = updateFailureMessage(info);
       if (info.stale && info.checked) detail = `${detail}. Показан результат последней успешной проверки`;
     } else if (info.checked && info.updateAvailable) {
       status = 'update';
-      text = info.latestVersion ? `Доступно ${info.latestVersion}` : 'Есть обновление';
-      detail = text;
+      text = 'Обновление';
+      detail = info.latestVersion ? `Доступна версия ${info.latestVersion}` : 'Есть обновление';
     } else if (info.checked) {
       status = 'current';
       text = 'Актуальная';
@@ -2352,7 +2427,6 @@
     versionStatusText.textContent = text;
     const label = `Версия ${APP_VERSION}. ${detail}`;
     versionStatus.setAttribute('aria-label', label);
-    versionStatus.title = label;
     checkUpdatesButton.disabled = Boolean(info.checking);
     checkUpdatesButton.setAttribute('aria-busy', info.checking ? 'true' : 'false');
   }
@@ -2570,8 +2644,13 @@
       infoDialogTitle.textContent = 'Как рассчитывается шанс выпадения';
       infoDialogBody.innerHTML = `<p><strong>Выпадение с монстров.</strong> Игра делает два последовательных выбора.</p><ol class="chance-steps"><li><strong>Шанс группы.</strong> Сначала игра определяет, сработала ли нужная группа наград.</li><li><strong>Если группа выбрана.</strong> Затем игра выбирает конкретный предмет внутри этой группы.</li><li><strong>Шанс за одну основную попытку.</strong> Это итоговая вероятность того, что оба выбора сработают подряд.</li></ol><p><strong>Пример:</strong> шанс группы 0,0042%, а предмета внутри неё 0,0833%. Тогда шанс предмета за одну основную попытку составляет около 0,0000035% — примерно 1 из 28,6 млн.</p><p class="muted-copy">Это не обязательно итоговый шанс получить предмет за одно убийство. На сервере могут быть дополнительные попытки, ограничения по уровню и времени и другие модификаторы.</p><p><strong>Сундуки.</strong> При открытии сначала определяется набор наград, затем из него выбирается указанное количество предметов. «Шанс при открытии» показывает вероятность получить этот предмет хотя бы один раз за одно открытие. Если точный процент нельзя подтвердить по имеющимся данным, приложение показывает содержимое без процента.</p>`;
     }
-    infoDialog.showModal();
-    requestAnimationFrame(() => infoDialog.querySelector('[data-close-dialog]')?.focus());
+    setOverlayScrollLocked(true);
+    try {
+      infoDialog.showModal();
+    } finally {
+      setOverlayScrollLocked(infoDialog.open || !filterDrawer.hidden);
+    }
+    requestAnimationFrame(() => infoDialog.querySelector('[data-close-dialog]')?.focus({ preventScroll: true }));
   }
 
   let profileTimer;
@@ -2579,6 +2658,8 @@
   let profileDirty = false;
   let profileSaving = false;
   let profileRevision = 0;
+  let profileFailures = 0;
+  let profileFailureStatus = 0;
   let lastVisibilitySave = 0;
 
   function profilePayload() {
@@ -2594,45 +2675,83 @@
     };
   }
 
+  function showProfileSaveFailure(failed) {
+    const notice = document.getElementById('profileSaveNotice');
+    if (!notice) return;
+    notice.hidden = !failed;
+    const message = notice.querySelector?.('span');
+    if (message) message.textContent = state.profileLoaded ? 'Изменения пока не сохранены.' : 'Не удалось загрузить настройки. Сохранение приостановлено.';
+  }
+
   function persistPendingProfile(payload = profilePayload()) {
-    try {
-      localStorage.setItem(PROFILE_PENDING_KEY, JSON.stringify({ revision: profileRevision, savedAt: Date.now(), profile: payload }));
-    } catch (_) {}
+    if (!state.profileLoaded) return false;
+    const saved = writeLocalValue(PROFILE_PENDING_KEY, JSON.stringify({ revision: profileRevision, savedAt: Date.now(), profile: payload }));
+    if (!saved && profileDirty) showProfileSaveFailure(true);
+    return saved;
+  }
+
+  function queueProfileSave(delay = PROFILE_DEBOUNCE) {
+    clearTimeout(profileTimer);
+    if (!state.profileLoaded || applicationClosing || !profileDirty) return;
+    const retry = profileFailures ? profileRetryDelay(profileFailures, profileFailureStatus) : delay;
+    if (retry !== null) profileTimer = setTimeout(saveProfileNow, retry);
   }
 
   async function saveProfileNow() {
     if (!state.profileLoaded || applicationClosing || profileSaving || !profileDirty) return;
+    clearTimeout(profileTimer);
     profileSaving = true;
     const revision = profileRevision;
     const payload = profilePayload();
     profileController = new AbortController();
     try {
       await api('/api/user-data', { method: 'PUT', signal: profileController.signal, body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' } });
+      profileFailures = 0;
+      profileFailureStatus = 0;
       if (revision === profileRevision) {
         profileDirty = false;
-        localStorage.removeItem(PROFILE_PENDING_KEY);
+        removeLocalValue(PROFILE_PENDING_KEY);
+        showProfileSaveFailure(false);
       }
-    } catch (_) {
+    } catch (error) {
       profileDirty = true;
+      profileFailures += 1;
+      profileFailureStatus = Number(error?.status) || 0;
       persistPendingProfile();
+      showProfileSaveFailure(true);
     } finally {
       profileSaving = false;
       profileController = null;
-      if (profileDirty && !applicationClosing) {
-        clearTimeout(profileTimer);
-        profileTimer = setTimeout(saveProfileNow, PROFILE_DEBOUNCE);
-      }
+      queueProfileSave();
     }
   }
 
   function scheduleProfileSave(delay = PROFILE_DEBOUNCE) {
-    localStorage.setItem('iris-history', JSON.stringify(state.history));
+    if (!state.profileLoaded) return;
+    writeLocalValue('iris-history', JSON.stringify(state.history));
     profileDirty = true;
     profileRevision += 1;
     persistPendingProfile();
-    if (!state.profileLoaded || applicationClosing) return;
-    clearTimeout(profileTimer);
-    profileTimer = setTimeout(saveProfileNow, delay);
+    queueProfileSave(delay);
+  }
+
+  async function retryProfileSave() {
+    if (!state.profileLoaded) {
+      const button = document.getElementById('retryProfileSave');
+      if (button?.disabled) return;
+      if (button) button.disabled = true;
+      try {
+        await loadUserProfile();
+        showProfileSaveFailure(false);
+        renderServers();
+        await renderRoute({ retainOnError: false, resetScroll: true });
+      } catch (_) { showProfileSaveFailure(true); }
+      finally { if (button) button.disabled = false; }
+      return;
+    }
+    profileFailures = 0;
+    profileFailureStatus = 0;
+    queueProfileSave(0);
   }
 
   function saveProfileBestEffort() {
@@ -2648,14 +2767,14 @@
   }
 
   function persistFavorites() {
-    localStorage.setItem('iris-favorites', JSON.stringify([...state.favorites]));
+    writeLocalValue('iris-favorites', JSON.stringify([...state.favorites]));
     scheduleProfileSave(0);
   }
 
   async function loadUserProfile() {
-    const localRecentlyViewed = safeJSON(localStorage.getItem(RECENT_VIEWED_KEY) || '[]', []);
+    const localRecentlyViewed = safeJSON(readLocalValue(RECENT_VIEWED_KEY) || '[]', []);
     const serverProfile = await api('/api/user-data');
-    const pending = safeJSON(localStorage.getItem(PROFILE_PENDING_KEY) || 'null', null);
+    const pending = safeJSON(readLocalValue(PROFILE_PENDING_KEY) || 'null', null);
     const pendingProfile = pending && pending.profile && pending.profile.schemaVersion === 1 ? pending.profile : null;
     const profile = pendingProfile || serverProfile;
     if (profile.migrated) {
@@ -2667,24 +2786,29 @@
       if (Array.isArray(profile.recentlyViewed) && profile.recentlyViewed.length) state.recentlyViewed = profile.recentlyViewed;
       else if (Array.isArray(localRecentlyViewed)) state.recentlyViewed = localRecentlyViewed;
     } else {
-      state.history = safeJSON(localStorage.getItem('iris-history') || '[]', []);
+      state.history = safeJSON(readLocalValue('iris-history') || '[]', []);
     }
     resetTransientCatalogFilters();
     globalSearch.value = '';
     closeSuggestions();
     if (!['list', 'cards'].includes(state.view)) state.view = 'list';
+    if (!['dark', 'light'].includes(state.theme)) state.theme = 'dark';
+    state.server = normalizeServerKey(state.server);
+    if (!['kiss', 'original'].includes(state.server)) state.server = 'kiss';
+    state.history = Array.isArray(state.history) ? state.history.filter(value => typeof value === 'string').slice(0, 50) : [];
+    state.favorites = new Set([...state.favorites].filter(value => typeof value === 'string' && /^(?:item|monster|title|transformation):\d{1,20}$/.test(value)).slice(0, 5000));
     normalizeDependentFilters('items');
     normalizeDependentFilters('monsters');
     normalizeDependentFilters('recipes');
     normalizeDependentFilters('titles');
     document.documentElement.dataset.theme = state.theme;
     updateThemeChrome();
-    localStorage.setItem('iris-server', state.server);
-    localStorage.setItem('iris-theme', state.theme);
-    localStorage.setItem('iris-view', state.view);
-    localStorage.setItem('iris-favorites', JSON.stringify([...state.favorites]));
+    writeLocalValue('iris-server', state.server);
+    writeLocalValue('iris-theme', state.theme);
+    writeLocalValue('iris-view', state.view);
+    writeLocalValue('iris-favorites', JSON.stringify([...state.favorites]));
     state.recentlyViewed = normalizedRecentViewedEntries();
-    localStorage.setItem(RECENT_VIEWED_KEY, JSON.stringify(state.recentlyViewed));
+    writeLocalValue(RECENT_VIEWED_KEY, JSON.stringify(state.recentlyViewed));
     state.profileLoaded = true;
     const migratedLocalRecentlyViewed = state.recentlyViewed.length > 0 && !(Array.isArray(profile.recentlyViewed) && profile.recentlyViewed.length);
     if (pendingProfile || !profile.migrated || migratedLocalRecentlyViewed) scheduleProfileSave(0);
@@ -2696,6 +2820,7 @@
     clearTimeout(suggestionTimer);
     clearTimeout(catalogDebounce);
     clearTimeout(profileTimer);
+    clearTimeout(battlegroundTimer);
     clearTimeout(showToast.timer);
     state.routeController?.abort();
     state.catalogController?.abort();
@@ -2707,7 +2832,7 @@
     if (applicationClosing) return;
     applicationClosing = true;
     resetTransientCatalogFilters();
-    persistPendingProfile();
+    if (profileDirty || profileSaving) persistPendingProfile();
     saveProfileBestEffort();
     abortPendingWork();
   }
@@ -2741,11 +2866,15 @@
     const viewButton = event.target.closest('[data-view]');
     if (viewButton) {
       state.view = viewButton.dataset.view;
-      localStorage.setItem('iris-view', state.view);
-      main.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button === viewButton));
+      writeLocalValue('iris-view', state.view);
+      main.querySelectorAll('[data-view]').forEach(button => {
+        button.classList.toggle('active', button === viewButton);
+        button.setAttribute('aria-pressed', String(button === viewButton));
+      });
       const data = state.catalog?.data;
       const results = main.querySelector('[data-catalog-results]');
       if (data && results) results.innerHTML = catalogResultsHTML(state.catalog.kind, data);
+      applyItemSelection();
       scheduleProfileSave();
       return;
     }
@@ -2798,7 +2927,7 @@
     const details = event.target;
     if (!(details instanceof HTMLDetailsElement) || !details.open) return;
     if (details.matches('.lazy-monster-drops')) renderMonsterDropShell();
-    if (details.matches('[data-drop-group]')) renderMonsterDropGroup(Number(details.dataset.dropGroup));
+    if (details.matches('[data-drop-group]') && !state.monsterDrops?.groups[Number(details.dataset.dropGroup)]?.rendered) renderMonsterDropGroup(Number(details.dataset.dropGroup));
   }, true);
 
   main.addEventListener('input', event => {
@@ -2873,6 +3002,7 @@
   overlayBackdrop.addEventListener('click', closeFilters);
 
   globalSearch.addEventListener('input', updateSuggestions);
+  globalSearch.addEventListener('focus', () => closeMoreMenu());
   globalSearch.addEventListener('keydown', event => {
     if (event.key === 'ArrowDown') { event.preventDefault(); if (!suggestions.hidden) setActiveSuggestion(activeSuggestion + 1); }
     else if (event.key === 'ArrowUp') { event.preventDefault(); if (!suggestions.hidden) setActiveSuggestion(activeSuggestion < 0 ? suggestionRoutes.length - 1 : activeSuggestion - 1); }
@@ -2902,22 +3032,28 @@
     if (event.target.closest('[data-search-all]')) submitGlobalSearch();
   });
 
-  serverSelect.addEventListener('change', () => {
-    const previous = state.server;
-    state.server = serverSelect.value;
-    localStorage.setItem('iris-server', state.server);
+  async function changeServer() {
+    const nextServer = normalizeServerKey(serverSelect.value);
+    if (state.server === nextServer) return;
+    state.server = nextServer;
+    writeLocalValue('iris-server', nextServer);
     scheduleProfileSave(0);
-    if (previous !== state.server) {
-      const serverLabel = serverSelect.options[serverSelect.selectedIndex]?.text || state.server;
-      const homeServerName = document.querySelector('[data-home-server-name]');
-      if (homeServerName) homeServerName.textContent = serverLabel;
-      showToast(`Выбран сервер ${serverLabel}. Данные обновлены.`);
-      const activeRoute = routeBase();
-      if (['home', 'monsters', 'transformations', 'favorites', 'search'].includes(activeRoute) || state.route.startsWith('item/') || state.route.startsWith('recipe/') || state.route.startsWith('monster/') || state.route.startsWith('title/') || state.route.startsWith('transformation/')) {
-        void renderRoute().finally(() => serverSelect.focus({ preventScroll: true }));
-      }
+    const kind = routeBase();
+    if (['items', 'monsters', 'recipes', 'titles', 'transformations'].includes(kind)) {
+      catalogFilters(kind).page = 1;
+      const params = new URLSearchParams(decodeRouteHash().split('?')[1] || '');
+      params.delete('page');
+      const query = params.toString();
+      replaceRouteHash(kind + (query ? `?${query}` : ''));
     }
-  });
+    const serverLabel = serverSelect.options[serverSelect.selectedIndex]?.text || nextServer;
+    showToast(`Выбран сервер ${serverLabel}.`);
+    await renderRoute({ retainOnError: false, resetScroll: true });
+    if (state.server === nextServer && !applicationClosing) serverSelect.focus({ preventScroll: true });
+  }
+
+  serverSelect.addEventListener('change', changeServer);
+  document.getElementById('retryProfileSave')?.addEventListener('click', retryProfileSave);
 
   moreButton.addEventListener('click', () => moreMenu.hidden ? openMoreMenu() : closeMoreMenu({ restoreFocus: true }));
   moreMenu.addEventListener('click', event => {
@@ -2949,6 +3085,7 @@
       return;
     }
     const internalLink = event.target.closest('a[href^="#"]');
+    if (internalLink?.hasAttribute('data-item-id') && main.contains(internalLink)) rememberRouteView(internalLink.dataset.itemId);
     if (internalLink && navigateToRoute(internalLink.getAttribute('href'))) {
       event.preventDefault();
       return;
@@ -2977,15 +3114,22 @@
   });
 
   infoDialog.addEventListener('click', event => { if (event.target === infoDialog || event.target.closest('[data-close-dialog]')) infoDialog.close(); });
-  infoDialog.addEventListener('close', () => { dialogReturnFocus?.focus?.({ preventScroll: true }); dialogReturnFocus = null; });
+  infoDialog.addEventListener('close', () => {
+    if (infoDialog.open) return;
+    setOverlayScrollLocked(!filterDrawer.hidden);
+    dialogReturnFocus?.focus?.({ preventScroll: true });
+    dialogReturnFocus = null;
+  });
 
   window.addEventListener('hashchange', handleRouteHashChange);
   window.addEventListener('beforeunload', prepareForWindowClose);
   window.addEventListener('pagehide', prepareForWindowClose);
   window.addEventListener('pageshow', () => {
     applicationClosing = false;
+    scheduleBattlegroundStatus();
   });
   document.addEventListener('visibilitychange', () => {
+    scheduleBattlegroundStatus();
     if (document.visibilityState === 'hidden') {
       const now = Date.now();
       if (now - lastVisibilitySave >= VISIBILITY_SAVE_INTERVAL) {
@@ -2997,9 +3141,12 @@
   });
 
   initializeRouteHistory();
+  let battlegroundTimer;
   function scheduleBattlegroundStatus() {
+    clearTimeout(battlegroundTimer);
+    if (applicationClosing || document.visibilityState === 'hidden') return;
     renderBattlegroundStatus();
-    window.setTimeout(scheduleBattlegroundStatus, 1000 - (Date.now() % 1000));
+    battlegroundTimer = window.setTimeout(scheduleBattlegroundStatus, 1000 - (Date.now() % 1000));
   }
 
   scheduleBattlegroundStatus();
@@ -3010,7 +3157,7 @@
 
     try {
       await loadUserProfile();
-    } catch (_) { state.profileLoaded = true; }
+    } catch (_) { showProfileSaveFailure(true); }
     renderRoute();
     renderVersionStatus();
     void checkForUpdates();

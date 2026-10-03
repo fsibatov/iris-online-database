@@ -1,10 +1,3 @@
-"""Build lossless item-enhancement profiles from item_enhanced.txt.
-
-Only the raw enhancement table is projected here. Player-facing calculations are
-performed by the application using the same core formulas visible in
-ItemTipWindow_Set.cpp for default attack, defence and healing enhancement types.
-"""
-
 from __future__ import annotations
 
 import argparse

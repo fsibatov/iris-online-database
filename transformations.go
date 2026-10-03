@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"iris-online-database/internal/catalog"
 )
 
 type TransformationCharacteristic struct {
@@ -67,7 +69,7 @@ type transformationSupplement struct {
 
 var transformationCards []TransformationCard
 var transformationByItem map[int]*TransformationCard
-var transformationSearch []searchDocument
+var transformationSearch []catalog.Document
 var transformationBuffNames []string
 var basePlayerRunSpeed float64
 
@@ -154,7 +156,7 @@ func loadTransformationCards() error {
 	transformationCards = append([]TransformationCard(nil), supplement.Cards...)
 	basePlayerRunSpeed = supplement.BasePlayerRunSpeed
 	transformationByItem = make(map[int]*TransformationCard, len(transformationCards))
-	transformationSearch = make([]searchDocument, len(transformationCards))
+	transformationSearch = make([]catalog.Document, len(transformationCards))
 	buffs := map[string]bool{}
 	for i := range transformationCards {
 		card := &transformationCards[i]
@@ -170,7 +172,7 @@ func loadTransformationCards() error {
 		for _, skill := range card.Skills {
 			parts = append(parts, skill.Name, skill.EffectText)
 		}
-		transformationSearch[i] = newSearchDocument(strings.Join(parts, " "))
+		transformationSearch[i] = catalog.NewDocument(strings.Join(parts, " "))
 		collect := func(rows []TransformationCharacteristic) {
 			for _, row := range rows {
 				if !row.Positive {
@@ -396,6 +398,7 @@ func handleTransformations(w http.ResponseWriter, r *http.Request) {
 	page := clampInt(parseInt(qv, "page", 1), 1, 100000)
 	pageSize := clampInt(parseInt(qv, "pageSize", 20), 8, 48)
 	qualities := make(map[string]int)
+	preparedQuery := catalog.PrepareQuery(query)
 	filtered := make([]*TransformationCard, 0, len(transformationCards))
 	for i := range transformationCards {
 		card := &transformationCards[i]
@@ -404,7 +407,7 @@ func handleTransformations(w http.ResponseWriter, r *http.Request) {
 				qualities[qualityName] = card.QualityID
 			}
 		}
-		if query != "" && !matchesSearch(transformationSearch[i], query) {
+		if !preparedQuery.Matches(transformationSearch[i]) {
 			continue
 		}
 		if characteristic != "" {

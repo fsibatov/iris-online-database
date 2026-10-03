@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#0c111c">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'">
   <title>Iris Online — база данных</title>
+  <script src="/theme.js"></script>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -31,6 +32,7 @@
                 type="search"
                 autocomplete="off"
                 placeholder="Название или ID"
+                aria-label="Поиск по названию или ID"
                 role="combobox"
                 aria-autocomplete="list"
                 aria-expanded="false"
@@ -62,22 +64,27 @@
 
       <div class="section-tabs-row">
         <nav class="section-tabs" id="sectionTabs" aria-label="Основные разделы"></nav>
-        <div class="header-status-pill battleground-status" id="battlegroundStatus">
-          <span class="battleground-status-label">БГ</span>
-          <strong id="battlegroundName">—</strong>
-          <time id="battlegroundStart">--:--</time>
-          <span class="battleground-countdown" id="battlegroundCountdown">--:--</span>
-        </div>
-        <div class="header-status-pill version-status" id="versionStatus" data-status="checking" aria-label="Версия и статус обновления">
-          <span class="version-status-number"><span class="version-status-prefix">Версия </span><span class="version-status-prefix-short" aria-hidden="true">v</span>2.0.5</span>
-          <span class="version-status-dot" aria-hidden="true"></span>
-          <span class="version-status-text" id="versionStatusText">Проверка…</span>
-          <button class="version-check-button" id="checkUpdatesButton" type="button" aria-label="Проверить обновления" title="Проверить обновления">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18.5 9A7 7 0 0 0 6.7 6.7L4 9M5.5 15A7 7 0 0 0 17.3 17.3L20 15"/></svg>
-          </button>
+        <div class="header-statuses">
+          <div class="header-status-pill battleground-status" id="battlegroundStatus" role="timer" aria-live="off" aria-label="До следующего состязания">
+            <span class="battleground-name" id="battlegroundName">Состязание</span>
+            <span class="battleground-countdown" id="battlegroundCountdown">--:--</span>
+          </div>
+          <div class="header-status-pill version-status" id="versionStatus" data-status="checking" aria-label="Версия и статус обновления">
+            <span class="version-status-number">Версия 2.1</span>
+            <span class="version-status-dot" aria-hidden="true"></span>
+            <span class="version-status-text" id="versionStatusText">Проверка…</span>
+            <button class="version-check-button" id="checkUpdatesButton" type="button" aria-label="Проверить обновления">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18.5 9A7 7 0 0 0 6.7 6.7L4 9M5.5 15A7 7 0 0 0 17.3 17.3L20 15"/></svg>
+            </button>
+          </div>
         </div>
       </div>
     </header>
+
+    <div class="profile-save-notice" id="profileSaveNotice" role="status" hidden>
+      <span>Изменения пока не сохранены.</span>
+      <button class="text-button" id="retryProfileSave" type="button">Повторить</button>
+    </div>
 
     <main class="main-content" id="mainContent" tabindex="-1"></main>
 
@@ -125,7 +132,7 @@
     </button>
     <button type="button" data-menu-action="about">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z"/><path d="M8 10h8M8 14h5"/></svg>
-      <span><strong>О приложении</strong><small>Версия 2.0.5</small></span>
+      <span><strong>О приложении</strong><small>Версия 2.1</small></span>
     </button>
   </div>
 
@@ -144,6 +151,6 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-  <script src="/app.js" defer></script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

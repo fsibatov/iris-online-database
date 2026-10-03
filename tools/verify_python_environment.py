@@ -1,5 +1,3 @@
-"""Verify exact direct pins in the isolated Python audit environment."""
-
 from __future__ import annotations
 
 import argparse
@@ -26,9 +24,14 @@ def expected_versions(path: Path) -> dict[str, str]:
     return result
 
 
-def mismatches(path: Path) -> list[str]:
+def mismatches(path: Path, packages: list[str] | None = None) -> list[str]:
     problems = []
-    for package, expected in expected_versions(path).items():
+    versions = expected_versions(path)
+    if packages is not None:
+        if not packages or any(package not in versions for package in packages):
+            raise ValueError("requested package is not pinned")
+        versions = {package: versions[package] for package in packages}
+    for package, expected in versions.items():
         try:
             actual = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError:
@@ -46,9 +49,10 @@ def main() -> int:
         type=Path,
         default=ROOT / "tools" / "requirements-audit.txt",
     )
+    parser.add_argument("--packages", nargs="+")
     args = parser.parse_args()
     try:
-        problems = mismatches(args.requirements)
+        problems = mismatches(args.requirements, args.packages)
     except (OSError, ValueError):
         print("Python audit environment: FAIL [INVALID_REQUIREMENTS]")
         return 2

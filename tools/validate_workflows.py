@@ -1,5 +1,3 @@
-"""Validate GitHub workflow YAML before a release reaches GitHub."""
-
 from __future__ import annotations
 
 import os
@@ -17,6 +15,8 @@ EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 JOB_ENV_DISALLOWED_CONTEXT = re.compile(r"\b(?:env|job|runner|steps)\.")
 POSIX_SHELL = re.compile(r"^\s*shell:\s*(?:bash|sh)\s*$", re.IGNORECASE | re.MULTILINE)
 POWERSHELL_PARSER = r"""param([Parameter(Mandatory = $true)][string]$ScriptPath)
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
 $Tokens = $null
 $Errors = $null
 [System.Management.Automation.Language.Parser]::ParseFile(
@@ -26,7 +26,11 @@ $Errors = $null
 ) | Out-Null
 if ($Errors.Count -ne 0) {
     foreach ($ErrorRecord in $Errors) {
-        Write-Output $ErrorRecord.Message
+        Write-Output ("line={0} column={1} [{2}] {3}" -f
+            $ErrorRecord.Extent.StartLineNumber,
+            $ErrorRecord.Extent.StartColumnNumber,
+            $ErrorRecord.ErrorId,
+            $ErrorRecord.Message)
     }
     exit 1
 }
@@ -71,35 +75,40 @@ def windows_only_workflow_failures(document: dict[object, object], text: str) ->
     return failures
 
 
-def powershell_step_failures(document: dict[object, object]) -> int:
+def powershell_step_failures(
+    document: dict[object, object], workflow_name: str = "workflow"
+) -> int:
     jobs = document.get("jobs")
     if not isinstance(jobs, dict):
         return 1
 
     system_root = os.environ.get("SYSTEMROOT")
     if not system_root:
+        print(f"{workflow_name}: Windows PowerShell 5.1 parser is unavailable")
         return 1
     powershell_executable = (
         Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
     )
     if not powershell_executable.is_file():
+        print(f"{workflow_name}: Windows PowerShell 5.1 parser is unavailable")
         return 1
 
-    scripts: list[str] = []
-    for job in jobs.values():
+    scripts: list[tuple[str, str]] = []
+    for job_id, job in jobs.items():
         if not isinstance(job, dict):
             continue
         steps = job.get("steps")
         if not isinstance(steps, list):
             continue
-        for step in steps:
+        for step_index, step in enumerate(steps, start=1):
             if not isinstance(step, dict):
                 continue
             shell = str(step.get("shell") or "").strip().lower()
             run = step.get("run")
             if shell not in {"powershell", "pwsh"} or not isinstance(run, str):
                 continue
-            scripts.append(EXPRESSION.sub("GITHUB_EXPRESSION", run))
+            label = f"{workflow_name}: job={job_id} step={step_index} ({step.get('name') or step.get('id') or 'run'})"
+            scripts.append((label, EXPRESSION.sub("GITHUB_EXPRESSION", run)))
 
     if not scripts:
         return 0
@@ -110,11 +119,10 @@ def powershell_step_failures(document: dict[object, object]) -> int:
         parser_path = temp / "parse-workflow.ps1"
         parser_path.write_text(POWERSHELL_PARSER, encoding="utf-8-sig")
 
-        for index, script in enumerate(scripts, start=1):
+        for index, (label, script) in enumerate(scripts, start=1):
             script_path = temp / f"workflow-step-{index}.ps1"
             script_path.write_text(script, encoding="utf-8-sig")
             try:
-                # Fixed executable and controlled argument list; shell execution is disabled.
                 result = subprocess.run(  # nosec B603
                     [
                         str(powershell_executable),
@@ -138,12 +146,14 @@ def powershell_step_failures(document: dict[object, object]) -> int:
                 )
             except (OSError, subprocess.TimeoutExpired):
                 failures += 1
+                print(f"{label}: PowerShell parser could not complete")
                 continue
             if result.returncode != 0:
                 failures += 1
                 output = result.stdout.strip()
-                if output:
-                    print(f"PowerShell workflow syntax failure #{index}: {output}")
+                print(
+                    f"{label}: PowerShell syntax FAIL\n{output or 'Parser returned no diagnostic'}"
+                )
 
     return failures
 
@@ -178,7 +188,8 @@ def release_policy_failures() -> int:
         failures += 1
     if (
         "name: Analyze (${{ matrix.language }})" not in codeql
-        or "language: [go, python]" not in codeql
+        or "language: [go, python, javascript-typescript]" not in codeql
+        or 'go build "-tags=desktop,wv2runtime.embed,production"' not in codeql
         or "Build Windows Go sources" not in codeql
         or "iris-codeql-go-temp-" not in codeql
     ):
@@ -205,6 +216,11 @@ def release_policy_failures() -> int:
         'Platform = "windows/amd64"',
         'Platform = "windows/386"',
         'Platform = "windows/arm64"',
+        'Suffix = "7-8.1-x64"',
+        'Suffix = "7-8.1-x86"',
+        "prepare_windows_legacy.py",
+        "windows_legacy",
+        "legacyCompatibilityMarker",
         "verify_release_assets.py",
         "verify_executables.py",
         "verify_windows_resources.py",
@@ -247,7 +263,9 @@ def main() -> int:
             continue
         failures += invalid_job_env_contexts(document)
         failures += windows_only_workflow_failures(document, text)
-        failures += powershell_step_failures(document)
+        failures += powershell_step_failures(
+            document, path.relative_to(ROOT).as_posix()
+        )
         references = ACTION_REFERENCE.findall(text)
         pins = ACTION_PIN.findall(text)
         if len(references) != len(pins):

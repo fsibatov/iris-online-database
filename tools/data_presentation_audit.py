@@ -1,11 +1,3 @@
-"""Audit Iris Online data projection and presentation coverage.
-
-The validator starts from the packaged immutable game projection plus deterministic
-supplemental assets rebuilt from the supplied source tables. It checks that every
-published/supplemental field has an explicit backend and presentation destination,
-and that set/recipe/monster supplemental rows are complete rather than sample-based.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -15,6 +7,8 @@ import hashlib
 import json
 import re
 from pathlib import Path
+
+from raw_projection_audit import option_conflict_mismatches
 
 ROOT = Path(__file__).resolve().parents[1]
 GAME_DATA = ROOT / "assets/game_data.json.gz"
@@ -288,6 +282,24 @@ def audit() -> dict:
 
     effect_specs = {int(key): value for key, value in game["effectSpecs"].items()}
     base_items_by_id = {str(item["id"]): item for item in game["items"]}
+    conflicts = abilities.get("conflictsPreserved", [])
+    observed_conflicts = []
+    for conflict in conflicts:
+        if not isinstance(conflict, dict):
+            continue
+        item_id = str(conflict.get("itemId", ""))
+        item = base_items_by_id.get(item_id)
+        if item is None:
+            continue
+        options = (
+            abilities.get("items", {})
+            .get(item_id, {})
+            .get("options", item.get("options", []))
+        )
+        observed_conflicts.append({**conflict, "embedded": options})
+    checks["preserved_option_values_mismatch"] = option_conflict_mismatches(
+        observed_conflicts, conflicts
+    )
     supplement_ids_missing = sorted(
         set(abilities.get("items", {})) - set(base_items_by_id), key=int
     )
@@ -751,6 +763,7 @@ def audit() -> dict:
     )
 
     fatal_keys = (
+        "preserved_option_values_mismatch",
         "item_unclassified",
         "monster_unclassified",
         "server_unclassified",

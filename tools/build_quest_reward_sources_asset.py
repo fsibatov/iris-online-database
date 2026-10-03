@@ -1,5 +1,3 @@
-"""Build confirmed quest-completion sources for title items and recipes."""
-
 from __future__ import annotations
 
 import argparse

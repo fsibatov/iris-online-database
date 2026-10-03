@@ -1,10 +1,3 @@
-"""Update slot-preserving drop rules in the embedded Iris Online data file.
-
-The source tables are not redistributed by this project. Supply them explicitly.
-Only server drop rules, exact drop-list order, and source-date metadata are
-changed; item and monster records remain untouched.
-"""
-
 from __future__ import annotations
 
 import argparse

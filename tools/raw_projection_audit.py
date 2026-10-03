@@ -1,10 +1,3 @@
-"""Compare original resource tables with the embedded published projection.
-
-The original resource files are not distributed with the app. This tool accepts
-an explicit resource directory and verifies fields that can be mapped without
-inventing server/client semantics.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -55,6 +48,41 @@ def indexed_text(path: Path | None) -> dict[int, str]:
 
 def normalize_text(value: str) -> str:
     return " ".join(str(value or "").replace("\\n", "\n").replace("\r", "").split())
+
+
+def option_conflict_mismatches(actual, preserved):
+    def records(values):
+        result = collections.Counter()
+        invalid = 0
+        seen = set()
+        for value in values:
+            if (
+                not isinstance(value, dict)
+                or set(value) != {"itemId", "field", "embedded", "source"}
+                or type(value["itemId"]) is not int
+                or value["itemId"] <= 0
+                or value["field"] != "options"
+                or not isinstance(value["embedded"], list)
+                or not isinstance(value["source"], list)
+            ):
+                invalid += 1
+                continue
+            identity = value["itemId"], value["field"]
+            if identity in seen:
+                invalid += 1
+                continue
+            seen.add(identity)
+            result[json.dumps(value, sort_keys=True, ensure_ascii=False)] += 1
+        return result, invalid
+
+    expected, invalid_expected = records(preserved)
+    observed, invalid_observed = records(actual)
+    return (
+        sum((expected - observed).values())
+        + sum((observed - expected).values())
+        + invalid_expected
+        + invalid_observed
+    )
 
 
 def audit(
@@ -213,6 +241,7 @@ def audit(
     }
     ability_mismatch = collections.Counter()
     option_mismatch = 0
+    observed_conflicts = []
     ability_description_mismatch = 0
     compared_abilities = 0
     for index, item in items.items():
@@ -244,6 +273,14 @@ def audit(
                 )
         if item.get("options", []) != expected_options:
             option_mismatch += 1
+            observed_conflicts.append(
+                {
+                    "itemId": index,
+                    "field": "options",
+                    "embedded": item.get("options", []),
+                    "source": expected_options,
+                }
+            )
 
     limits = {}
     for parts in rows(resource / "item_limit.txt"):
@@ -436,6 +473,9 @@ def audit(
         "itemAbilityDescriptionMismatches": ability_description_mismatch,
         "itemOptionMismatchesAgainstRaw": option_mismatch,
         "preservedExplicitOptionConflicts": len(preserved_conflicts),
+        "optionConflictRegistryMismatches": option_conflict_mismatches(
+            observed_conflicts, preserved_conflicts
+        ),
         "comparedItemLimits": compared_limits,
         "itemLimitMismatches": dict(limit_mismatch),
         "sharedMonsters": shared_monsters,
@@ -488,6 +528,7 @@ def main():
     fatal = any(
         result[key]
         for key in (
+            "optionConflictRegistryMismatches",
             "directItemMismatches",
             "itemAbilityMismatches",
             "itemLimitMismatches",

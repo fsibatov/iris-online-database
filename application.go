@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,7 +14,7 @@ import (
 func newApplication() (*application, error) {
 	paths, err := resolveAppPaths()
 	if err != nil {
-		return nil, err
+		return nil, errors.New("не удалось открыть папку настроек; проверьте права доступа и свободное место на диске")
 	}
 
 	executable, _ := os.Executable()
@@ -22,7 +23,7 @@ func newApplication() (*application, error) {
 
 	logWriter, err := newRotatingLogWriter(filepath.Join(paths.Logs, "application.log"), 2<<20, 5)
 	if err != nil {
-		return nil, fmt.Errorf("журнал приложения: %w", err)
+		return nil, errors.New("не удалось открыть журнал приложения; проверьте права доступа и свободное место на диске")
 	}
 
 	logger := log.New(io.MultiWriter(os.Stderr, logWriter), "", log.Ldate|log.Ltime|log.Lmicroseconds)
@@ -33,7 +34,7 @@ func newApplication() (*application, error) {
 	}
 	if err := ensureLoaded(); err != nil {
 		_ = logWriter.Close()
-		return nil, fmt.Errorf("загрузка базы данных: %w", err)
+		return nil, errors.New("не удалось прочитать встроенную базу; скачайте приложение заново со страницы релизов")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

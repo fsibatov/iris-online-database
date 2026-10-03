@@ -1,0 +1,15 @@
+name: Предложение
+description: Улучшение удобства локальной базы.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу нужно решить
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Ожидаемый результат
+    validations:
+      required: true

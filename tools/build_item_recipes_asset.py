@@ -1,10 +1,3 @@
-"""Build the additive recipe-material projection from original Iris Online resources.
-
-The original resource files are intentionally not bundled with the application.
-The generated asset preserves recipe row order and ingredient order and contains
-only IDs/counts; names are resolved from the embedded item database at runtime.
-"""
-
 from __future__ import annotations
 
 import argparse

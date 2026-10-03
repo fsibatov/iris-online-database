@@ -1,8 +1,8 @@
-import html
 import re
-import textwrap
 import unittest
 from pathlib import Path
+
+from validate_vk_candidate import IDENTITY_KEYS, compare, semantic_text
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,6 +34,18 @@ class QualityContractTests(unittest.TestCase):
             encoding="utf-8"
         )
 
+    def test_frame_ancestors_is_enforced_by_header_not_meta(self):
+        meta = re.search(
+            r'<meta http-equiv="Content-Security-Policy" content="([^"]+)"',
+            self.html,
+        )
+        self.assertIsNotNone(meta)
+        self.assertNotIn("frame-ancestors", meta.group(1))
+        self.assertIn("frame-ancestors 'none'", self.server)
+        self.assertIn("script-src 'self'", meta.group(1))
+        self.assertNotIn("unsafe-eval", meta.group(1))
+        self.assertNotIn("unsafe-inline", meta.group(1))
+
     def test_version_is_consistent_in_user_facing_sources(self):
         version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
         app_match = re.search(r"const APP_VERSION = '([^']+)';", self.script)
@@ -43,16 +55,16 @@ class QualityContractTests(unittest.TestCase):
         self.assertIn(f"Версия {version}", self.html)
         self.assertIn(f"v{version}", self.readme)
         self.assertIn(f'"productVersion": "{version}"', self.wails)
-        self.assertIn(f'"file_version": "{version}.0"', self.windows_info)
-        self.assertIn(f'"product_version": "{version}.0"', self.windows_info)
+        fixed_version = ".".join((version.split(".") + ["0"] * 4)[:4])
+        self.assertIn(f'"file_version": "{fixed_version}"', self.windows_info)
+        self.assertIn(f'"product_version": "{fixed_version}"', self.windows_info)
         self.assertIn(f'"FileVersion": "{version}"', self.windows_info)
         self.assertIn(f'"ProductVersion": "{version}"', self.windows_info)
-        self.assertIn("C:\\IrisRelease\\X.Y.Z", self.build_docs)
-        self.assertIn("IrisOnlineDB-X.Y.Z-Windows-x64.exe", self.release_docs)
-        self.assertIn("IrisOnlineDB-X.Y.Z-Windows-x86.exe", self.release_docs)
-        self.assertIn("IrisOnlineDB-X.Y.Z-Windows-arm64.exe", self.release_docs)
-        self.assertIn("`vX.Y.Z` tag", self.release_docs)
-        self.assertNotIn(f"C:\\IrisRelease\\{version}", self.build_docs)
+        self.assertIn(f"C:\\IrisRelease\\{version}", self.build_docs)
+        self.assertIn("IrisOnlineDB-<версия>-Windows-x64.exe", self.release_docs)
+        self.assertIn("IrisOnlineDB-<версия>-Windows-x86.exe", self.release_docs)
+        self.assertIn("IrisOnlineDB-<версия>-Windows-arm64.exe", self.release_docs)
+        self.assertIn("`v<версия>`", self.release_docs)
         self.assertNotIn(f"IrisOnlineDB-{version}-Windows-x64.exe", self.release_docs)
         self.assertNotIn(f"`v{version}` tag", self.release_docs)
 
@@ -143,10 +155,8 @@ class QualityContractTests(unittest.TestCase):
         ]
         self.assertIn("Рецепты — в отдельном разделе.", home)
         self.assertIn('<h2 id="serverDifferenceTitle">Сервер</h2>', home)
-        self.assertIn(
-            "Названия и характеристики предметов берутся из общего справочника", home
-        )
-        self.assertIn("из данных выбранного сервера", home)
+        self.assertIn("Названия и характеристики предметов общие", home)
+        self.assertIn("источники получения зависят от сервера", home)
         self.assertNotIn("Характеристики предметов одинаковы", home)
         self.assertNotIn("The Original — 609 монстров", home)
         self.assertNotIn("Iris Kiss Kiss — 677 монстров", home)
@@ -174,28 +184,26 @@ class QualityContractTests(unittest.TestCase):
         self.assertIn("POSIX_SHELL", self.workflow_validator)
 
     def test_vk_workflow_ignores_cosmetic_variants_of_same_post(self):
-        for marker in (
-            "def semantic_text(value):",
-            'BR_TAG.sub("\\n"',
-            "DECORATIVE_SYMBOL.sub",
-            "MARKUP.sub",
-            "same_identity and same_text",
-            "VK: без изменений",
-        ):
-            self.assertIn(marker, self.vk_workflow)
-        self.assertNotIn('"source_updated_at",\n          )', self.vk_workflow)
+        self.assertIn("tools\\validate_vk_candidate.py", self.vk_workflow)
+        self.assertIn("& python $ValidatorPath", self.vk_workflow)
+        self.assertIn("VK: без изменений", self.vk_workflow)
+        self.assertNotIn("source_updated_at", IDENTITY_KEYS)
+        current = {
+            "post_id": 10,
+            "post_url": "https://vk.ru/wall-59626511_10",
+            "text": "Новость",
+        }
+        candidate = {
+            **current,
+            "text": "⚡ **НОВОСТЬ**",
+            "source_updated_at": "2026-09-07",
+        }
+        self.assertEqual(compare(current, candidate), (10, "same"))
 
     def test_vk_semantic_comparison_treats_cosmetic_variants_as_equal(self):
-        start = self.vk_workflow.index("          BR_TAG = re.compile")
-        end = self.vk_workflow.index("          current_id = validate(current)")
-        code = textwrap.dedent(self.vk_workflow[start:end])
-        namespace = {"html": html, "re": re}
-        exec(code, namespace)
         plain = "Новый экспериментальный режим (Vulkan)\n* **Важно:** режим тестовый."
         rich = "⚡ Новый экспериментальный режим (Vulkan)<br><br>* ⚠ **Важно:** режим тестовый."
-        self.assertEqual(
-            namespace["semantic_text"](plain), namespace["semantic_text"](rich)
-        )
+        self.assertEqual(semantic_text(plain), semantic_text(rich))
 
     def test_project_rules_require_language_and_noise_review(self):
         self.assertIn("## Постоянные правила качества", self.contributing)
