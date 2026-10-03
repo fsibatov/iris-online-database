@@ -329,7 +329,7 @@ class ReleaseHelperTests(unittest.TestCase):
             packages[package] = version
         self.assertEqual(
             set(packages),
-            {"bandit", "pip", "pip-audit", "playwright", "pyyaml", "ruff"},
+            {"bandit", "pip", "pip-audit", "playwright", "pyyaml", "ruff", "urllib3"},
         )
         for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
             text = workflow.read_text(encoding="utf-8")
@@ -337,6 +337,28 @@ class ReleaseHelperTests(unittest.TestCase):
             self.assertNotRegex(text, r"ruff==[0-9]")
             self.assertNotRegex(text, r"bandit==[0-9]")
             self.assertNotRegex(text, r"pip-audit==[0-9]")
+
+    def test_python_environment_rejects_stale_cached_http_dependency(self):
+        from importlib.metadata import PackageNotFoundError
+
+        from verify_python_environment import expected_versions, mismatches
+
+        requirements = ROOT / "tools" / "requirements-audit.txt"
+        installed = expected_versions(requirements)
+
+        def installed_version(package):
+            if package not in installed:
+                raise PackageNotFoundError(package)
+            return installed[package]
+
+        with patch(
+            "verify_python_environment.importlib.metadata.version", installed_version
+        ):
+            self.assertEqual(mismatches(requirements), [])
+            installed["urllib3"] = "2.7.0"
+            self.assertEqual(mismatches(requirements), ["urllib3"])
+            del installed["urllib3"]
+            self.assertEqual(mismatches(requirements), ["urllib3"])
 
     def test_workflow_validator_rejects_runner_context_in_job_env(self):
         from validate_workflows import invalid_job_env_contexts
