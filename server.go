@@ -129,13 +129,16 @@ func (a *application) routes() http.Handler {
 		fileServer.ServeHTTP(w, r)
 	})
 
-	var handler http.Handler = mux
-	handler = a.withResponseCache(handler)
-	handler = a.withLifecycleGuard(handler)
-	handler = withAPIConcurrencyLimit(handler, 32)
-	handler = withSecurityHeaders(handler)
+	return a.withAPIRequestPipeline(mux)
+}
 
-	return handler
+// Cache followers wait outside the backend limiter, so repeated requests do
+// not exhaust its 32 execution slots. Security and shutdown guards run first.
+func (a *application) withAPIRequestPipeline(next http.Handler) http.Handler {
+	next = withAPIConcurrencyLimit(next, 32)
+	next = a.withResponseCache(next)
+	next = a.withLifecycleGuard(next)
+	return withSecurityHeaders(next)
 }
 
 func withAPIConcurrencyLimit(next http.Handler, maximum int) http.Handler {
@@ -593,17 +596,62 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 			return
 		}
 
-		if entry, ok := a.cache.Get(key); ok {
+		writeCached := func(entry cacheEntry) {
 			for name, value := range entry.header {
-				w.Header().Set(
-					name,
-					value,
-				)
+				w.Header().Set(name, value)
 			}
-
 			w.WriteHeader(entry.status)
 			_, _ = w.Write(entry.body)
+		}
+		if entry, ok := a.cache.Get(key); ok {
+			writeCached(entry)
 			return
+		}
+
+		var appDone <-chan struct{}
+		if a.ctx != nil {
+			appDone = a.ctx.Done()
+		}
+		// A response can be private, oversized or otherwise uncacheable.
+		// Retry leadership rather than allowing all waiters to flood the
+		// backend after the first response fails to populate the cache.
+		for {
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return
+			}
+			if r.Context().Err() != nil {
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return
+			}
+			ready, release := a.cache.beginLoad(key)
+			if release != nil {
+				defer release()
+				// Recheck after acquiring leadership; shutdown can race.
+				if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+					http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+					return
+				}
+				// Another producer might have populated the cache since Get.
+				if entry, ok := a.cache.Get(key); ok {
+					writeCached(entry)
+					return
+				}
+				break
+			}
+			select {
+			case <-ready:
+				if entry, ok := a.cache.Get(key); ok {
+					writeCached(entry)
+					return
+				}
+			case <-r.Context().Done():
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return
+			case <-appDone:
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return
+			}
 		}
 
 		captured := newStreamingCaptureWriter(w, a.cache.maxEntryBytes)

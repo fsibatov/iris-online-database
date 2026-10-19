@@ -30,6 +30,7 @@ type responseCache struct {
 	maxEntryBytes int64
 	ttl           time.Duration
 	bytes         int64
+	inflight      map[string]chan struct{}
 }
 
 func newResponseCache(maxEntries int, maxBytes int64, ttl time.Duration) *responseCache {
@@ -47,6 +48,7 @@ func newResponseCache(maxEntries int, maxBytes int64, ttl time.Duration) *respon
 		maxBytes:      maxBytes,
 		maxEntryBytes: maxEntryBytes,
 		ttl:           ttl,
+		inflight:      make(map[string]chan struct{}),
 	}
 }
 
@@ -122,4 +124,24 @@ func (c *responseCache) removeElement(element *list.Element) {
 	delete(c.entries, entry.key)
 	c.bytes -= entry.size
 	c.lru.Remove(element)
+}
+
+// beginLoad coordinates concurrent cache misses for the same representation.
+// Only the leader generates a response; release always runs on leader exit.
+// Waiting never holds the LRU mutex or consumes a backend execution slot.
+func (c *responseCache) beginLoad(key string) (<-chan struct{}, func()) {
+	c.mu.Lock()
+	if ready := c.inflight[key]; ready != nil {
+		c.mu.Unlock()
+		return ready, nil
+	}
+	ready := make(chan struct{})
+	c.inflight[key] = ready
+	c.mu.Unlock()
+	return ready, func() {
+		c.mu.Lock()
+		delete(c.inflight, key)
+		close(ready)
+		c.mu.Unlock()
+	}
 }
