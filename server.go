@@ -194,14 +194,17 @@ func withAPIConcurrencyLimit(next http.Handler, maximum int) http.Handler {
 
 func (a *application) withLifecycleGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.closing.Load() && strings.HasPrefix(r.URL.Path, "/api/") {
-
-			http.Error(
-				w,
-				"Приложение завершает работу.\n",
-				http.StatusServiceUnavailable,
-			)
-			return
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			if a.closing.Load() {
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return
+			}
+			// Cached API hits bypass the backend concurrency limiter. Reject
+			// canceled requests here before they can replay a cached response.
+			if r.Context().Err() != nil {
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return
+			}
 		}
 
 		next.ServeHTTP(w, r)
