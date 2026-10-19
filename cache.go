@@ -138,6 +138,12 @@ func (c *responseCache) Close() {
 	defer c.mu.Unlock()
 	c.closed = true
 	c.clearLocked()
+	// Wake followers immediately on shutdown, even when a producer is still
+	// running. Late producer releases must not close these channels twice.
+	for key, ready := range c.inflight {
+		delete(c.inflight, key)
+		close(ready)
+	}
 }
 
 func (c *responseCache) clearLocked() {
@@ -161,6 +167,10 @@ func (c *responseCache) removeElement(element *list.Element) {
 // Waiting never holds the LRU mutex or consumes a backend execution slot.
 func (c *responseCache) beginLoad(key string) (<-chan struct{}, func()) {
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil, nil
+	}
 	if ready := c.inflight[key]; ready != nil {
 		c.mu.Unlock()
 		return ready, nil
@@ -170,8 +180,10 @@ func (c *responseCache) beginLoad(key string) (<-chan struct{}, func()) {
 	c.mu.Unlock()
 	return ready, func() {
 		c.mu.Lock()
-		delete(c.inflight, key)
-		close(ready)
+		if c.inflight[key] == ready {
+			delete(c.inflight, key)
+			close(ready)
+		}
 		c.mu.Unlock()
 	}
 }

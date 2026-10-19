@@ -648,6 +648,10 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 				return
 			}
 			ready, release := a.cache.beginLoad(key)
+			if ready == nil {
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return
+			}
 			if release != nil {
 				defer release()
 				// Recheck after acquiring leadership; shutdown can race.
