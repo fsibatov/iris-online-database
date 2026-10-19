@@ -155,11 +155,23 @@ func withAPIConcurrencyLimit(next http.Handler, maximum int) http.Handler {
 			return
 		}
 
+		// If cancellation precedes admission, both select cases would be
+		// ready while a slot is free. Do not randomly execute a dead request.
+		if r.Context().Err() != nil {
+			http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+			return
+		}
+
 		select {
 		case slots <- struct{}{}:
 			defer func() {
 				<-slots
 			}()
+			// Cancellation can also race with acquiring the slot.
+			if r.Context().Err() != nil {
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return
+			}
 
 			next.ServeHTTP(w, r)
 
