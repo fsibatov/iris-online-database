@@ -630,6 +630,16 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 		}
 
 		writeCached := func(entry cacheEntry) {
+			// A lookup or singleflight wake-up can outlive the initial lifecycle
+			// check. Never replay a cached body after cancellation or shutdown.
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return
+			}
+			if r.Context().Err() != nil {
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return
+			}
 			for name, value := range entry.header {
 				w.Header().Set(name, value)
 			}
