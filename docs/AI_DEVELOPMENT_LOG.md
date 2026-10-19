@@ -72,3 +72,11 @@
 - Полные Go-тесты: BLOCKED (Go 1.23.2, `go.mod` требует >=1.25). Windows `IrisTools.ps1 -Action Test/Build`, Wails/WebView2, Staticcheck, govulncheck, Ruff, Bandit, pip-audit, Gitleaks, Playwright: NOT RUN. Windows release PASS не заявляется.
 
 Изменения затрагивают только HTTP-кеш, тесты и этот журнал. Игровые ресурсы, профиль и ветка `main` не изменялись.
+
+## 19 октября 2026 — возраст повторно выдаваемого HTTP-ответа (итерация 12)
+
+- Исправлено повторное предоставление полного клиентского `Cache-Control: max-age` при попадании во внутренний кеш: ранее ответ, пролежавший в кеше 45 секунд, выдавался без `Age`, и клиент мог считать его новым. Теперь кеш хранит фактический TTL каждой записи и выставляет рассчитанный `Age` на повторной выдаче. Исходный `Cache-Control` и тело ответа сохраняются; для первого ответа `Age` не добавляется.
+- Добавлен `cache_age_test.go`: воспроизводит отсутствие `Age` до исправления, моделирует 45 секунд хранения без задержки и проверяет возраст, метаданные, отсутствие лишнего обращения к обработчику.
+- Проверки изолированного контура (точные `cache.go` и функции кеширования/middleware из `server.go`, заглушка `application`): **33 Go-теста ×20 PASS**, Race Detector ×3 PASS, `go vet` PASS; тест до исправления FAIL, после PASS. Это **не** полный Go gate.
+- Python unittest (`PYTHONPATH=tools`): **217 PASS**; `data_presentation_audit.py --json`: `fatal=[]`; `repository_audit.py`: PASS; `node --check web/app.js`: PASS; gofmt, `git diff --check`, `git fsck`: PASS. Playwright smoke **BLOCKED** (Chromium browser runtime отсутствует).
+- Полные Go-тесты: **BLOCKED** (Go 1.23.2 при `go.mod` >=1.25). Windows `IrisTools.ps1 -Action Test/Build`, Wails/WebView2, Staticcheck, govulncheck, Ruff, Bandit, pip-audit, Gitleaks: **NOT RUN**. Это не релизный Windows PASS. Игровые данные, профиль, ветка `main` и удалённый репозиторий не изменялись.

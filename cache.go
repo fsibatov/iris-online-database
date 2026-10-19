@@ -18,6 +18,7 @@ type cacheEntry struct {
 	header    map[string]string
 	status    int
 	expiresAt time.Time
+	ttl       time.Duration
 	size      int64
 }
 
@@ -96,7 +97,7 @@ func (c *responseCache) PutWithTTL(key string, status int, header map[string]str
 	if existing := c.entries[key]; existing != nil {
 		c.removeElement(existing)
 	}
-	entry := &cacheEntry{key: strings.Clone(key), status: status, header: headerCopy, body: append([]byte(nil), body...), expiresAt: time.Now().Add(ttl), size: size}
+	entry := &cacheEntry{key: strings.Clone(key), status: status, header: headerCopy, body: append([]byte(nil), body...), expiresAt: time.Now().Add(ttl), ttl: ttl, size: size}
 	element := c.lru.PushFront(entry)
 	c.entries[key] = element
 	c.bytes += entry.size

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const applicationID = "iris-online-database"
@@ -600,6 +601,13 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 			for name, value := range entry.header {
 				w.Header().Set(name, value)
 			}
+			// A cache hit must not reset the client's max-age freshness clock.
+			// Age is generated at replay time, not copied from the origin.
+			elapsed := entry.ttl - time.Until(entry.expiresAt)
+			if elapsed < 0 {
+				elapsed = 0
+			}
+			w.Header().Set("Age", strconv.FormatInt(int64(elapsed/time.Second), 10))
 			w.WriteHeader(entry.status)
 			_, _ = w.Write(entry.body)
 		}
