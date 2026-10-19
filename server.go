@@ -725,6 +725,17 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 		if captured.streaming {
 			return
 		}
+		// The backend may finish after the request was canceled or shutdown
+		// started. A buffered response has not been committed yet: discard it
+		// rather than publishing its body or storing it in the cache.
+		if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+			http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+			return
+		}
+		if r.Context().Err() != nil {
+			http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+			return
+		}
 
 		body := captured.body.Bytes()
 
