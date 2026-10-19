@@ -198,30 +198,6 @@ func (a *application) withLifecycleGuard(next http.Handler) http.Handler {
 
 func withSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !validRequestHost(r.Host) {
-			http.Error(
-				w,
-				"Недопустимый адрес запроса.\n",
-				http.StatusForbidden,
-			)
-			return
-		}
-
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			if strings.EqualFold(
-				r.Header.Get("Sec-Fetch-Site"),
-				"cross-site",
-			) || !validRequestOrigin(r) {
-
-				http.Error(
-					w,
-					"Запрос из другого источника отклонён.\n",
-					http.StatusForbidden,
-				)
-				return
-			}
-		}
-
 		w.Header().Set(
 			"Cache-Control",
 			"no-store",
@@ -254,6 +230,32 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 			"X-Frame-Options",
 			"DENY",
 		)
+
+		// Apply browser protections even when host/origin validation rejects
+		// a request. In particular, forbidden responses must be no-store.
+		if !validRequestHost(r.Host) {
+			http.Error(
+				w,
+				"Недопустимый адрес запроса.\n",
+				http.StatusForbidden,
+			)
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			if strings.EqualFold(
+				r.Header.Get("Sec-Fetch-Site"),
+				"cross-site",
+			) || !validRequestOrigin(r) {
+
+				http.Error(
+					w,
+					"Запрос из другого источника отклонён.\n",
+					http.StatusForbidden,
+				)
+				return
+			}
+		}
 
 		next.ServeHTTP(w, r)
 	})
