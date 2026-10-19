@@ -502,6 +502,7 @@ func methodNotAllowed(
 
 type captureWriter struct {
 	header       http.Header
+	committed    http.Header
 	status       int
 	body         bytes.Buffer
 	wroteHeader  bool
@@ -530,6 +531,16 @@ func (w *captureWriter) Header() http.Header {
 	return w.header
 }
 
+// Match net/http.ResponseWriter: header mutations after WriteHeader do not
+// change the response already committed to the client. Until WriteHeader,
+// an endpoint that writes no body may still set its response headers.
+func (w *captureWriter) responseHeaders() http.Header {
+	if w.wroteHeader {
+		return w.committed
+	}
+	return w.header
+}
+
 // forwardCapturedHeaders keeps explicit endpoint cache policy identical on
 // buffered and streamed responses. The outer security middleware sets a
 // default Cache-Control: no-store; appending the endpoint's explicit policy
@@ -555,6 +566,7 @@ func (w *captureWriter) WriteHeader(status int) {
 	}
 
 	w.status = status
+	w.committed = w.header.Clone()
 	w.wroteHeader = true
 }
 
@@ -565,7 +577,7 @@ func (w *captureWriter) Write(data []byte) (int, error) {
 
 	if w.destination != nil && !w.streaming &&
 		int64(len(data)) > w.maxBodyBytes-int64(w.body.Len()) {
-		forwardCapturedHeaders(w.destination.Header(), w.header)
+		forwardCapturedHeaders(w.destination.Header(), w.responseHeaders())
 		w.destination.WriteHeader(w.status)
 		w.streaming = true
 		if w.body.Len() > 0 {
@@ -716,17 +728,17 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 
 		body := captured.body.Bytes()
 
-		forwardCapturedHeaders(w.Header(), captured.header)
+		forwardCapturedHeaders(w.Header(), captured.responseHeaders())
 
 		w.WriteHeader(captured.status)
 		_, _ = w.Write(body)
 
-		headers, ok := cacheableResponseHeaders(captured.header)
+		headers, ok := cacheableResponseHeaders(captured.responseHeaders())
 		if !ok {
 			return
 		}
 
-		lifetime, ok := responseCacheLifetime(captured.header, a.cache.ttl)
+		lifetime, ok := responseCacheLifetime(captured.responseHeaders(), a.cache.ttl)
 		if !ok {
 			return
 		}
