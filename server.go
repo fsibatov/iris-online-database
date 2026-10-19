@@ -674,24 +674,8 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 		w.WriteHeader(captured.status)
 		_, _ = w.Write(body)
 
-		headers := map[string]string{}
-
-		for _, name := range []string{
-			"Content-Type", "Content-Language", "Cache-Control", "ETag", "Last-Modified",
-		} {
-			if value := captured.header.Get(name); value != "" {
-				headers[name] = value
-			}
-		}
-
-		// These headers may change the response by user or request headers,
-		// which are deliberately not part of the URL-only cache key.
-		if len(captured.header.Values("Set-Cookie")) != 0 ||
-			len(captured.header.Values("Vary")) != 0 ||
-			len(captured.header.Values("Content-Encoding")) != 0 ||
-			len(captured.header.Values("Content-Range")) != 0 ||
-			len(captured.header.Values("Pragma")) != 0 ||
-			hasPrivateCacheDirective(captured.header.Get("Cache-Control")) {
+		headers, ok := cacheableResponseHeaders(captured.header)
+		if !ok {
 			return
 		}
 
@@ -702,6 +686,32 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 			body,
 		)
 	})
+}
+
+// cacheableResponseHeaders retains only metadata that the cache can reproduce
+// byte-for-byte. An unknown or repeated field must bypass the cache: silently
+// dropping it on replay can change response semantics or privacy guarantees.
+func cacheableResponseHeaders(header http.Header) (map[string]string, bool) {
+	cached := make(map[string]string, len(header))
+	for rawName, values := range header {
+		name := http.CanonicalHeaderKey(rawName)
+		switch name {
+		case "Content-Type", "Content-Language", "Cache-Control", "Etag", "Last-Modified":
+		default:
+			return nil, false
+		}
+		if len(values) != 1 || values[0] == "" {
+			return nil, false
+		}
+		if _, exists := cached[name]; exists {
+			return nil, false
+		}
+		if name == "Cache-Control" && hasPrivateCacheDirective(values[0]) {
+			return nil, false
+		}
+		cached[name] = values[0]
+	}
+	return cached, true
 }
 
 // cacheKeyForRequest distinguishes representations without caching credentials.

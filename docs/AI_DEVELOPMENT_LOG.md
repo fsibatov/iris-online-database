@@ -43,3 +43,18 @@
 - Полные Go-тесты приложения, Go/Wails Windows build, `IrisTools.ps1 -Action Test/Build`, Staticcheck, govulncheck, Ruff, Bandit, pip-audit, Gitleaks, Playwright: **NOT RUN**. Среда Linux с Go 1.23.2, проект требует Go 1.26.6 и Windows; сетевой доступ к toolchain/зависимостям недоступен. Это **не** Windows release PASS.
 
 Сохранено в локальной ветке `ai-development`; `main`, remote, tags и Releases не изменялись.
+
+## 19 октября 2026 — сохранение HTTP-заголовков и приватности кеша
+
+- В `server.go` добавлена строгая проверка заголовков перед записью ответа в кеш: разрешены только пять однозначно воспроизводимых полей (`Content-Type`, `Content-Language`, `Cache-Control`, `ETag`, `Last-Modified`) с ровно одним непустым значением. Ответы с неизвестными, дублированными или многозначными полями передаются клиенту без изменений, но не кешируются.
+- Устранена ошибка проверки только первого `Cache-Control`: последовательность `public, max-age=60` + `no-store` ранее сохранялась в кеше и при повторном запросе теряла директиву `no-store`. Теперь такой ответ не кешируется независимо от порядка полей.
+- Добавлен `cache_header_fidelity_test.go`: проверка обоих порядков `Cache-Control`, сохранения `Content-Disposition`, `Expires`, `X-Request-ID` и многозначных `Content-Language`/`ETag`.
+
+### Воспроизведение и QA
+
+- До исправления новые регрессионные тесты **FAIL**: приватный ответ повторно выдавался из кеша; пять видов невоспроизводимых заголовков терялись на повторном запросе. После исправления все эти сценарии **PASS**.
+- Изолированный Go 1.23.2-контур с точными `cache.go`, HTTP middleware/кеш-функциями `server.go` и всеми 29 тестами `cache_*_test.go`: `go test -count=50` PASS, `go test -race -count=5` PASS, `go vet` PASS, `gofmt` PASS. Контур заменяет тип `application` заглушкой, поэтому это **не** полный Go gate приложения.
+- Python unittest (`PYTHONPATH=tools`): 217 PASS; `tools/data_presentation_audit.py --json`: `fatal=[]`; `node --check` для JavaScript: PASS; `git fsck`: PASS. Игровые ресурсы и профиль не изменены.
+- Полный Go test/build, Wails, Windows `IrisTools.ps1 -Action Test/Build`, Staticcheck, govulncheck, Ruff, Bandit, pip-audit, Gitleaks, Playwright: **NOT RUN**. В Linux установлен Go 1.23.2, тогда как `go.mod` требует Go >=1.25 и Windows pin `.go-version` равен 1.26.6. Windows-only workflow validation также недоступна.
+
+Продолжать с этого локального HEAD ветки `ai-development`; `main`, remote и Releases не изменялись.
