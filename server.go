@@ -12,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -479,10 +480,13 @@ func methodNotAllowed(
 }
 
 type captureWriter struct {
-	header      http.Header
-	status      int
-	body        bytes.Buffer
-	wroteHeader bool
+	header       http.Header
+	status       int
+	body         bytes.Buffer
+	wroteHeader  bool
+	destination  http.ResponseWriter
+	maxBodyBytes int64
+	streaming    bool
 }
 
 func newCaptureWriter() *captureWriter {
@@ -490,6 +494,15 @@ func newCaptureWriter() *captureWriter {
 		header: make(http.Header),
 		status: http.StatusOK,
 	}
+}
+
+// Oversized responses bypass the cache and stream to the client without
+// buffering the complete response in memory.
+func newStreamingCaptureWriter(destination http.ResponseWriter, maxBodyBytes int64) *captureWriter {
+	writer := newCaptureWriter()
+	writer.destination = destination
+	writer.maxBodyBytes = maxBodyBytes
+	return writer
 }
 
 func (w *captureWriter) Header() http.Header {
@@ -510,12 +523,44 @@ func (w *captureWriter) Write(data []byte) (int, error) {
 		w.WriteHeader(http.StatusOK)
 	}
 
+	if w.destination != nil && !w.streaming &&
+		int64(len(data)) > w.maxBodyBytes-int64(w.body.Len()) {
+		for name, values := range w.header {
+			for _, value := range values {
+				w.destination.Header().Add(name, value)
+			}
+		}
+		w.destination.WriteHeader(w.status)
+		w.streaming = true
+		if w.body.Len() > 0 {
+			if _, err := w.destination.Write(w.body.Bytes()); err != nil {
+				w.body.Reset()
+				return 0, err
+			}
+			w.body.Reset()
+		}
+	}
+	if w.streaming {
+		return w.destination.Write(data)
+	}
 	return w.body.Write(data)
 }
 
 func isCacheableResponseRequest(r *http.Request) bool {
 	if r == nil || r.Method != http.MethodGet {
 		return false
+	}
+
+	// Never reuse a response for credentialed, ranged, conditional or
+	// explicitly uncached requests. Credentials must not enter the cache key.
+	for _, name := range []string{
+		"Authorization", "Cookie", "Range", "If-Match", "If-None-Match",
+		"If-Modified-Since", "If-Unmodified-Since", "If-Range",
+		"Cache-Control", "Pragma",
+	} {
+		if len(r.Header.Values(name)) != 0 {
+			return false
+		}
 	}
 
 	path := r.URL.Path
@@ -525,6 +570,11 @@ func isCacheableResponseRequest(r *http.Request) bool {
 		path == "/api/items" ||
 		strings.HasPrefix(path, "/api/items/") ||
 		path == "/api/recipes" ||
+		path == "/api/titles" ||
+		strings.HasPrefix(path, "/api/titles/") ||
+		path == "/api/transformations" ||
+		strings.HasPrefix(path, "/api/transformations/") ||
+		path == "/api/world-source-monsters" ||
 		path == "/api/monster-world-drops" ||
 		path == "/api/monsters" ||
 		strings.HasPrefix(path, "/api/monsters/")
@@ -537,7 +587,11 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 			return
 		}
 
-		key := r.URL.RequestURI()
+		key := cacheKeyForRequest(r)
+		if len(key) > maxCacheKeyBytes {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		if entry, ok := a.cache.Get(key); ok {
 			for name, value := range entry.header {
@@ -552,8 +606,11 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 			return
 		}
 
-		captured := newCaptureWriter()
+		captured := newStreamingCaptureWriter(w, a.cache.maxEntryBytes)
 		next.ServeHTTP(captured, r)
+		if captured.streaming {
+			return
+		}
 
 		body := captured.body.Bytes()
 
@@ -572,11 +629,22 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 		headers := map[string]string{}
 
 		for _, name := range []string{
-			"Content-Type",
+			"Content-Type", "Content-Language", "Cache-Control", "ETag", "Last-Modified",
 		} {
 			if value := captured.header.Get(name); value != "" {
 				headers[name] = value
 			}
+		}
+
+		// These headers may change the response by user or request headers,
+		// which are deliberately not part of the URL-only cache key.
+		if len(captured.header.Values("Set-Cookie")) != 0 ||
+			len(captured.header.Values("Vary")) != 0 ||
+			len(captured.header.Values("Content-Encoding")) != 0 ||
+			len(captured.header.Values("Content-Range")) != 0 ||
+			len(captured.header.Values("Pragma")) != 0 ||
+			hasPrivateCacheDirective(captured.header.Get("Cache-Control")) {
+			return
 		}
 
 		a.cache.Put(
@@ -586,4 +654,44 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 			body,
 		)
 	})
+}
+
+// cacheKeyForRequest distinguishes representations without caching credentials.
+// Length-prefixed fields avoid delimiter collisions between different headers.
+func cacheKeyForRequest(r *http.Request) string {
+	var key strings.Builder
+	key.WriteString(r.URL.RequestURI())
+	for _, name := range []string{"Accept", "Accept-Language", "Accept-Encoding", "Accept-Charset"} {
+		values := r.Header.Values(name)
+		key.WriteByte(0)
+		key.WriteString(name)
+		for _, value := range values {
+			key.WriteByte(0)
+			key.WriteString(strconv.Itoa(len(value)))
+			key.WriteByte(':')
+			key.WriteString(value)
+		}
+	}
+	return key.String()
+}
+
+// hasPrivateCacheDirective implements conservative caching: do not retain
+// representations explicitly marked private, non-cacheable or immediately stale.
+func hasPrivateCacheDirective(value string) bool {
+	for _, directive := range strings.Split(value, ",") {
+		parts := strings.SplitN(strings.TrimSpace(directive), "=", 2)
+		name := strings.ToLower(strings.TrimSpace(parts[0]))
+		switch name {
+		case "private", "no-store", "no-cache":
+			return true
+		case "max-age":
+			if len(parts) == 2 {
+				age := strings.Trim(strings.TrimSpace(parts[1]), `"`)
+				if parsed, err := strconv.ParseUint(age, 10, 64); err == nil && parsed == 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

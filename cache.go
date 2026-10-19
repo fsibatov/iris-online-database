@@ -89,6 +89,18 @@ func (c *responseCache) Put(key string, status int, header map[string]string, bo
 	element := c.lru.PushFront(entry)
 	c.entries[key] = element
 	c.bytes += entry.size
+	if c.lru.Len() > c.maxEntries || c.bytes > c.maxBytes {
+		// TTL and LRU order differ after reads. Purge expired entries first,
+		// otherwise an expired MRU entry can evict a still-valid LRU entry.
+		now := time.Now()
+		for candidate := c.lru.Back(); candidate != nil; {
+			previous := candidate.Prev()
+			if !now.Before(candidate.Value.(*cacheEntry).expiresAt) {
+				c.removeElement(candidate)
+			}
+			candidate = previous
+		}
+	}
 	for c.lru.Len() > c.maxEntries || c.bytes > c.maxBytes {
 		c.removeElement(c.lru.Back())
 	}
