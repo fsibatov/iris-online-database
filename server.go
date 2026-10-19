@@ -513,6 +513,25 @@ func (w *captureWriter) Header() http.Header {
 	return w.header
 }
 
+// forwardCapturedHeaders keeps explicit endpoint cache policy identical on
+// buffered and streamed responses. The outer security middleware sets a
+// default Cache-Control: no-store; appending the endpoint's explicit policy
+// would create conflicting fields on a miss but not on a cache hit. Other
+// headers are appended to retain the security middleware's protections.
+func forwardCapturedHeaders(destination, captured http.Header) {
+	for name, values := range captured {
+		if len(values) == 0 {
+			continue
+		}
+		if strings.EqualFold(name, "Cache-Control") {
+			destination.Del("Cache-Control")
+		}
+		for _, value := range values {
+			destination.Add(name, value)
+		}
+	}
+}
+
 func (w *captureWriter) WriteHeader(status int) {
 	if w.wroteHeader {
 		return
@@ -529,11 +548,7 @@ func (w *captureWriter) Write(data []byte) (int, error) {
 
 	if w.destination != nil && !w.streaming &&
 		int64(len(data)) > w.maxBodyBytes-int64(w.body.Len()) {
-		for name, values := range w.header {
-			for _, value := range values {
-				w.destination.Header().Add(name, value)
-			}
-		}
+		forwardCapturedHeaders(w.destination.Header(), w.header)
 		w.destination.WriteHeader(w.status)
 		w.streaming = true
 		if w.body.Len() > 0 {
@@ -670,14 +685,7 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 
 		body := captured.body.Bytes()
 
-		for name, values := range captured.header {
-			for _, value := range values {
-				w.Header().Add(
-					name,
-					value,
-				)
-			}
-		}
+		forwardCapturedHeaders(w.Header(), captured.header)
 
 		w.WriteHeader(captured.status)
 		_, _ = w.Write(body)

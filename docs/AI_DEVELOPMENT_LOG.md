@@ -92,3 +92,16 @@
 - Изолированный Go 1.23.2-контур: точные `cache.go`, кеширующие/middleware-функции `server.go`, функции shutdown из `lifecycle.go`, тестовая заглушка `application` и все `cache_*_test.go`: `go test -count=50` PASS, `go test -race -count=5` PASS, `go vet` PASS, gofmt PASS. **Не полный Go gate приложения.**
 - Python unittest (`PYTHONPATH=tools`): **217 PASS**; `data_presentation_audit.py --json`: `fatal=[]`; `repository_audit.py`: PASS; `node --check web/app.js`: PASS; `git diff --check`, `git fsck`: PASS.
 - Полный Go test: BLOCKED (`go.mod` требует Go >=1.25, Linux Go 1.23.2, загрузка toolchain недоступна). Windows `IrisTools.ps1 -Action Test/Build`, Wails/WebView2, Staticcheck, govulncheck, Ruff, Bandit, pip-audit, Gitleaks и Playwright: NOT RUN. **Это не Windows release PASS.**
+
+## 19 октября 2026 — согласованность Cache-Control при промахах и потоковой передаче (итерация 14)
+
+- Исправлено различие HTTP-заголовков между первым ответом и попаданием во внутренний кеш: внешний middleware задавал `Cache-Control: no-store`, а буферизованный обработчик добавлял своё явное `Cache-Control: public, max-age=60` вторым полем. При попадании в кеш возвращалось только `public, max-age=60`. Теперь явная политика обработчика **заменяет** значение по умолчанию при первой выдаче, поэтому оба ответа содержат одно одинаковое поле.
+- Тот же дефект устранён для больших ответов, которые передаются потоком и не сохраняются в кеше: `no-store` + `private, no-store` больше не дублируются. Прочие заголовки по-прежнему дополняют существующие, поэтому защитные CSP и X-Frame-Options сохраняются. Если обработчик не задаёт Cache-Control, внешний `no-store` остаётся при промахе и попадании в кеш.
+- Добавлен `cache_pipeline_headers_test.go` с тремя регрессионными сценариями: промах/попадание, потоковая передача и сохранение политики по умолчанию. Первые два теста воспроизвели ошибку до исправления (**FAIL**: два поля Cache-Control вместо одного), после исправления **PASS**.
+
+### Проверки и ограничения
+
+- Изолированный Go 1.23.2-контур с **точными** `cache.go`, middleware/кеш-функциями из `server.go`, shutdown-функциями из `lifecycle.go`, всеми `cache_*_test.go` и заглушкой зависимостей `application`: `go test -count=30` PASS, `go test -race -count=5` PASS, `go vet` PASS, gofmt PASS. **Это не полный Go gate приложения**.
+- Python unittest (`PYTHONPATH=tools`): **217 PASS**; `data_presentation_audit.py --json`: `fatal=[]`; `repository_audit.py`: PASS; `node --check web/app.js`: PASS; `git diff --check`, `git fsck`: PASS.
+- Полный Go test: **BLOCKED** (`go.mod` требует Go >=1.25, установлен Linux Go 1.23.2). Playwright smoke: **BLOCKED** (Chromium запускается, но локальный HTTP заблокирован политикой среды: `net::ERR_BLOCKED_BY_ADMINISTRATOR`). `validate_workflows.py`: **NOT PASS** в Linux — Windows PowerShell parser недоступен (`WF001`, count=4). Windows `IrisTools.ps1 -Action Test/Build`, Wails/WebView2, Staticcheck, govulncheck, Ruff, Bandit, pip-audit, Gitleaks: **NOT RUN**. Windows release PASS не заявляется.
+- Игровые данные The Original/Iris Kiss Kiss, профиль, `main`, remote и GitHub Releases не изменены.
