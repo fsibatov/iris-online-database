@@ -764,25 +764,32 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 	})
 }
 
-// responseCacheLifetime caps internal freshness to the origin's max-age.
-// Invalid or conflicting max-age directives are conservatively not cached.
+// responseCacheLifetime caps internal freshness to both max-age and s-maxage.
+// This in-process cache is shared across HTTP requests, so s-maxage=0 must
+// disable reuse even when max-age is positive. Invalid or duplicate freshness
+// directives fail closed rather than silently extending the cached lifetime.
 // The caller has already rejected multi-valued Cache-Control headers.
 func responseCacheLifetime(header http.Header, configured time.Duration) (time.Duration, bool) {
 	value := header.Get("Cache-Control")
 	if value == "" {
 		return configured, configured > 0
 	}
-	seen := false
+	seenMaxAge, seenSharedMaxAge := false, false
 	lifetime := configured
 	for _, directive := range strings.Split(value, ",") {
 		parts := strings.SplitN(strings.TrimSpace(directive), "=", 2)
-		if !strings.EqualFold(strings.TrimSpace(parts[0]), "max-age") {
+		name := strings.ToLower(strings.TrimSpace(parts[0]))
+		if name != "max-age" && name != "s-maxage" {
 			continue
 		}
-		if seen || len(parts) != 2 {
+		if len(parts) != 2 || (name == "max-age" && seenMaxAge) || (name == "s-maxage" && seenSharedMaxAge) {
 			return 0, false
 		}
-		seen = true
+		if name == "max-age" {
+			seenMaxAge = true
+		} else {
+			seenSharedMaxAge = true
+		}
 		age := strings.TrimSpace(parts[1])
 		if len(age) >= 2 && age[0] == '"' && age[len(age)-1] == '"' {
 			age = age[1 : len(age)-1]
@@ -800,7 +807,7 @@ func responseCacheLifetime(header http.Header, configured time.Duration) (time.D
 			return 0, false
 		}
 		// Compare before multiplying to avoid time.Duration overflow.
-		if seconds <= uint64(configured/time.Second) {
+		if seconds <= uint64(lifetime/time.Second) {
 			lifetime = time.Duration(seconds) * time.Second
 		}
 	}
