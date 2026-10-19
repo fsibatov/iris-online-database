@@ -80,3 +80,15 @@
 - Проверки изолированного контура (точные `cache.go` и функции кеширования/middleware из `server.go`, заглушка `application`): **33 Go-теста ×20 PASS**, Race Detector ×3 PASS, `go vet` PASS; тест до исправления FAIL, после PASS. Это **не** полный Go gate.
 - Python unittest (`PYTHONPATH=tools`): **217 PASS**; `data_presentation_audit.py --json`: `fatal=[]`; `repository_audit.py`: PASS; `node --check web/app.js`: PASS; gofmt, `git diff --check`, `git fsck`: PASS. Playwright smoke **BLOCKED** (Chromium browser runtime отсутствует).
 - Полные Go-тесты: **BLOCKED** (Go 1.23.2 при `go.mod` >=1.25). Windows `IrisTools.ps1 -Action Test/Build`, Wails/WebView2, Staticcheck, govulncheck, Ruff, Bandit, pip-audit, Gitleaks: **NOT RUN**. Это не релизный Windows PASS. Игровые данные, профиль, ветка `main` и удалённый репозиторий не изменялись.
+
+## 19 октября 2026 — защита кеша от повторного заполнения после shutdown (итерация 13)
+
+- Исправлена гонка жизненного цикла: ранее обработчик, начавшийся до `application.shutdown()`, мог завершиться после очистки кеша и снова записать ответ в память. Регрессионный сценарий воспроизвёл **1 запись / 72 байта** после shutdown (FAIL до исправления).
+- Добавлен атомарный терминальный `responseCache.Close()`: очистка и запрет последующих `Get`/`PutWithTTL` под одним mutex. `application.shutdown()` теперь вызывает `Close()`; существующий `Clear()` остаётся переиспользуемым. После исправления тест подтверждает **0 записей / 0 байт** даже при завершении старого обработчика после shutdown.
+- Добавлены `cache_shutdown_cleanup_test.go` (управляемая конкурентная регрессия, терминальность Close, идемпотентность и обратная совместимость Clear). Игровые данные, профиль, сетевое поведение и `main` не менялись.
+
+### Фактически выполненные проверки
+
+- Изолированный Go 1.23.2-контур: точные `cache.go`, кеширующие/middleware-функции `server.go`, функции shutdown из `lifecycle.go`, тестовая заглушка `application` и все `cache_*_test.go`: `go test -count=50` PASS, `go test -race -count=5` PASS, `go vet` PASS, gofmt PASS. **Не полный Go gate приложения.**
+- Python unittest (`PYTHONPATH=tools`): **217 PASS**; `data_presentation_audit.py --json`: `fatal=[]`; `repository_audit.py`: PASS; `node --check web/app.js`: PASS; `git diff --check`, `git fsck`: PASS.
+- Полный Go test: BLOCKED (`go.mod` требует Go >=1.25, Linux Go 1.23.2, загрузка toolchain недоступна). Windows `IrisTools.ps1 -Action Test/Build`, Wails/WebView2, Staticcheck, govulncheck, Ruff, Bandit, pip-audit, Gitleaks и Playwright: NOT RUN. **Это не Windows release PASS.**

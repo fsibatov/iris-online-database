@@ -46,7 +46,7 @@ func (a *application) shutdown() error {
 		}
 	}
 	if a.cache != nil {
-		a.cache.Clear()
+		a.cache.Close()
 	}
 	if a.logWriter != nil {
 		_ = a.logWriter.Close()

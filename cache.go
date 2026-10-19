@@ -31,6 +31,7 @@ type responseCache struct {
 	maxEntryBytes int64
 	ttl           time.Duration
 	bytes         int64
+	closed        bool
 	inflight      map[string]chan struct{}
 }
 
@@ -56,6 +57,9 @@ func newResponseCache(maxEntries int, maxBytes int64, ttl time.Duration) *respon
 func (c *responseCache) Get(key string) (cacheEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed {
+		return cacheEntry{}, false
+	}
 	element := c.entries[key]
 	if element == nil {
 		return cacheEntry{}, false
@@ -94,6 +98,9 @@ func (c *responseCache) PutWithTTL(key string, status int, header map[string]str
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
 	if existing := c.entries[key]; existing != nil {
 		c.removeElement(existing)
 	}
@@ -121,6 +128,19 @@ func (c *responseCache) PutWithTTL(key string, status int, header map[string]str
 func (c *responseCache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.clearLocked()
+}
+
+// Close atomically clears the cache and prevents in-flight producers from
+// restoring entries after application shutdown. Clear remains reusable.
+func (c *responseCache) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	c.clearLocked()
+}
+
+func (c *responseCache) clearLocked() {
 	c.entries = make(map[string]*list.Element, c.maxEntries)
 	c.lru.Init()
 	c.bytes = 0
