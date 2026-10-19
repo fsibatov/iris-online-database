@@ -70,6 +70,15 @@ func (c *responseCache) Get(key string) (cacheEntry, bool) {
 }
 
 func (c *responseCache) Put(key string, status int, header map[string]string, body []byte) {
+	c.PutWithTTL(key, status, header, body, c.ttl)
+}
+
+// PutWithTTL never extends the configured cache lifetime. A response's
+// Cache-Control max-age may require a shorter in-process freshness period.
+func (c *responseCache) PutWithTTL(key string, status int, header map[string]string, body []byte, ttl time.Duration) {
+	if ttl <= 0 || ttl > c.ttl {
+		return
+	}
 	if status != 200 || len(body) == 0 || len(key) > maxCacheKeyBytes {
 		return
 	}
@@ -87,7 +96,7 @@ func (c *responseCache) Put(key string, status int, header map[string]string, bo
 	if existing := c.entries[key]; existing != nil {
 		c.removeElement(existing)
 	}
-	entry := &cacheEntry{key: strings.Clone(key), status: status, header: headerCopy, body: append([]byte(nil), body...), expiresAt: time.Now().Add(c.ttl), size: size}
+	entry := &cacheEntry{key: strings.Clone(key), status: status, header: headerCopy, body: append([]byte(nil), body...), expiresAt: time.Now().Add(ttl), size: size}
 	element := c.lru.PushFront(entry)
 	c.entries[key] = element
 	c.bytes += entry.size

@@ -58,3 +58,17 @@
 - Полный Go test/build, Wails, Windows `IrisTools.ps1 -Action Test/Build`, Staticcheck, govulncheck, Ruff, Bandit, pip-audit, Gitleaks, Playwright: **NOT RUN**. В Linux установлен Go 1.23.2, тогда как `go.mod` требует Go >=1.25 и Windows pin `.go-version` равен 1.26.6. Windows-only workflow validation также недоступна.
 
 Продолжать с этого локального HEAD ветки `ai-development`; `main`, remote и Releases не изменялись.
+
+## 19 октября 2026 — срок жизни HTTP-кеша и Cache-Control max-age
+
+- Исправлено превышение срока свежести: ответ с `Cache-Control: max-age=1` ранее оставался во внутреннем кеше 5 минут (настроенный TTL приложения), теперь время хранения ограничено 1 секундой. Более короткий настроенный TTL по-прежнему имеет приоритет.
+- Некорректные, нулевые и конфликтующие `max-age` теперь не допускают сохранение ответа в кеше; арифметика сравнения защищена от переполнения `time.Duration`.
+- Добавлены регрессионные тесты `cache_max_age_test.go`: срок хранения, кавычки/регистр, недействительные значения, повторные директивы, ограничение настроенным TTL. Ошибка воспроизведена до исправления в изолированном тестовом контуре и устранена после.
+
+### Проверки
+
+- Изолированный Go 1.23.2-контур с точными `cache.go`, кеширующей частью и middleware из `server.go`, всеми `cache_*_test.go` и заглушкой `application`: `go test -count=50` PASS, `go test -race -count=5` PASS, `go vet` PASS, `gofmt` PASS. **Не является полным Go gate приложения**.
+- Python unittest (`PYTHONPATH=tools`): 217 PASS; `data_presentation_audit.py --json`: `fatal=[]`; `repository_audit.py`: PASS; `node --check web/app.js`: PASS; `git fsck`: PASS.
+- Полные Go-тесты: BLOCKED (Go 1.23.2, `go.mod` требует >=1.25). Windows `IrisTools.ps1 -Action Test/Build`, Wails/WebView2, Staticcheck, govulncheck, Ruff, Bandit, pip-audit, Gitleaks, Playwright: NOT RUN. Windows release PASS не заявляется.
+
+Изменения затрагивают только HTTP-кеш, тесты и этот журнал. Игровые ресурсы, профиль и ветка `main` не изменялись.

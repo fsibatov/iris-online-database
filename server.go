@@ -679,13 +679,55 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 			return
 		}
 
-		a.cache.Put(
-			key,
-			captured.status,
-			headers,
-			body,
-		)
+		lifetime, ok := responseCacheLifetime(captured.header, a.cache.ttl)
+		if !ok {
+			return
+		}
+		a.cache.PutWithTTL(key, captured.status, headers, body, lifetime)
 	})
+}
+
+// responseCacheLifetime caps internal freshness to the origin's max-age.
+// Invalid or conflicting max-age directives are conservatively not cached.
+// The caller has already rejected multi-valued Cache-Control headers.
+func responseCacheLifetime(header http.Header, configured time.Duration) (time.Duration, bool) {
+	value := header.Get("Cache-Control")
+	if value == "" {
+		return configured, configured > 0
+	}
+	seen := false
+	lifetime := configured
+	for _, directive := range strings.Split(value, ",") {
+		parts := strings.SplitN(strings.TrimSpace(directive), "=", 2)
+		if !strings.EqualFold(strings.TrimSpace(parts[0]), "max-age") {
+			continue
+		}
+		if seen || len(parts) != 2 {
+			return 0, false
+		}
+		seen = true
+		age := strings.TrimSpace(parts[1])
+		if len(age) >= 2 && age[0] == '"' && age[len(age)-1] == '"' {
+			age = age[1 : len(age)-1]
+		}
+		if age == "" {
+			return 0, false
+		}
+		for _, digit := range age {
+			if digit < '0' || digit > '9' {
+				return 0, false
+			}
+		}
+		seconds, err := strconv.ParseUint(age, 10, 64)
+		if err != nil || seconds == 0 {
+			return 0, false
+		}
+		// Compare before multiplying to avoid time.Duration overflow.
+		if seconds <= uint64(configured/time.Second) {
+			lifetime = time.Duration(seconds) * time.Second
+		}
+	}
+	return lifetime, lifetime > 0
 }
 
 // cacheableResponseHeaders retains only metadata that the cache can reproduce
