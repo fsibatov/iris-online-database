@@ -712,6 +712,13 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 					return
 				}
 			case <-r.Context().Done():
+				// Request cancellation and application shutdown may both
+				// become ready while a follower waits. Preserve the 503
+				// shutdown priority regardless of which select arm wins.
+				if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+					http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+					return
+				}
 				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
 				return
 			case <-appDone:
