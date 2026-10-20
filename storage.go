@@ -122,6 +122,29 @@ func canonicalProfileKey(key string) (string, bool) {
 	return "", false
 }
 
+// Nested settings fields are decoded case-insensitively by encoding/json.
+// Reject multiple spellings of one preference before decoding the struct.
+func rejectConflictingSettingsAliases(data json.RawMessage) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	seen := make(map[string]string, 3)
+	for key := range fields {
+		for _, canonical := range [...]string{"server", "theme", "view"} {
+			if !strings.EqualFold(key, canonical) {
+				continue
+			}
+			if previous, exists := seen[canonical]; exists {
+				return fmt.Errorf("conflicting settings fields %q and %q", previous, key)
+			}
+			seen[canonical] = key
+			break
+		}
+	}
+	return nil
+}
+
 func (p *userProfile) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -139,6 +162,11 @@ func (p *userProfile) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("conflicting profile fields %q and %q", previous, key)
 		}
 		seen[canonical] = key
+		if canonical == "settings" {
+			if err := rejectConflictingSettingsAliases(raw[key]); err != nil {
+				return err
+			}
+		}
 	}
 	var wire userProfileWire
 	if err := json.Unmarshal(data, &wire); err != nil {
