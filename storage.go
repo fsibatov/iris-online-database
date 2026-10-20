@@ -500,8 +500,12 @@ func atomicWriteJSON(path, backup string, value any) error {
 	old := path + ".old"
 	_ = os.Remove(old)
 	if _, err := os.Stat(path); err == nil {
-		if err := atomicCopyFile(path, backup, 0o600); err != nil {
-			return err
+		// A recovered store may still have a corrupt primary on disk. Never
+		// overwrite its valid backup with that corrupt file during Replace.
+		if _, err := loadProfileFile(path); err == nil {
+			if err := atomicCopyFile(path, backup, 0o600); err != nil {
+				return err
+			}
 		}
 		if err := os.Rename(path, old); err != nil {
 			return err
