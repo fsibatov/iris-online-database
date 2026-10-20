@@ -608,6 +608,15 @@ func (w *captureWriter) Write(data []byte) (int, error) {
 		w.destination.WriteHeader(w.status)
 		w.streaming = true
 		if w.body.Len() > 0 {
+			// The destination can initiate shutdown while committing headers.
+			// Recheck before releasing a prefix buffered before WriteHeader.
+			if w.duringStream != nil {
+				if err := w.duringStream(); err != nil {
+					w.aborted = err
+					w.body.Reset()
+					return 0, err
+				}
+			}
 			// The destination may report a short write without an error.
 			// Never silently discard the missing prefix and append later data.
 			n, err := w.destination.Write(w.body.Bytes())
