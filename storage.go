@@ -651,6 +651,12 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 		if !filepath.IsAbs(path) {
 			return pendingDeleteList{}, errors.New("pending-delete paths must be absolute")
 		}
+		// The maintenance writer persists cleaned paths. A non-canonical
+		// primary may mask the last valid backup even though its entries
+		// cannot be safely replayed as written.
+		if filepath.Clean(path) != path {
+			return pendingDeleteList{}, errors.New("pending-delete paths must be canonical")
+		}
 	}
 	return list, nil
 }
