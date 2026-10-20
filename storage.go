@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -603,8 +604,30 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 	if err := validateNoDuplicateJSONKeys(data); err != nil {
 		return pendingDeleteList{}, err
 	}
+	// A valid JSON document is not necessarily a valid maintenance queue:
+	// null, {}, and {"paths":null} would silently discard queued cleanup
+	// and prevent recovery from an intact backup. Preserve legacy casing,
+	// but reject ambiguous case-insensitive aliases.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return pendingDeleteList{}, err
+	}
+	var rawPaths json.RawMessage
+	for key, value := range fields {
+		if !strings.EqualFold(key, "paths") {
+			continue
+		}
+		if rawPaths != nil {
+			return pendingDeleteList{}, errors.New("conflicting pending-delete paths fields")
+		}
+		rawPaths = value
+	}
+	array := bytes.TrimSpace(rawPaths)
+	if len(array) == 0 || array[0] != '[' {
+		return pendingDeleteList{}, errors.New("pending-delete paths must be an array")
+	}
 	var list pendingDeleteList
-	if err := json.Unmarshal(data, &list); err != nil {
+	if err := json.Unmarshal(array, &list.Paths); err != nil {
 		return pendingDeleteList{}, err
 	}
 	return list, nil
