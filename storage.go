@@ -639,6 +639,14 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 	if err := json.Unmarshal(array, &list.Paths); err != nil {
 		return pendingDeleteList{}, err
 	}
+	// JSON null decodes into an empty string in []string. An empty entry
+	// makes this primary unusable: accepting it would hide a valid backup
+	// and silently discard pending deletions.
+	for _, path := range list.Paths {
+		if strings.TrimSpace(path) == "" {
+			return pendingDeleteList{}, errors.New("pending-delete paths must not contain blank entries")
+		}
+	}
 	return list, nil
 }
 
