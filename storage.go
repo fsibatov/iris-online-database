@@ -126,15 +126,24 @@ func canonicalProfileKey(key string) (string, bool) {
 // Nested settings fields are decoded case-insensitively by encoding/json.
 // Reject multiple spellings of one preference before decoding the struct.
 func rejectConflictingSettingsAliases(data json.RawMessage) error {
+	// encoding/json accepts null for structs and strings, silently clearing
+	// preferences. Reject explicit nulls so a damaged disk profile can fall
+	// back to its valid backup instead of replacing user settings.
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return errors.New("null profile settings")
+	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
 	seen := make(map[string]string, 3)
-	for key := range fields {
+	for key, value := range fields {
 		for _, canonical := range [...]string{"server", "theme", "view"} {
 			if !strings.EqualFold(key, canonical) {
 				continue
+			}
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return fmt.Errorf("null profile setting %q", key)
 			}
 			if previous, exists := seen[canonical]; exists {
 				return fmt.Errorf("conflicting settings fields %q and %q", previous, key)
