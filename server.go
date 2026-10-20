@@ -352,6 +352,14 @@ func decodeJSONRequest(
 		return false
 	}
 
+	// Both callers require a JSON object. encoding/json accepts a top-level
+	// null into a struct without error, which could turn a profile update into
+	// a zero-value replacement and erase saved preferences.
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		http.Error(w, "Некорректные данные запроса.\n", http.StatusBadRequest)
+		return false
+	}
+
 	if err := validateNoDuplicateJSONKeys(data); err != nil {
 		http.Error(
 			w,
