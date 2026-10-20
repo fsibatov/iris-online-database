@@ -195,7 +195,10 @@ func withAPIConcurrencyLimit(next http.Handler, maximum int) http.Handler {
 func (a *application) withLifecycleGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			if a.closing.Load() {
+			// The application context can already be canceled even before the
+			// closing flag is visible. Reject every API route, including
+			// uncached profile mutations, before it reaches its handler.
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
 				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
 				return
 			}
