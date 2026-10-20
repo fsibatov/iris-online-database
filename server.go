@@ -521,6 +521,7 @@ type captureWriter struct {
 	maxBodyBytes int64
 	streaming    bool
 	beforeStream func() error
+	duringStream func() error
 	aborted      error
 }
 
@@ -621,6 +622,15 @@ func (w *captureWriter) Write(data []byte) (int, error) {
 		}
 	}
 	if w.streaming {
+		// After headers have been committed, an HTTP error response is no
+		// longer possible. Stop writing further body chunks on cancellation
+		// or shutdown without appending an error page to the partial stream.
+		if w.duringStream != nil {
+			if err := w.duringStream(); err != nil {
+				w.aborted = err
+				return 0, err
+			}
+		}
 		n, err := w.destination.Write(data)
 		if err == nil && n != len(data) {
 			err = io.ErrShortWrite
@@ -770,6 +780,12 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 		}
 
 		captured := newStreamingCaptureWriter(w, a.cache.maxEntryBytes)
+		captured.duringStream = func() error {
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+				return context.Canceled
+			}
+			return r.Context().Err()
+		}
 		captured.beforeStream = func() error {
 			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
 				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
