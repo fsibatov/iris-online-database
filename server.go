@@ -715,6 +715,11 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 			}
 			w.Header().Set("Age", strconv.FormatInt(int64(elapsed/time.Second), 10))
 			w.WriteHeader(entry.status)
+			// Shutdown can begin inside the destination's WriteHeader call.
+			// HTTP status is committed, but the cached body is not yet sent.
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) || r.Context().Err() != nil {
+				return
+			}
 			_, _ = w.Write(entry.body)
 		}
 		if entry, ok := a.cache.Get(key); ok {
@@ -818,6 +823,11 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 		forwardCapturedHeaders(w.Header(), captured.responseHeaders())
 
 		w.WriteHeader(captured.status)
+		// A request may be canceled while WriteHeader commits the response.
+		// Never start sending the buffered body after that cancellation.
+		if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) || r.Context().Err() != nil {
+			return
+		}
 		written, writeErr := w.Write(body)
 		// A failed or short destination write cannot be treated as a
 		// successfully delivered representation. The status is already
