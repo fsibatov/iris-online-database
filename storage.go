@@ -508,6 +508,11 @@ func atomicWriteJSON(path, backup string, value any) error {
 		case userProfile, *userProfile:
 			_, err := loadProfileFile(path)
 			backupPrevious = err == nil
+		case pendingDeleteList, *pendingDeleteList:
+			// Do not overwrite the last valid maintenance queue with a
+			// damaged primary when recovering from an interrupted write.
+			_, err := loadPendingDeleteList(path)
+			backupPrevious = err == nil
 		}
 		if backupPrevious {
 			if err := atomicCopyFile(path, backup, 0o600); err != nil {
@@ -587,6 +592,24 @@ type pendingDeleteList struct {
 	Paths []string `json:"paths"`
 }
 
+func loadPendingDeleteList(path string) (pendingDeleteList, error) {
+	if !safeOwnedFilePath(path) {
+		return pendingDeleteList{}, errUnsafeDestructivePath
+	}
+	data, err := readLimitedFile(path, maxPendingListBytes)
+	if err != nil {
+		return pendingDeleteList{}, err
+	}
+	if err := validateNoDuplicateJSONKeys(data); err != nil {
+		return pendingDeleteList{}, err
+	}
+	var list pendingDeleteList
+	if err := json.Unmarshal(data, &list); err != nil {
+		return pendingDeleteList{}, err
+	}
+	return list, nil
+}
+
 func runMaintenance(paths appPaths, currentExecutable string, logger interface{ Printf(string, ...any) }) {
 	allowed := []string{paths.Cache, paths.Temp, paths.Logs, paths.Updates, paths.Versions}
 	processPendingDeletes(paths.PendingDelete, allowed, currentExecutable, logger)
@@ -603,14 +626,17 @@ func processPendingDeletes(listPath string, allowedRoots []string, currentExecut
 	if !safeOwnedFilePath(listPath) {
 		return
 	}
-	data, err := readLimitedFile(listPath, maxPendingListBytes)
+	list, err := loadPendingDeleteList(listPath)
 	if err != nil {
-		return
-	}
-	var list pendingDeleteList
-	if json.Unmarshal(data, &list) != nil {
-		_ = os.Remove(listPath)
-		return
+		// A missing primary normally means cleanup completed. Replaying
+		// an old backup could delete newly created files at reused paths.
+		if errors.Is(err, fs.ErrNotExist) {
+			return
+		}
+		list, err = loadPendingDeleteList(listPath + ".bak")
+		if err != nil {
+			return
+		}
 	}
 	remaining := make([]string, 0, len(list.Paths))
 	for _, candidate := range list.Paths {
@@ -635,11 +661,12 @@ func appendPendingDeletes(listPath string, paths []string, allowedRoots []string
 		return
 	}
 	combined := make([]string, 0, len(paths)+8)
-	if data, err := readLimitedFile(listPath, maxPendingListBytes); err == nil {
-		var existing pendingDeleteList
-		if json.Unmarshal(data, &existing) == nil {
-			combined = append(combined, existing.Paths...)
-		}
+	existing, err := loadPendingDeleteList(listPath)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		existing, err = loadPendingDeleteList(listPath + ".bak")
+	}
+	if err == nil {
+		combined = append(combined, existing.Paths...)
 	}
 	combined = append(combined, paths...)
 	seen := make(map[string]struct{}, len(combined))
