@@ -607,15 +607,31 @@ func (w *captureWriter) Write(data []byte) (int, error) {
 		w.destination.WriteHeader(w.status)
 		w.streaming = true
 		if w.body.Len() > 0 {
-			if _, err := w.destination.Write(w.body.Bytes()); err != nil {
-				w.body.Reset()
-				return 0, err
+			// The destination may report a short write without an error.
+			// Never silently discard the missing prefix and append later data.
+			n, err := w.destination.Write(w.body.Bytes())
+			if err == nil && n != w.body.Len() {
+				err = io.ErrShortWrite
 			}
 			w.body.Reset()
+			if err != nil {
+				w.aborted = err
+				return 0, err
+			}
 		}
 	}
 	if w.streaming {
-		return w.destination.Write(data)
+		n, err := w.destination.Write(data)
+		if err == nil && n != len(data) {
+			err = io.ErrShortWrite
+		}
+		if err != nil {
+			// Once the stream is committed, a failed write cannot be
+			// repaired. Reject subsequent writes instead of appending a
+			// misleading continuation to the truncated representation.
+			w.aborted = err
+		}
+		return n, err
 	}
 	return w.body.Write(data)
 }
