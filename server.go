@@ -786,7 +786,13 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 		forwardCapturedHeaders(w.Header(), captured.responseHeaders())
 
 		w.WriteHeader(captured.status)
-		_, _ = w.Write(body)
+		written, writeErr := w.Write(body)
+		// A failed or short destination write cannot be treated as a
+		// successfully delivered representation. The status is already
+		// committed, but the incomplete response must not seed the cache.
+		if writeErr != nil || written != len(body) {
+			return
+		}
 
 		// Cancellation or shutdown may begin while the destination commits
 		// the buffered body. The response is already visible and cannot be
