@@ -248,6 +248,12 @@ func loadProfileFile(path string) (userProfile, error) {
 	if err != nil {
 		return userProfile{}, err
 	}
+	// Apply the same duplicate-key policy to disk as to API requests. A
+	// malformed primary profile must not silently override preferences or
+	// prevent recovery from the last valid backup.
+	if err := validateNoDuplicateJSONKeys(data); err != nil {
+		return userProfile{}, fmt.Errorf("некорректные ключи профиля: %w", err)
+	}
 	var profile userProfile
 	if err := json.Unmarshal(data, &profile); err != nil {
 		return userProfile{}, err
