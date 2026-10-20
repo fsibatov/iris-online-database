@@ -500,9 +500,16 @@ func atomicWriteJSON(path, backup string, value any) error {
 	old := path + ".old"
 	_ = os.Remove(old)
 	if _, err := os.Stat(path); err == nil {
-		// A recovered store may still have a corrupt primary on disk. Never
-		// overwrite its valid backup with that corrupt file during Replace.
-		if _, err := loadProfileFile(path); err == nil {
+		// Profile writes must not replace a valid backup with a corrupt
+		// primary. This writer also stores maintenance metadata, which is
+		// not a profile and must retain its normal backup behavior.
+		backupPrevious := true
+		switch value.(type) {
+		case userProfile, *userProfile:
+			_, err := loadProfileFile(path)
+			backupPrevious = err == nil
+		}
+		if backupPrevious {
 			if err := atomicCopyFile(path, backup, 0o600); err != nil {
 				return err
 			}
