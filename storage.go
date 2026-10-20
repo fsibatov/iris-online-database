@@ -108,18 +108,45 @@ var knownProfileKeys = map[string]struct{}{
 
 type userProfileWire userProfile
 
-func (p *userProfile) UnmarshalJSON(data []byte) error {
-	var wire userProfileWire
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
+// encoding/json accepts case-insensitive aliases for struct fields. Treat
+// those aliases as reserved too, so Extra cannot shadow canonical fields.
+func canonicalProfileKey(key string) (string, bool) {
+	if _, known := knownProfileKeys[key]; known {
+		return key, true
 	}
+	for canonical := range knownProfileKeys {
+		if strings.EqualFold(key, canonical) {
+			return canonical, true
+		}
+	}
+	return "", false
+}
+
+func (p *userProfile) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+	// Two differently cased names can write the same struct field. Reject
+	// the ambiguous profile rather than making its value depend on JSON order.
+	seen := make(map[string]string, len(knownProfileKeys))
+	for key := range raw {
+		canonical, known := canonicalProfileKey(key)
+		if !known {
+			continue
+		}
+		if previous, exists := seen[canonical]; exists {
+			return fmt.Errorf("conflicting profile fields %q and %q", previous, key)
+		}
+		seen[canonical] = key
+	}
+	var wire userProfileWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
 	extra := make(map[string]json.RawMessage)
 	for key, value := range raw {
-		if _, known := knownProfileKeys[key]; known {
+		if _, known := canonicalProfileKey(key); known {
 			continue
 		}
 		extra[key] = append(json.RawMessage(nil), value...)
@@ -141,7 +168,7 @@ func (p userProfile) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	for key, value := range p.Extra {
-		if _, known := knownProfileKeys[key]; known || !json.Valid(value) {
+		if _, known := canonicalProfileKey(key); known || !json.Valid(value) {
 			continue
 		}
 		raw[key] = append(json.RawMessage(nil), value...)
@@ -305,7 +332,7 @@ func sanitizeProfileExtra(values map[string]json.RawMessage) map[string]json.Raw
 		if len([]rune(key)) > 80 {
 			continue
 		}
-		if _, known := knownProfileKeys[key]; known {
+		if _, known := canonicalProfileKey(key); known {
 			continue
 		}
 		value := values[key]
