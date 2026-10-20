@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -119,8 +120,10 @@ func TestAppendPendingDeletesRecoversBackupFromNullPaths(t *testing.T) {
 }
 
 func TestPendingDeleteListAcceptsValidEmptyAndLegacyAliases(t *testing.T) {
-	for _, body := range []string{`{"paths":[]}`, `{"Paths":["test"]}`} {
-		path := filepath.Join(t.TempDir(), "pending-delete.json")
+	root := t.TempDir()
+	absolute := filepath.Join(root, "Cache", "test.bin")
+	for _, body := range []string{`{"paths":[]}`, `{"Paths":[` + strconv.Quote(absolute) + `]}`} {
+		path := filepath.Join(root, "pending-delete.json")
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}

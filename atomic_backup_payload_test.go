@@ -14,8 +14,8 @@ func TestAtomicWriteJSONBacksUpPendingDeleteList(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "pending-delete.json")
 	backup := path + ".bak"
-	previous := pendingDeleteList{Paths: []string{"old-cache-entry"}}
-	current := pendingDeleteList{Paths: []string{"new-cache-entry"}}
+	previous := pendingDeleteList{Paths: []string{filepath.Join(root, "Cache", "old-cache-entry")}}
+	current := pendingDeleteList{Paths: []string{filepath.Join(root, "Cache", "new-cache-entry")}}
 	if err := atomicWriteJSON(path, backup, previous); err != nil {
 		t.Fatal(err)
 	}

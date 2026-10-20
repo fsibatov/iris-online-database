@@ -646,6 +646,11 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 		if strings.TrimSpace(path) == "" {
 			return pendingDeleteList{}, errors.New("pending-delete paths must not contain blank entries")
 		}
+		// appendPendingDeletes stores absolute paths only. A relative entry
+		// cannot be safely replayed and must not hide a valid backup queue.
+		if !filepath.IsAbs(path) {
+			return pendingDeleteList{}, errors.New("pending-delete paths must be absolute")
+		}
 	}
 	return list, nil
 }

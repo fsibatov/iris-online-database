@@ -104,12 +104,18 @@ func TestAppendPendingDeletesRecoversBackupFromBlankEntry(t *testing.T) {
 }
 
 func TestPendingDeleteListAcceptsNonemptyPaths(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "pending-delete.json")
-	if err := os.WriteFile(path, []byte(`{"paths":["C:\\Cache\\old.bin"]}`), 0o600); err != nil {
+	root := t.TempDir()
+	path := filepath.Join(root, "pending-delete.json")
+	absolute := filepath.Join(root, "Cache", "old.bin")
+	data, err := json.Marshal(pendingDeleteList{Paths: []string{absolute}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	list, err := loadPendingDeleteList(path)
-	if err != nil || len(list.Paths) != 1 || list.Paths[0] != `C:\Cache\old.bin` {
+	if err != nil || len(list.Paths) != 1 || list.Paths[0] != absolute {
 		t.Fatalf("valid path rejected: %+v, %v", list, err)
 	}
 }
