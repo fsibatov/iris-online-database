@@ -540,6 +540,18 @@ func atomicWriteJSON(path, backup string, value any) error {
 		if err := os.Rename(path, old); err != nil {
 			return err
 		}
+	} else if os.IsNotExist(err) {
+		// A missing maintenance queue means the previous generation ended.
+		// Its backup must not become the fallback for a newly created queue:
+		// replaying it could delete files created at reused paths.
+		switch value.(type) {
+		case pendingDeleteList, *pendingDeleteList:
+			if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	} else {
+		return err
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		_ = os.Rename(old, path)
