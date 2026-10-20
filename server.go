@@ -788,6 +788,13 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 		w.WriteHeader(captured.status)
 		_, _ = w.Write(body)
 
+		// Cancellation or shutdown may begin while the destination commits
+		// the buffered body. The response is already visible and cannot be
+		// replaced with an error, but it must not populate the shared cache.
+		if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) || r.Context().Err() != nil {
+			return
+		}
+
 		headers, ok := cacheableResponseHeaders(captured.responseHeaders())
 		if !ok {
 			return
