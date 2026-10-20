@@ -446,6 +446,9 @@ func (p *profileStore) Replace(profile userProfile) error {
 	if profile.Extra == nil {
 		profile.Extra = copyRawMessageMap(p.profile.Extra)
 	} else {
+		// Merge preserved metadata into an owned copy. The caller may reuse
+		// its map even when the disk write fails.
+		profile.Extra = copyRawMessageMap(profile.Extra)
 		for key, value := range p.profile.Extra {
 			if _, exists := profile.Extra[key]; !exists {
 				profile.Extra[key] = append(json.RawMessage(nil), value...)
