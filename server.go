@@ -517,6 +517,8 @@ type captureWriter struct {
 	destination  http.ResponseWriter
 	maxBodyBytes int64
 	streaming    bool
+	beforeStream func() error
+	aborted      error
 }
 
 func newCaptureWriter() *captureWriter {
@@ -579,12 +581,25 @@ func (w *captureWriter) WriteHeader(status int) {
 }
 
 func (w *captureWriter) Write(data []byte) (int, error) {
+	if w.aborted != nil {
+		return 0, w.aborted
+	}
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
 
 	if w.destination != nil && !w.streaming &&
 		int64(len(data)) > w.maxBodyBytes-int64(w.body.Len()) {
+		// Streaming commits directly to the client, bypassing the buffered
+		// response's post-backend lifecycle check. Reject a canceled request
+		// before committing any of its pending headers or body bytes.
+		if w.beforeStream != nil {
+			if err := w.beforeStream(); err != nil {
+				w.aborted = err
+				w.body.Reset()
+				return 0, err
+			}
+		}
 		forwardCapturedHeaders(w.destination.Header(), w.responseHeaders())
 		w.destination.WriteHeader(w.status)
 		w.streaming = true
@@ -736,8 +751,19 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 		}
 
 		captured := newStreamingCaptureWriter(w, a.cache.maxEntryBytes)
+		captured.beforeStream = func() error {
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return context.Canceled
+			}
+			if err := r.Context().Err(); err != nil {
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return err
+			}
+			return nil
+		}
 		next.ServeHTTP(captured, r)
-		if captured.streaming {
+		if captured.streaming || captured.aborted != nil {
 			return
 		}
 		// The backend may finish after the request was canceled or shutdown
