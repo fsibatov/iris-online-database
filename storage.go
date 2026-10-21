@@ -327,6 +327,11 @@ func loadProfileFile(path string) (userProfile, error) {
 	// The sanitizer discards recent views whose names exceed 160 Unicode
 	// characters after trimming. Do not let a lossy primary hide a backup.
 	for _, entry := range profile.RecentlyViewed {
+		entryType := strings.TrimSpace(entry.Type)
+		if (entryType != "item" && entryType != "recipe" && entryType != "monster" &&
+			entryType != "title" && entryType != "transformation") || entry.ID <= 0 || strings.TrimSpace(entry.Name) == "" {
+			return userProfile{}, errors.New("некорректная недавно просмотренная запись в профиле")
+		}
 		if len([]rune(strings.TrimSpace(entry.Name))) > 160 {
 			return userProfile{}, errors.New("слишком длинное название недавно просмотренной записи в профиле")
 		}
