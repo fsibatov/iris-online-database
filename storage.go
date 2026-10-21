@@ -268,6 +268,11 @@ func loadProfileFile(path string) (userProfile, error) {
 	if err := json.Unmarshal(data, &profile); err != nil {
 		return userProfile{}, err
 	}
+	// The writer retains at most 64 unknown fields. Reject a primary that
+	// would silently lose fields during sanitization and hide a valid backup.
+	if len(profile.Extra) > 64 {
+		return userProfile{}, errors.New("слишком много дополнительных полей профиля")
+	}
 	// The writer cannot persist extension values larger than 64 KiB.
 	// Reject such a primary instead of silently dropping its metadata and
 	// hiding the last readable backup during profile sanitization.
