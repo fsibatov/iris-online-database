@@ -734,6 +734,11 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 		if filepath.Clean(path) != path {
 			return pendingDeleteList{}, errors.New("pending-delete paths must be canonical")
 		}
+		// JSON can encode NUL, but no filesystem path can contain it.
+		// Reject this unusable primary so a valid backup remains recoverable.
+		if strings.IndexByte(path, 0) >= 0 {
+			return pendingDeleteList{}, errors.New("pending-delete paths must not contain NUL")
+		}
 	}
 	return list, nil
 }
