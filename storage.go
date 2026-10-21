@@ -290,6 +290,12 @@ func loadProfileFile(path string) (userProfile, error) {
 	if err := validateDiskSettingsCompleteness(data); err != nil {
 		return userProfile{}, err
 	}
+	// The writer retains at most eight recent views. A longer disk list
+	// would be silently truncated during sanitization and could conceal
+	// the last intact backup.
+	if len(profile.RecentlyViewed) > 8 {
+		return userProfile{}, errors.New("слишком много недавно просмотренных записей в профиле")
+	}
 	if profile.SchemaVersion <= 0 || profile.SchemaVersion > profileSchemaVersion {
 		return userProfile{}, errors.New("неподдерживаемая версия профиля")
 	}
