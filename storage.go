@@ -268,6 +268,14 @@ func loadProfileFile(path string) (userProfile, error) {
 	if err := json.Unmarshal(data, &profile); err != nil {
 		return userProfile{}, err
 	}
+	// The writer cannot persist extension values larger than 64 KiB.
+	// Reject such a primary instead of silently dropping its metadata and
+	// hiding the last readable backup during profile sanitization.
+	for key, value := range profile.Extra {
+		if len(value) > 64<<10 {
+			return userProfile{}, fmt.Errorf("слишком большое дополнительное поле профиля %q", key)
+		}
+	}
 	// The writer always persists all three preferences together. A partial
 	// on-disk settings object must not mask a complete backup; older profiles
 	// without a settings object are still supported.
