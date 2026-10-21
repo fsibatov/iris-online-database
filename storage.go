@@ -303,6 +303,13 @@ func loadProfileFile(path string) (userProfile, error) {
 	if len(profile.History) > 50 {
 		return userProfile{}, errors.New("слишком много записей истории в профиле")
 	}
+	// The writer discards history entries longer than 120 Unicode characters
+	// after trimming. Reject a lossy disk primary so backup can be restored.
+	for _, entry := range profile.History {
+		if len([]rune(strings.TrimSpace(entry))) > 120 {
+			return userProfile{}, errors.New("слишком длинная запись истории в профиле")
+		}
+	}
 	// The writer retains at most eight recent views. A longer disk list
 	// would be silently truncated during sanitization and could conceal
 	// the last intact backup.
