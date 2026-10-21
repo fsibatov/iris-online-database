@@ -316,6 +316,13 @@ func loadProfileFile(path string) (userProfile, error) {
 	if len(profile.RecentlyViewed) > 8 {
 		return userProfile{}, errors.New("слишком много недавно просмотренных записей в профиле")
 	}
+	// The sanitizer discards recent views whose names exceed 160 Unicode
+	// characters after trimming. Do not let a lossy primary hide a backup.
+	for _, entry := range profile.RecentlyViewed {
+		if len([]rune(strings.TrimSpace(entry.Name))) > 160 {
+			return userProfile{}, errors.New("слишком длинное название недавно просмотренной записи в профиле")
+		}
+	}
 	// sanitizeRecentViews truncates metadata beyond 240 Unicode characters.
 	// A lossy primary must not conceal a readable backup.
 	for _, entry := range profile.RecentlyViewed {
