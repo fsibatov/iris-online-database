@@ -304,6 +304,13 @@ func loadProfileFile(path string) (userProfile, error) {
 	if len(profile.RecentlyViewed) > 8 {
 		return userProfile{}, errors.New("слишком много недавно просмотренных записей в профиле")
 	}
+	// sanitizeRecentViews truncates metadata beyond 240 Unicode characters.
+	// A lossy primary must not conceal a readable backup.
+	for _, entry := range profile.RecentlyViewed {
+		if len([]rune(entry.Meta)) > 240 {
+			return userProfile{}, errors.New("слишком длинное описание недавно просмотренной записи в профиле")
+		}
+	}
 	if profile.SchemaVersion <= 0 || profile.SchemaVersion > profileSchemaVersion {
 		return userProfile{}, errors.New("неподдерживаемая версия профиля")
 	}
