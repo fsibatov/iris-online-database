@@ -268,10 +268,45 @@ func loadProfileFile(path string) (userProfile, error) {
 	if err := json.Unmarshal(data, &profile); err != nil {
 		return userProfile{}, err
 	}
+	// The writer always persists all three preferences together. A partial
+	// on-disk settings object must not mask a complete backup; older profiles
+	// without a settings object are still supported.
+	if err := validateDiskSettingsCompleteness(data); err != nil {
+		return userProfile{}, err
+	}
 	if profile.SchemaVersion <= 0 || profile.SchemaVersion > profileSchemaVersion {
 		return userProfile{}, errors.New("неподдерживаемая версия профиля")
 	}
 	return profile, nil
+}
+
+func validateDiskSettingsCompleteness(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for key, raw := range fields {
+		if !strings.EqualFold(key, "settings") {
+			continue
+		}
+		var settings map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &settings); err != nil {
+			return err
+		}
+		for _, required := range [...]string{"server", "theme", "view"} {
+			found := false
+			for name := range settings {
+				if strings.EqualFold(name, required) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("неполные настройки профиля: отсутствует %s", required)
+			}
+		}
+	}
+	return nil
 }
 
 func readLimitedFile(path string, maximum int64) ([]byte, error) {
