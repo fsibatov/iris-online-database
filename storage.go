@@ -956,7 +956,19 @@ func cleanupVersions(root string, keep int, currentExecutable string, logger int
 		}
 		versions = append(versions, versionEntry{path: path, mod: info.ModTime()})
 	}
-	sort.Slice(versions, func(i, j int) bool { return versions[i].mod.After(versions[j].mod) })
+	sort.Slice(versions, func(i, j int) bool {
+		if !versions[i].mod.Equal(versions[j].mod) {
+			return versions[i].mod.After(versions[j].mod)
+		}
+		// Timestamp resolution can make successive rollback directories
+		// indistinguishable. Prefer the higher version instead of evicting
+		// it according to ReadDir's lexical enumeration order.
+		left, right := filepath.Base(versions[i].path), filepath.Base(versions[j].path)
+		if cmp := compareVersions(left, right); cmp != 0 {
+			return cmp > 0
+		}
+		return left > right
+	})
 	for _, version := range versions[min(keep, len(versions)):] {
 		if err := safeRemoveAll(version.path, rootAbs, currentExecutable); err != nil {
 			failed = append(failed, version.path)
