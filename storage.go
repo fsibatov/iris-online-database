@@ -290,6 +290,11 @@ func loadProfileFile(path string) (userProfile, error) {
 	if err := validateDiskSettingsCompleteness(data); err != nil {
 		return userProfile{}, err
 	}
+	// A disk recent-view entry may come from a newer client. Unknown nested
+	// fields cannot survive the fixed-shape writer and must not mask backup.
+	if err := validateDiskRecentViewFields(data); err != nil {
+		return userProfile{}, err
+	}
 	// The writer retains at most 5000 favorites and 50 history entries.
 	// An oversized primary would silently lose saved entries and mask backup.
 	if len(profile.Favorites) > 5000 {
@@ -363,6 +368,32 @@ func validateDiskSettingsCompleteness(data []byte) error {
 		}
 		if decoded.View != "cards" && decoded.View != "list" {
 			return errors.New("некорректный режим отображения в профиле")
+		}
+	}
+	return nil
+}
+
+func validateDiskRecentViewFields(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for key, raw := range fields {
+		if !strings.EqualFold(key, "recentlyViewed") {
+			continue
+		}
+		var entries []map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return err
+		}
+		for index, entry := range entries {
+			for name := range entry {
+				if !strings.EqualFold(name, "type") && !strings.EqualFold(name, "id") &&
+					!strings.EqualFold(name, "name") && !strings.EqualFold(name, "meta") &&
+					!strings.EqualFold(name, "server") {
+					return fmt.Errorf("неизвестное поле недавно просмотренной записи %d: %q", index, name)
+				}
+			}
 		}
 	}
 	return nil
