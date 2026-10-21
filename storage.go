@@ -300,6 +300,14 @@ func loadProfileFile(path string) (userProfile, error) {
 	if len(profile.Favorites) > 5000 {
 		return userProfile{}, errors.New("слишком много избранных записей в профиле")
 	}
+	// Unknown favorite categories or malformed IDs are dropped by the writer.
+	// Reject a lossy disk primary so a valid backup can be recovered instead.
+	for _, entry := range profile.Favorites {
+		value := strings.TrimSpace(entry)
+		if len([]rune(value)) > 80 || !validFavoriteKey(value) {
+			return userProfile{}, fmt.Errorf("некорректная избранная запись в профиле %q", entry)
+		}
+	}
 	if len(profile.History) > 50 {
 		return userProfile{}, errors.New("слишком много записей истории в профиле")
 	}
@@ -443,26 +451,29 @@ func sanitizeProfile(profile userProfile) userProfile {
 
 	profile.ItemFilters = map[string]string{}
 	profile.MonsterFilters = map[string]string{}
-	profile.Favorites = sanitizeStringList(profile.Favorites, 5000, 80, func(value string) bool {
-		parts := strings.Split(value, ":")
-		if len(parts) != 2 || (parts[0] != "item" && parts[0] != "monster" && parts[0] != "title" && parts[0] != "transformation") {
-			return false
-		}
-		if parts[1] == "" || len(parts[1]) > 20 {
-			return false
-		}
-		for _, r := range parts[1] {
-			if r < '0' || r > '9' {
-				return false
-			}
-		}
-		return true
-	})
+	profile.Favorites = sanitizeStringList(profile.Favorites, 5000, 80, validFavoriteKey)
 	profile.History = sanitizeStringList(profile.History, 50, 120, func(value string) bool { return value != "" })
 	profile.RecentlyViewed = sanitizeRecentViews(profile.RecentlyViewed, 8)
 	profile.Extra = sanitizeProfileExtra(profile.Extra)
 	profile.UpdatedAt = time.Now().UTC()
 	return profile
+}
+
+// Keep the disk validator and the profile writer on the same favorite-key policy.
+func validFavoriteKey(value string) bool {
+	parts := strings.Split(value, ":")
+	if len(parts) != 2 || (parts[0] != "item" && parts[0] != "monster" && parts[0] != "title" && parts[0] != "transformation") {
+		return false
+	}
+	if parts[1] == "" || len(parts[1]) > 20 {
+		return false
+	}
+	for _, r := range parts[1] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func sanitizeRecentViews(values []recentViewEntry, maxCount int) []recentViewEntry {
