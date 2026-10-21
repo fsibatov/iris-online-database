@@ -955,8 +955,9 @@ func cleanupVersions(root string, keep int, currentExecutable string, logger int
 		return nil
 	}
 	type versionEntry struct {
-		path string
-		mod  time.Time
+		path    string
+		mod     time.Time
+		version string
 	}
 	versions := make([]versionEntry, 0, len(entries))
 	failed := make([]string, 0, 4)
@@ -970,7 +971,8 @@ func cleanupVersions(root string, keep int, currentExecutable string, logger int
 		}
 		// Only recognized version names are rollback candidates. A staging
 		// or metadata directory must not consume retention slots or be deleted.
-		if _, err := normalizeVersion(entry.Name()); err != nil {
+		version, err := normalizeVersion(entry.Name())
+		if err != nil {
 			continue
 		}
 		// The currently running version is protected from deletion, but it
@@ -978,7 +980,7 @@ func cleanupVersions(root string, keep int, currentExecutable string, logger int
 		if currentExecutable != "" && insideRoot(currentExecutable, path) {
 			continue
 		}
-		versions = append(versions, versionEntry{path: path, mod: info.ModTime()})
+		versions = append(versions, versionEntry{path: path, mod: info.ModTime(), version: version})
 	}
 	sort.Slice(versions, func(i, j int) bool {
 		if !versions[i].mod.Equal(versions[j].mod) {
@@ -993,7 +995,17 @@ func cleanupVersions(root string, keep int, currentExecutable string, logger int
 		}
 		return left > right
 	})
-	for _, version := range versions[min(keep, len(versions)):] {
+	// Aliases such as 3.0, v3.0 and 03.0 describe the same rollback
+	// version. Keep the newest directory for each distinct version; older
+	// aliases must not evict a different recoverable version.
+	retained := make(map[string]struct{}, min(max(keep, 0), len(versions)))
+	for _, version := range versions {
+		if len(retained) < keep {
+			if _, exists := retained[version.version]; !exists {
+				retained[version.version] = struct{}{}
+				continue
+			}
+		}
 		if err := safeRemoveAll(version.path, rootAbs, currentExecutable); err != nil {
 			failed = append(failed, version.path)
 		}
