@@ -290,6 +290,14 @@ func loadProfileFile(path string) (userProfile, error) {
 	if err := validateDiskSettingsCompleteness(data); err != nil {
 		return userProfile{}, err
 	}
+	// The writer retains at most 5000 favorites and 50 history entries.
+	// An oversized primary would silently lose saved entries and mask backup.
+	if len(profile.Favorites) > 5000 {
+		return userProfile{}, errors.New("слишком много избранных записей в профиле")
+	}
+	if len(profile.History) > 50 {
+		return userProfile{}, errors.New("слишком много записей истории в профиле")
+	}
 	// The writer retains at most eight recent views. A longer disk list
 	// would be silently truncated during sanitization and could conceal
 	// the last intact backup.
