@@ -422,8 +422,8 @@ func (p *profileStore) Get() userProfile {
 	copyProfile := p.profile
 	copyProfile.ItemFilters = copyStringMap(p.profile.ItemFilters)
 	copyProfile.MonsterFilters = copyStringMap(p.profile.MonsterFilters)
-	copyProfile.Favorites = append([]string(nil), p.profile.Favorites...)
-	copyProfile.History = append([]string(nil), p.profile.History...)
+	copyProfile.Favorites = append([]string{}, p.profile.Favorites...)
+	copyProfile.History = append([]string{}, p.profile.History...)
 	copyProfile.RecentlyViewed = append([]recentViewEntry{}, p.profile.RecentlyViewed...)
 	copyProfile.Extra = copyRawMessageMap(p.profile.Extra)
 	return copyProfile
@@ -468,8 +468,8 @@ func (p *profileStore) Flush() error {
 	profile := p.profile
 	profile.ItemFilters = copyStringMap(p.profile.ItemFilters)
 	profile.MonsterFilters = copyStringMap(p.profile.MonsterFilters)
-	profile.Favorites = append([]string(nil), p.profile.Favorites...)
-	profile.History = append([]string(nil), p.profile.History...)
+	profile.Favorites = append([]string{}, p.profile.Favorites...)
+	profile.History = append([]string{}, p.profile.History...)
 	profile.RecentlyViewed = append([]recentViewEntry{}, p.profile.RecentlyViewed...)
 	profile.Extra = copyRawMessageMap(p.profile.Extra)
 	p.mu.RUnlock()
