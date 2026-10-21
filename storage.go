@@ -723,8 +723,10 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 	}
 	var rawPaths json.RawMessage
 	for key, value := range fields {
+		// A future queue format may add safety constraints. Never execute
+		// paths while silently ignoring unknown envelope fields.
 		if !strings.EqualFold(key, "paths") {
-			continue
+			return pendingDeleteList{}, fmt.Errorf("unknown pending-delete field %q", key)
 		}
 		if rawPaths != nil {
 			return pendingDeleteList{}, errors.New("conflicting pending-delete paths fields")
