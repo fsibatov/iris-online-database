@@ -959,6 +959,11 @@ func cleanupVersions(root string, keep int, currentExecutable string, logger int
 		if _, err := normalizeVersion(entry.Name()); err != nil {
 			continue
 		}
+		// The currently running version is protected from deletion, but it
+		// must not consume a slot reserved for previous rollback versions.
+		if currentExecutable != "" && insideRoot(currentExecutable, path) {
+			continue
+		}
 		versions = append(versions, versionEntry{path: path, mod: info.ModTime()})
 	}
 	sort.Slice(versions, func(i, j int) bool {
