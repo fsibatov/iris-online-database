@@ -309,6 +309,13 @@ func validateDiskSettingsCompleteness(data []byte) error {
 		if err := json.Unmarshal(raw, &settings); err != nil {
 			return err
 		}
+		// Unknown nested settings cannot survive a rewrite through
+		// userSettings. Reject a lossy primary so its backup can be used.
+		for name := range settings {
+			if !strings.EqualFold(name, "server") && !strings.EqualFold(name, "theme") && !strings.EqualFold(name, "view") {
+				return fmt.Errorf("неизвестное поле настроек профиля %q", name)
+			}
+		}
 		for _, required := range [...]string{"server", "theme", "view"} {
 			found := false
 			for name := range settings {
