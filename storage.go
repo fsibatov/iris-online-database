@@ -277,6 +277,9 @@ func loadProfileFile(path string) (userProfile, error) {
 	// Reject such a primary instead of silently dropping its metadata and
 	// hiding the last readable backup during profile sanitization.
 	for key, value := range profile.Extra {
+		if len([]rune(key)) > 80 {
+			return userProfile{}, fmt.Errorf("слишком длинное имя дополнительного поля профиля %q", key)
+		}
 		if len(value) > 64<<10 {
 			return userProfile{}, fmt.Errorf("слишком большое дополнительное поле профиля %q", key)
 		}
