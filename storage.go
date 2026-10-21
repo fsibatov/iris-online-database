@@ -484,12 +484,16 @@ func atomicWriteJSON(path, backup string, value any) error {
 	if err != nil {
 		return err
 	}
-	// A successful save must produce a profile that loadProfileFile can read.
-	// Extra metadata may exceed the disk limit even after sanitization.
+	// Persist only payloads that their respective disk loaders can read.
+	// Profile extensions and large maintenance queues can exceed the limits.
 	switch value.(type) {
 	case userProfile, *userProfile:
 		if int64(len(data)) > maxProfileBytes {
 			return fmt.Errorf("профиль превышает допустимый размер %d байт", maxProfileBytes)
+		}
+	case pendingDeleteList, *pendingDeleteList:
+		if int64(len(data)) > maxPendingListBytes {
+			return fmt.Errorf("очередь отложенной очистки превышает допустимый размер %d байт", maxPendingListBytes)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
