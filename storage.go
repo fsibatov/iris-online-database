@@ -869,7 +869,9 @@ func cleanupVersions(root string, keep int, currentExecutable string, logger int
 	for _, entry := range entries {
 		path := filepath.Join(rootAbs, entry.Name())
 		info, err := os.Lstat(path)
-		if err != nil || fileInfoIsReparse(info) {
+		// Retention applies to version directories, not unrelated files.
+		// Counting loose files could evict valid rollback versions.
+		if err != nil || fileInfoIsReparse(info) || !info.IsDir() {
 			continue
 		}
 		versions = append(versions, versionEntry{path: path, mod: info.ModTime()})
