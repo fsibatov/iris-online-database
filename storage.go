@@ -954,6 +954,11 @@ func cleanupVersions(root string, keep int, currentExecutable string, logger int
 		if err != nil || fileInfoIsReparse(info) || !info.IsDir() {
 			continue
 		}
+		// Only recognized version names are rollback candidates. A staging
+		// or metadata directory must not consume retention slots or be deleted.
+		if _, err := normalizeVersion(entry.Name()); err != nil {
+			continue
+		}
 		versions = append(versions, versionEntry{path: path, mod: info.ModTime()})
 	}
 	sort.Slice(versions, func(i, j int) bool {
