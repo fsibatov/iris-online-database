@@ -209,7 +209,9 @@
   function routeHistoryState(index, route) {
     const current = window.history.state;
     const base = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
-    return { ...base, [ROUTE_HISTORY_STATE_KEY]: { index, route } };
+    // Drop selection belongs to the monster history entry, not its destination.
+    const { monsterDropView, ...otherState } = base;
+    return { ...otherState, [ROUTE_HISTORY_STATE_KEY]: { index, route } };
   }
 
   function currentRouteHistoryEntry() {
@@ -2011,6 +2013,58 @@
       </section>
     </section>`;
     positionSearchWidget(false);
+    restoreMonsterDropView(monster.id);
+  }
+
+  function rememberMonsterDropSelection(link) {
+    const page = main.querySelector('.detail-page[data-route^="monster/"]');
+    if (!page || !page.contains(link) || !link.closest('.drop-items, .drop-preview-list')) return;
+    const itemId = Number(link.getAttribute('href')?.match(/^#item\/(\d+)$/)?.[1]);
+    if (!Number.isSafeInteger(itemId) || itemId <= 0) return;
+    const dropView = {
+      route: page.dataset.route,
+      server: state.server,
+      itemId,
+      expanded: Boolean(page.querySelector('.lazy-monster-drops')?.open),
+      groups: [...page.querySelectorAll('[data-drop-group][open]')].map(group => ({
+        index: Number(group.dataset.dropGroup),
+        shown: state.monsterDrops?.groups?.[Number(group.dataset.dropGroup)]?.shown || 0,
+      })),
+      scrollY: window.scrollY,
+    };
+    window.history.replaceState({ ...window.history.state, monsterDropView: dropView }, '', location.href);
+  }
+
+  function restoreMonsterDropView(monsterId) {
+    const view = window.history.state?.monsterDropView;
+    if (view?.route !== `monster/${monsterId}` || view.server !== state.server) return;
+    const model = state.monsterDrops;
+    if (!model) return;
+    model.activeItemId = Number(view.itemId) || 0;
+    main.querySelectorAll('.drop-preview-list a').forEach(link => {
+      if (Number(link.getAttribute('href')?.match(/^#item\/(\d+)$/)?.[1]) === model.activeItemId) {
+        link.classList.add('is-active-drop');
+        link.setAttribute('aria-current', 'true');
+      }
+    });
+    if (!view.expanded) return;
+    const accordion = main.querySelector('.lazy-monster-drops');
+    if (!accordion) return;
+    accordion.open = true;
+    renderMonsterDropShell();
+    (Array.isArray(view.groups) ? view.groups : []).forEach(saved => {
+      const index = Number(saved.index);
+      const group = model.groups[index];
+      const details = main.querySelector(`[data-drop-group="${index}"]`);
+      if (!group || !details) return;
+      group.shown = Math.min((group.choice.items || []).length, Math.max(0, Number(saved.shown) || 0));
+      details.open = true;
+      renderMonsterDropGroup(index, false, true);
+    });
+    requestAnimationFrame(() => {
+      if (state.route === view.route && state.server === view.server)
+        window.scrollTo({ top: Math.max(0, Number(view.scrollY) || 0), behavior: 'instant' });
+    });
   }
 
   function topMonsterDrops(slots, limit) {
@@ -2052,12 +2106,13 @@
     model.shellRendered = true;
   }
 
-  function renderMonsterDropGroup(groupIndex, showAll = false) {
+  function renderMonsterDropGroup(groupIndex, showAll = false, preserveShown = false) {
     const group = state.monsterDrops?.groups?.[groupIndex];
     const host = main.querySelector(`[data-drop-group-host="${groupIndex}"]`);
     if (!group || !host) return;
     const items = group.choice.items || [];
-    if (showAll) group.shown = items.length;
+    if (preserveShown) group.shown = Math.min(items.length, group.shown);
+    else if (showAll) group.shown = items.length;
     else if (!group.rendered) group.shown = Math.min(DROP_BATCH, items.length);
     else group.shown = Math.min(items.length, group.shown + DROP_BATCH);
     group.rendered = true;
@@ -2065,7 +2120,10 @@
       host.innerHTML = '<p class="empty-copy">Состав группы не найден.</p>';
       return;
     }
-    const rows = items.slice(0, group.shown).map(item => `<a href="#item/${item.itemId}"><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`).join('');
+    const rows = items.slice(0, group.shown).map(item => {
+      const selected = Number(item.itemId) === state.monsterDrops.activeItemId;
+      return `<a href="#item/${item.itemId}"${selected ? ' class="is-active-drop" aria-current="true"' : ''}><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`;
+    }).join('');
     const remaining = items.length - group.shown;
     host.innerHTML = `${rows}<div class="lazy-list-status" aria-live="polite">Показано ${formatNumber(group.shown)} из ${formatNumber(items.length)}</div>${remaining > 0 ? `<div class="lazy-list-actions"><button class="secondary-button" type="button" data-drop-more="${groupIndex}">Показать ещё ${formatNumber(Math.min(DROP_BATCH, remaining))}</button><button class="text-button" type="button" data-drop-all="${groupIndex}">Показать всё</button></div>` : ''}`;
   }
@@ -2798,7 +2856,8 @@
     const details = event.target;
     if (!(details instanceof HTMLDetailsElement) || !details.open) return;
     if (details.matches('.lazy-monster-drops')) renderMonsterDropShell();
-    if (details.matches('[data-drop-group]')) renderMonsterDropGroup(Number(details.dataset.dropGroup));
+    if (details.matches('[data-drop-group]') && !state.monsterDrops?.groups?.[Number(details.dataset.dropGroup)]?.rendered)
+      renderMonsterDropGroup(Number(details.dataset.dropGroup));
   }, true);
 
   main.addEventListener('input', event => {
@@ -2949,9 +3008,13 @@
       return;
     }
     const internalLink = event.target.closest('a[href^="#"]');
-    if (internalLink && navigateToRoute(internalLink.getAttribute('href'))) {
-      event.preventDefault();
-      return;
+    if (internalLink) {
+      const route = internalLink.getAttribute('href');
+      if (isInternalAppRoute(normalizeRouteValue(route))) rememberMonsterDropSelection(internalLink);
+      if (navigateToRoute(route)) {
+        event.preventDefault();
+        return;
+      }
     }
     if (!event.target.closest('.search-combobox')) closeSuggestions();
     if (!moreMenu.hidden && !event.target.closest('#moreMenu') && !event.target.closest('#moreButton')) closeMoreMenu();
