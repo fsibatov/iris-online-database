@@ -305,6 +305,21 @@ func validateDiskSettingsCompleteness(data []byte) error {
 				return fmt.Errorf("неполные настройки профиля: отсутствует %s", required)
 			}
 		}
+		// The disk writer stores only these canonical preference values.
+		// Invalid values in a primary must not conceal a valid backup.
+		var decoded userSettings
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return err
+		}
+		if decoded.Server != "kiss" && decoded.Server != "original" {
+			return errors.New("некорректный сервер в профиле")
+		}
+		if decoded.Theme != "dark" && decoded.Theme != "light" {
+			return errors.New("некорректная тема в профиле")
+		}
+		if decoded.View != "cards" && decoded.View != "list" {
+			return errors.New("некорректный режим отображения в профиле")
+		}
 	}
 	return nil
 }
