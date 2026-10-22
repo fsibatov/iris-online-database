@@ -924,6 +924,11 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 		if strings.IndexFunc(candidate, func(r rune) bool { return r < 0x20 }) >= 0 {
 			return pendingDeleteList{}, errors.New("pending-delete paths must not contain control characters")
 		}
+		// Win32 cannot open filenames containing these characters. Exclude
+		// the drive prefix (C:) but reject invalid names in all components.
+		if strings.ContainsAny(candidate[len(filepath.VolumeName(candidate)):], `<>:"|?*`) {
+			return pendingDeleteList{}, errors.New("pending-delete paths contain reserved Windows characters")
+		}
 		key := pendingDeletePathKey(candidate)
 		if _, duplicate := seenPaths[key]; duplicate {
 			return pendingDeleteList{}, errors.New("pending-delete paths must be unique")
