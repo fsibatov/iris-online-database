@@ -367,10 +367,11 @@ func loadProfileFile(path string) (userProfile, error) {
 			return userProfile{}, errors.New("слишком длинное название недавно просмотренной записи в профиле")
 		}
 	}
-	// sanitizeRecentViews truncates metadata beyond 240 Unicode characters.
-	// A lossy primary must not conceal a readable backup.
+	// sanitizeRecentViews trims metadata before enforcing its 240-rune
+	// limit. Apply that same order so a lossless primary is not rejected
+	// in favor of a stale backup, while truly oversized data still falls back.
 	for _, entry := range profile.RecentlyViewed {
-		if len([]rune(entry.Meta)) > 240 {
+		if len([]rune(strings.TrimSpace(entry.Meta))) > 240 {
 			return userProfile{}, errors.New("слишком длинное описание недавно просмотренной записи в профиле")
 		}
 	}
