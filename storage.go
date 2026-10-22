@@ -321,6 +321,11 @@ func loadProfileFile(path string) (userProfile, error) {
 	seenHistory := make(map[string]struct{}, len(profile.History))
 	for _, entry := range profile.History {
 		value := strings.TrimSpace(entry)
+		// Empty, whitespace-only and JSON null entries are discarded by the
+		// writer. Reject a lossy primary so a valid backup remains recoverable.
+		if value == "" {
+			return userProfile{}, errors.New("пустая запись истории в профиле")
+		}
 		if len([]rune(value)) > 120 {
 			return userProfile{}, errors.New("слишком длинная запись истории в профиле")
 		}
