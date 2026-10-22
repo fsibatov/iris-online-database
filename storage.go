@@ -463,6 +463,17 @@ func validateDiskRecentViewFields(data []byte) error {
 				}
 				seen[canonical] = name
 			}
+			if typeField, exists := seen["type"]; exists {
+				var entryType string
+				if err := json.Unmarshal(entry[typeField], &entryType); err != nil {
+					return err
+				}
+				if strings.TrimSpace(entryType) == "monster" {
+					if serverField, exists := seen["server"]; exists && bytes.Equal(bytes.TrimSpace(entry[serverField]), []byte("null")) {
+						return fmt.Errorf("null server for recently viewed monster %d", index)
+					}
+				}
+			}
 		}
 	}
 	return nil
