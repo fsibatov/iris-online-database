@@ -332,6 +332,12 @@ func loadProfileFile(path string) (userProfile, error) {
 			entryType != "title" && entryType != "transformation") || entry.ID <= 0 || strings.TrimSpace(entry.Name) == "" {
 			return userProfile{}, errors.New("некорректная недавно просмотренная запись в профиле")
 		}
+		if entryType == "monster" {
+			server := normalizeServerDataKey(entry.Server)
+			if server != "" && server != "kiss" && server != "original" {
+				return userProfile{}, errors.New("некорректный сервер недавно просмотренного монстра в профиле")
+			}
+		}
 		if len([]rune(strings.TrimSpace(entry.Name))) > 160 {
 			return userProfile{}, errors.New("слишком длинное название недавно просмотренной записи в профиле")
 		}
