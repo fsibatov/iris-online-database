@@ -324,6 +324,9 @@ func loadProfileFile(path string) (userProfile, error) {
 	if len(profile.RecentlyViewed) > 8 {
 		return userProfile{}, errors.New("слишком много недавно просмотренных записей в профиле")
 	}
+	// The writer deduplicates recent views by type, ID and normalized monster
+	// server. Reject duplicate disk identities rather than hiding a valid backup.
+	seenRecentViews := make(map[string]struct{}, len(profile.RecentlyViewed))
 	// The sanitizer discards recent views whose names exceed 160 Unicode
 	// characters after trimming. Do not let a lossy primary hide a backup.
 	for _, entry := range profile.RecentlyViewed {
@@ -332,12 +335,18 @@ func loadProfileFile(path string) (userProfile, error) {
 			entryType != "title" && entryType != "transformation") || entry.ID <= 0 || strings.TrimSpace(entry.Name) == "" {
 			return userProfile{}, errors.New("некорректная недавно просмотренная запись в профиле")
 		}
+		server := ""
 		if entryType == "monster" {
-			server := normalizeServerDataKey(entry.Server)
+			server = normalizeServerDataKey(entry.Server)
 			if server != "" && server != "kiss" && server != "original" {
 				return userProfile{}, errors.New("некорректный сервер недавно просмотренного монстра в профиле")
 			}
 		}
+		key := fmt.Sprintf("%s:%d:%s", entryType, entry.ID, server)
+		if _, exists := seenRecentViews[key]; exists {
+			return userProfile{}, errors.New("повторяющаяся недавно просмотренная запись в профиле")
+		}
+		seenRecentViews[key] = struct{}{}
 		if len([]rune(strings.TrimSpace(entry.Name))) > 160 {
 			return userProfile{}, errors.New("слишком длинное название недавно просмотренной записи в профиле")
 		}
