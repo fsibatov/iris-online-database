@@ -463,6 +463,9 @@ func validateDiskRecentViewFields(data []byte) error {
 				}
 				seen[canonical] = name
 			}
+			if metaField, exists := seen["meta"]; exists && bytes.Equal(bytes.TrimSpace(entry[metaField]), []byte("null")) {
+				return fmt.Errorf("null metadata for recently viewed entry %d", index)
+			}
 			if typeField, exists := seen["type"]; exists {
 				var entryType string
 				if err := json.Unmarshal(entry[typeField], &entryType); err != nil {
