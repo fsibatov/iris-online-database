@@ -445,12 +445,22 @@ func validateDiskRecentViewFields(data []byte) error {
 			return err
 		}
 		for index, entry := range entries {
+			seen := make(map[string]string, len(entry))
 			for name := range entry {
-				if !strings.EqualFold(name, "type") && !strings.EqualFold(name, "id") &&
-					!strings.EqualFold(name, "name") && !strings.EqualFold(name, "meta") &&
-					!strings.EqualFold(name, "server") {
+				canonical := ""
+				for _, allowed := range [...]string{"type", "id", "name", "meta", "server"} {
+					if strings.EqualFold(name, allowed) {
+						canonical = allowed
+						break
+					}
+				}
+				if canonical == "" {
 					return fmt.Errorf("неизвестное поле недавно просмотренной записи %d: %q", index, name)
 				}
+				if previous, duplicate := seen[canonical]; duplicate {
+					return fmt.Errorf("повторяющиеся поля недавно просмотренной записи %d: %q и %q", index, previous, name)
+				}
+				seen[canonical] = name
 			}
 		}
 	}
