@@ -300,23 +300,34 @@ func loadProfileFile(path string) (userProfile, error) {
 	if len(profile.Favorites) > 5000 {
 		return userProfile{}, errors.New("слишком много избранных записей в профиле")
 	}
-	// Unknown favorite categories or malformed IDs are dropped by the writer.
-	// Reject a lossy disk primary so a valid backup can be recovered instead.
+	// Unknown keys and repeated favorites are dropped by the writer. Reject
+	// lossy disk lists before they can conceal the last valid backup.
+	seenFavorites := make(map[string]struct{}, len(profile.Favorites))
 	for _, entry := range profile.Favorites {
 		value := strings.TrimSpace(entry)
 		if len([]rune(value)) > 80 || !validFavoriteKey(value) {
 			return userProfile{}, fmt.Errorf("некорректная избранная запись в профиле %q", entry)
 		}
+		if _, duplicate := seenFavorites[value]; duplicate {
+			return userProfile{}, errors.New("повторяющаяся избранная запись в профиле")
+		}
+		seenFavorites[value] = struct{}{}
 	}
 	if len(profile.History) > 50 {
 		return userProfile{}, errors.New("слишком много записей истории в профиле")
 	}
-	// The writer discards history entries longer than 120 Unicode characters
-	// after trimming. Reject a lossy disk primary so backup can be restored.
+	// The writer discards long or repeated history entries after trimming.
+	// A lossy disk primary must not conceal a valid backup.
+	seenHistory := make(map[string]struct{}, len(profile.History))
 	for _, entry := range profile.History {
-		if len([]rune(strings.TrimSpace(entry))) > 120 {
+		value := strings.TrimSpace(entry)
+		if len([]rune(value)) > 120 {
 			return userProfile{}, errors.New("слишком длинная запись истории в профиле")
 		}
+		if _, duplicate := seenHistory[value]; duplicate {
+			return userProfile{}, errors.New("повторяющаяся запись истории в профиле")
+		}
+		seenHistory[value] = struct{}{}
 	}
 	// The writer retains at most eight recent views. A longer disk list
 	// would be silently truncated during sanitization and could conceal
