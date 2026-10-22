@@ -869,32 +869,37 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 	// makes this primary unusable: accepting it would hide a valid backup
 	// and silently discard pending deletions.
 	seenPaths := make(map[string]struct{}, len(list.Paths))
-	for _, path := range list.Paths {
-		if strings.TrimSpace(path) == "" {
+	for _, candidate := range list.Paths {
+		// The queue and its backup are maintenance metadata, never cleanup
+		// targets. A self-referential primary must not mask a valid backup.
+		if sameFilePath(candidate, path) || sameFilePath(candidate, path+".bak") {
+			return pendingDeleteList{}, errors.New("pending-delete paths must not reference queue metadata")
+		}
+		if strings.TrimSpace(candidate) == "" {
 			return pendingDeleteList{}, errors.New("pending-delete paths must not contain blank entries")
 		}
 		// appendPendingDeletes stores absolute paths only. A relative entry
 		// cannot be safely replayed and must not hide a valid backup queue.
-		if !filepath.IsAbs(path) {
+		if !filepath.IsAbs(candidate) {
 			return pendingDeleteList{}, errors.New("pending-delete paths must be absolute")
 		}
 		// The maintenance writer persists cleaned paths. A non-canonical
 		// primary may mask the last valid backup even though its entries
 		// cannot be safely replayed as written.
-		if filepath.Clean(path) != path {
+		if filepath.Clean(candidate) != candidate {
 			return pendingDeleteList{}, errors.New("pending-delete paths must be canonical")
 		}
 		// JSON can encode NUL, but no filesystem path can contain it.
 		// Reject this unusable primary so a valid backup remains recoverable.
-		if strings.IndexByte(path, 0) >= 0 {
+		if strings.IndexByte(candidate, 0) >= 0 {
 			return pendingDeleteList{}, errors.New("pending-delete paths must not contain NUL")
 		}
 		// The queue writer deduplicates canonical paths. A repeated path
 		// can mask an intact backup and schedule the same deletion twice.
-		if _, duplicate := seenPaths[path]; duplicate {
+		if _, duplicate := seenPaths[candidate]; duplicate {
 			return pendingDeleteList{}, errors.New("pending-delete paths must be unique")
 		}
-		seenPaths[path] = struct{}{}
+		seenPaths[candidate] = struct{}{}
 	}
 	return list, nil
 }
