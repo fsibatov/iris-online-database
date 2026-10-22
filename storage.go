@@ -919,10 +919,10 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 		if filepath.Clean(candidate) != candidate {
 			return pendingDeleteList{}, errors.New("pending-delete paths must be canonical")
 		}
-		// JSON can encode NUL, but no filesystem path can contain it.
-		// Reject this unusable primary so a valid backup remains recoverable.
-		if strings.IndexByte(candidate, 0) >= 0 {
-			return pendingDeleteList{}, errors.New("pending-delete paths must not contain NUL")
+		// Windows filenames cannot contain ASCII control characters (including
+		// NUL). Reject unusable primary paths so a valid backup can recover.
+		if strings.IndexFunc(candidate, func(r rune) bool { return r < 0x20 }) >= 0 {
+			return pendingDeleteList{}, errors.New("pending-delete paths must not contain control characters")
 		}
 		key := pendingDeletePathKey(candidate)
 		if _, duplicate := seenPaths[key]; duplicate {
