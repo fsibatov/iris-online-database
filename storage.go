@@ -856,6 +856,28 @@ func pendingDeletePathKey(path string) string {
 	return key.String()
 }
 
+// Win32 device names remain reserved even with an extension and when used
+// as a component of a longer path. A queue containing one cannot be replayed.
+func windowsReservedDeviceComponent(component string) bool {
+	stem, _, _ := strings.Cut(component, ".")
+	stem = strings.ToUpper(stem)
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL":
+		return true
+	}
+	if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) {
+		return stem[3] >= '1' && stem[3] <= '9'
+	}
+	for _, prefix := range [...]string{"COM", "LPT"} {
+		for _, suffix := range [...]string{"¹", "²", "³"} {
+			if stem == prefix+suffix {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 	if !safeOwnedFilePath(path) {
 		return pendingDeleteList{}, errUnsafeDestructivePath
@@ -932,6 +954,9 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 		for _, component := range strings.Split(candidate[len(filepath.VolumeName(candidate)):], string(filepath.Separator)) {
 			if strings.HasSuffix(component, ".") || strings.HasSuffix(component, " ") {
 				return pendingDeleteList{}, errors.New("pending-delete paths contain Windows-trimmed components")
+			}
+			if windowsReservedDeviceComponent(component) {
+				return pendingDeleteList{}, errors.New("pending-delete paths contain reserved Windows device names")
 			}
 		}
 		key := pendingDeletePathKey(candidate)
