@@ -860,6 +860,9 @@ func pendingDeletePathKey(path string) string {
 // as a component of a longer path. A queue containing one cannot be replayed.
 func windowsReservedDeviceComponent(component string) bool {
 	stem, _, _ := strings.Cut(component, ".")
+	// Win32 also resolves a DOS device alias when ASCII spaces precede the
+	// first extension separator (for example, "CON .txt").
+	stem = strings.TrimRight(stem, " ")
 	stem = strings.ToUpper(stem)
 	switch stem {
 	case "CON", "PRN", "AUX", "NUL":
