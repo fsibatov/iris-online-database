@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 const (
@@ -840,6 +841,21 @@ type pendingDeleteList struct {
 	Paths []string `json:"paths"`
 }
 
+func pendingDeletePathKey(path string) string {
+	var key strings.Builder
+	key.Grow(len(path))
+	for _, r := range path {
+		canonical := r
+		for folded := unicode.SimpleFold(r); folded != r; folded = unicode.SimpleFold(folded) {
+			if folded < canonical {
+				canonical = folded
+			}
+		}
+		key.WriteRune(canonical)
+	}
+	return key.String()
+}
+
 func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 	if !safeOwnedFilePath(path) {
 		return pendingDeleteList{}, errUnsafeDestructivePath
@@ -908,12 +924,11 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 		if strings.IndexByte(candidate, 0) >= 0 {
 			return pendingDeleteList{}, errors.New("pending-delete paths must not contain NUL")
 		}
-		// The queue writer deduplicates canonical paths. A repeated path
-		// can mask an intact backup and schedule the same deletion twice.
-		if _, duplicate := seenPaths[candidate]; duplicate {
+		key := pendingDeletePathKey(candidate)
+		if _, duplicate := seenPaths[key]; duplicate {
 			return pendingDeleteList{}, errors.New("pending-delete paths must be unique")
 		}
-		seenPaths[candidate] = struct{}{}
+		seenPaths[key] = struct{}{}
 	}
 	return list, nil
 }
@@ -984,10 +999,11 @@ func appendPendingDeletes(listPath string, paths []string, allowedRoots []string
 		if !ok {
 			continue
 		}
-		if _, exists := seen[absolute]; exists {
+		key := pendingDeletePathKey(absolute)
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[absolute] = struct{}{}
+		seen[key] = struct{}{}
 		filtered = append(filtered, absolute)
 	}
 	if len(filtered) == 0 {
