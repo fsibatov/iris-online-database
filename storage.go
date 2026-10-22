@@ -929,6 +929,11 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 		if strings.ContainsAny(candidate[len(filepath.VolumeName(candidate)):], `<>:"|?*`) {
 			return pendingDeleteList{}, errors.New("pending-delete paths contain reserved Windows characters")
 		}
+		for _, component := range strings.Split(candidate[len(filepath.VolumeName(candidate)):], string(filepath.Separator)) {
+			if strings.HasSuffix(component, ".") || strings.HasSuffix(component, " ") {
+				return pendingDeleteList{}, errors.New("pending-delete paths contain Windows-trimmed components")
+			}
+		}
 		key := pendingDeletePathKey(candidate)
 		if _, duplicate := seenPaths[key]; duplicate {
 			return pendingDeleteList{}, errors.New("pending-delete paths must be unique")
