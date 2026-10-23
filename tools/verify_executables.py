@@ -39,13 +39,21 @@ def expected_metadata_markers(goarch: str) -> tuple[tuple[str, str], ...]:
 
 
 def missing_metadata_categories(metadata: str, goarch: str = "amd64") -> list[str]:
-    records = [line.strip().split("\t") for line in metadata.splitlines()]
+    records = [line.lstrip(" \t").split("\t") for line in metadata.splitlines()]
     missing = []
     for category, marker in expected_metadata_markers(goarch):
         if category == "WAILS_VERSION":
             expected = ["dep", *marker.split("\t")]
             present = any(
-                record[:3] == expected and len(record) in {3, 4}
+                record[:3] == expected
+                and (
+                    len(record) == 3
+                    or (
+                        len(record) == 4
+                        and re.fullmatch(r"h1:[A-Za-z0-9+/=]+", record[3])
+                        is not None
+                    )
+                )
                 for record in records
             )
         else:

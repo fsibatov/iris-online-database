@@ -239,6 +239,25 @@ class ReleaseHelperTests(unittest.TestCase):
             "substring matches must not satisfy Go build metadata requirements",
         )
 
+    def test_release_metadata_rejects_trailing_whitespace(self):
+        markers = dict(expected_metadata_markers("amd64"))
+        legitimate = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in markers.items()
+        )
+        self.assertEqual(missing_metadata_categories(legitimate), [])
+        with self.subTest("trailing space in build value"):
+            forged = legitimate.replace("GOOS=windows", "GOOS=windows ")
+            self.assertEqual(missing_metadata_categories(forged), ["TARGET_OS"])
+        with self.subTest("trailing tab in build record"):
+            forged = legitimate.replace("GOOS=windows", "GOOS=windows\t")
+            self.assertEqual(missing_metadata_categories(forged), ["TARGET_OS"])
+        with self.subTest("empty dependency checksum"):
+            forged = legitimate.replace(
+                markers["WAILS_VERSION"], markers["WAILS_VERSION"] + "\t"
+            )
+            self.assertEqual(missing_metadata_categories(forged), ["WAILS_VERSION"])
+
     def test_release_metadata_matrix_has_exact_architecture_markers(self):
         expected_levels = {
             "amd64": "GOAMD64=v1",
