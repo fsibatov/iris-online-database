@@ -754,6 +754,40 @@ class ReleaseHelperTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 verify_release_assets(directory, "2.0.0")
 
+    def test_release_assets_reject_symlinked_entries(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory(prefix="iris-release-symlink-") as temporary:
+            root = Path(temporary)
+            directory = root / "staging"
+            directory.mkdir()
+            names = expected_asset_names("2.0.0")[:-1]
+            manifest = []
+            for index, name in enumerate(names, start=1):
+                payload = b"MZ" + bytes([index])
+                (directory / name).write_bytes(payload)
+                manifest.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+            (directory / "SHA256SUMS.txt").write_text(
+                "\n".join(manifest) + "\n", encoding="ascii"
+            )
+            verify_release_assets(directory, "2.0.0")
+            for index, name in enumerate((*names, "SHA256SUMS.txt")):
+                with self.subTest(name=name):
+                    original = directory / name
+                    outside = root / f"outside-{index}"
+                    original.rename(outside)
+                    try:
+                        original.symlink_to(outside)
+                    except (OSError, NotImplementedError) as error:
+                        outside.rename(original)
+                        self.skipTest(f"Symlinks unavailable: {error}")
+                    try:
+                        with self.assertRaises(SystemExit):
+                            verify_release_assets(directory, "2.0.0")
+                    finally:
+                        original.unlink()
+                        outside.rename(original)
+
     def test_release_uses_explicit_gpg_identity_and_signed_tag_verification(self):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
             encoding="utf-8"

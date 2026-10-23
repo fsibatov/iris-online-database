@@ -33,6 +33,11 @@ def verify_release_assets(directory: Path, version: str) -> None:
             categories.append(f"extra={len(extra)}")
         raise SystemExit("release asset set mismatch (" + ",".join(categories) + ")")
 
+    for name in expected:
+        path = directory / name
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit(f"release asset must be a regular file: {name}")
+
     executable_names = [target.filename(version) for target in RELEASE_TARGETS]
     for name in executable_names:
         path = directory / name
