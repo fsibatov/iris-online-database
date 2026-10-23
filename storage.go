@@ -260,6 +260,11 @@ func loadProfileFile(path string) (userProfile, error) {
 	if err != nil {
 		return userProfile{}, err
 	}
+	// encoding/json silently replaces malformed UTF-8 with U+FFFD. Reject
+	// damaged profile bytes so the last valid backup remains recoverable.
+	if !utf8.Valid(data) {
+		return userProfile{}, errors.New("profile JSON contains invalid UTF-8")
+	}
 	// Apply the same duplicate-key policy to disk as to API requests. A
 	// malformed primary profile must not silently override preferences or
 	// prevent recovery from the last valid backup.
