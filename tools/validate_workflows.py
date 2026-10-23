@@ -116,7 +116,11 @@ def windows_only_workflow_failures(document: dict[object, object], _text: str) -
         return 1
 
     def is_posix_shell(value: object) -> bool:
-        return isinstance(value, str) and value.strip().lower() in POSIX_SHELL
+        if not isinstance(value, str):
+            return False
+        # GitHub Actions accepts custom shell templates, e.g. `bash -e {0}`.
+        command = value.strip().split(maxsplit=1)
+        return bool(command) and command[0].lower().removesuffix(".exe") in POSIX_SHELL
 
     failures = 0
     for scope in (document, *jobs.values()):

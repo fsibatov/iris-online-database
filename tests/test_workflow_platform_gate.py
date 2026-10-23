@@ -193,3 +193,73 @@ class WorkflowPlatformGateTests(TestCase):
                     ):
                         result = workflow.main()
                     self.assertEqual(result, expected, output.getvalue())
+
+    def test_custom_posix_shell_command_cannot_bypass_windows_gate(self):
+        """GitHub Actions accepts shell command templates, not just shell names."""
+        with TemporaryDirectory(prefix="iris-custom-shell-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            fixture = workflows / "probe.yml"
+            for shell, expected in (
+                ("bash -e {0}", 1),
+                ("sh -e {0}", 1),
+                ("bash --noprofile --norc -eo pipefail {0}", 1),
+                ("bash.exe -e {0}", 1),
+                ("pwsh -File {0}", 2),
+                ("powershell -File {0}", 2),
+            ):
+                with self.subTest(shell=shell):
+                    fixture.write_text(
+                        "name: Custom shell fixture\n"
+                        "jobs:\n"
+                        "  build:\n"
+                        "    runs-on: windows-2025\n"
+                        f"    steps: [{{shell: '{shell}', run: 'echo hello'}}]\n",
+                        encoding="utf-8",
+                    )
+                    output = StringIO()
+                    with (
+                        patch.object(workflow, "ROOT", root),
+                        patch.object(workflow, "release_policy_failures", return_value=0),
+                        patch.object(
+                            workflow, "windows_powershell_executable", return_value=None
+                        ),
+                        redirect_stdout(output),
+                    ):
+                        result = workflow.main()
+                    self.assertEqual(result, expected, output.getvalue())
+
+    def test_custom_posix_shell_defaults_cannot_bypass_windows_gate(self):
+        with TemporaryDirectory(prefix="iris-custom-shell-defaults-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            fixture = workflows / "probe.yml"
+            for defaults in (
+                "defaults: {run: {shell: 'bash -e {0}'}}\n",
+                "jobs:\n  build:\n    defaults: {run: {shell: 'sh -e {0}'}}\n",
+            ):
+                with self.subTest(defaults=defaults):
+                    if defaults.startswith("jobs:"):
+                        content = (
+                            "name: Defaults fixture\n" + defaults
+                            + "    runs-on: windows-2025\n"
+                            + "    steps: [{run: 'echo hello'}]\n"
+                        )
+                    else:
+                        content = (
+                            "name: Defaults fixture\n" + defaults
+                            + "jobs:\n  build:\n    runs-on: windows-2025\n"
+                            + "    steps: [{run: 'echo hello'}]\n"
+                        )
+                    fixture.write_text(content, encoding="utf-8")
+                    output = StringIO()
+                    with (
+                        patch.object(workflow, "ROOT", root),
+                        patch.object(workflow, "release_policy_failures", return_value=0),
+                        patch.object(workflow, "windows_powershell_executable", return_value=None),
+                        redirect_stdout(output),
+                    ):
+                        result = workflow.main()
+                    self.assertEqual(result, 1, output.getvalue())
