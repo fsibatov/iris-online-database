@@ -22,7 +22,7 @@ def verify_release_assets(directory: Path, version: str) -> None:
         raise SystemExit("release asset directory is missing")
 
     expected = set(expected_asset_names(version))
-    actual = {entry.name for entry in directory.iterdir() if entry.is_file()}
+    actual = {entry.name for entry in directory.iterdir()}
     if actual != expected:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)

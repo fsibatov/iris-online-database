@@ -735,6 +735,25 @@ class ReleaseHelperTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 verify_release_assets(directory, "2.0.0")
 
+    def test_release_assets_reject_unexpected_directory_entries(self):
+        # A release staging directory must contain only the four approved files.
+        import hashlib
+
+        with tempfile.TemporaryDirectory(prefix="iris-release-dir-entries-") as temporary:
+            directory = Path(temporary)
+            manifest = []
+            for index, name in enumerate(expected_asset_names("2.0.0")[:-1], 1):
+                payload = b"MZ" + bytes([index])
+                (directory / name).write_bytes(payload)
+                manifest.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+            (directory / "SHA256SUMS.txt").write_text(
+                "\n".join(manifest) + "\n", encoding="ascii"
+            )
+            verify_release_assets(directory, "2.0.0")
+            (directory / "staging").mkdir()
+            with self.assertRaises(SystemExit):
+                verify_release_assets(directory, "2.0.0")
+
     def test_release_uses_explicit_gpg_identity_and_signed_tag_verification(self):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
             encoding="utf-8"
