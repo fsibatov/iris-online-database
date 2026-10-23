@@ -871,7 +871,7 @@ func windowsReservedDeviceComponent(component string) bool {
 	stem = strings.TrimRight(stem, " ")
 	stem = strings.ToUpper(stem)
 	switch stem {
-	case "CON", "PRN", "AUX", "NUL":
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
 		return true
 	}
 	if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) {
