@@ -92,11 +92,16 @@ def unpinned_action_failures(document: dict[object, object]) -> int:
         references = []
         if "uses" in job:
             references.append(job["uses"])
-        steps = job.get("steps")
-        if isinstance(steps, list):
-            for step in steps:
-                if isinstance(step, dict) and "uses" in step:
-                    references.append(step["uses"])
+        if "steps" in job:
+            steps = job["steps"]
+            if not isinstance(steps, list):
+                failures += 1
+            else:
+                for step in steps:
+                    if not isinstance(step, dict):
+                        failures += 1
+                    elif "uses" in step:
+                        references.append(step["uses"])
         for reference in references:
             if not isinstance(reference, str) or not (
                 ACTION_SHA.fullmatch(reference) or LOCAL_ACTION.fullmatch(reference)

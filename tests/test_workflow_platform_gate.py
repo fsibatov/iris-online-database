@@ -120,3 +120,38 @@ class WorkflowPlatformGateTests(TestCase):
                     ):
                         result = workflow.main()
                     self.assertEqual(result, expected, output.getvalue())
+
+    def test_malformed_steps_cannot_bypass_static_action_checks(self):
+        with TemporaryDirectory(prefix="iris-malformed-workflow-steps-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            fixture = workflows / "probe.yml"
+            for steps, expected in (
+                ("    steps: {uses: actions/checkout@main}\n", 1),
+                ("    steps: [not-a-step-mapping]\n", 1),
+                (
+                    "    steps: [{uses: actions/checkout@" + "a" * 40 + "}]\n",
+                    2,
+                ),
+            ):
+                with self.subTest(steps=steps):
+                    fixture.write_text(
+                        "name: Steps shape fixture\n"
+                        "jobs:\n"
+                        "  build:\n"
+                        "    runs-on: windows-2025\n"
+                        + steps,
+                        encoding="utf-8",
+                    )
+                    output = StringIO()
+                    with (
+                        patch.object(workflow, "ROOT", root),
+                        patch.object(workflow, "release_policy_failures", return_value=0),
+                        patch.object(
+                            workflow, "windows_powershell_executable", return_value=None
+                        ),
+                        redirect_stdout(output),
+                    ):
+                        result = workflow.main()
+                    self.assertEqual(result, expected, output.getvalue())
