@@ -71,18 +71,24 @@ def windows_only_workflow_failures(document: dict[object, object], text: str) ->
     return failures
 
 
+def windows_powershell_executable() -> Path | None:
+    """Locate the native parser; Linux cannot certify Windows PowerShell syntax."""
+    system_root = os.environ.get("SYSTEMROOT")
+    if not system_root:
+        return None
+    executable = (
+        Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    )
+    return executable if executable.is_file() else None
+
+
 def powershell_step_failures(document: dict[object, object]) -> int:
     jobs = document.get("jobs")
     if not isinstance(jobs, dict):
         return 1
 
-    system_root = os.environ.get("SYSTEMROOT")
-    if not system_root:
-        return 1
-    powershell_executable = (
-        Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-    )
-    if not powershell_executable.is_file():
+    powershell_executable = windows_powershell_executable()
+    if powershell_executable is None:
         return 1
 
     scripts: list[str] = []
@@ -230,6 +236,7 @@ def release_policy_failures() -> int:
 
 def main() -> int:
     failures = 0
+    native_powershell = windows_powershell_executable() is not None
     workflows = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
     if not workflows:
         print("Workflow validation: FAIL [WF001] count=1")
@@ -247,7 +254,8 @@ def main() -> int:
             continue
         failures += invalid_job_env_contexts(document)
         failures += windows_only_workflow_failures(document, text)
-        failures += powershell_step_failures(document)
+        if native_powershell:
+            failures += powershell_step_failures(document)
         references = ACTION_REFERENCE.findall(text)
         pins = ACTION_PIN.findall(text)
         if len(references) != len(pins):
@@ -258,6 +266,9 @@ def main() -> int:
     if failures:
         print(f"Workflow validation: FAIL [WF001] count={failures}")
         return 1
+    if not native_powershell:
+        print("Workflow validation: NOT RUN [WINDOWS_POWERSHELL] (static checks PASS)")
+        return 2
     print(f"Workflow validation: PASS files={len(workflows)}")
     return 0
 
