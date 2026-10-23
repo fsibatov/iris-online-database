@@ -35,6 +35,30 @@ if ($Errors.Count -ne 0) {
 """
 
 
+class UniqueKeySafeLoader(yaml.SafeLoader):
+    """Reject duplicate YAML keys instead of silently replacing workflow jobs."""
+
+    def construct_mapping(self, node, deep=False):
+        if not isinstance(node, yaml.MappingNode):
+            return super().construct_mapping(node, deep=deep)
+        seen = set()
+        for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                if key in seen:
+                    raise yaml.constructor.ConstructorError(
+                        None, None, "duplicate workflow YAML key", key_node.start_mark
+                    )
+                seen.add(key)
+            except TypeError as error:
+                raise yaml.constructor.ConstructorError(
+                    None, None, "unhashable workflow YAML key", key_node.start_mark
+                ) from error
+        return super().construct_mapping(node, deep=deep)
+
+
 def invalid_job_env_contexts(document: dict[object, object]) -> int:
     jobs = document.get("jobs")
     if not isinstance(jobs, dict):
@@ -273,7 +297,7 @@ def main() -> int:
     for path in workflows:
         text = path.read_text(encoding="utf-8")
         try:
-            document = yaml.safe_load(text)
+            document = yaml.load(text, Loader=UniqueKeySafeLoader)
         except yaml.YAMLError:
             failures += 1
             continue

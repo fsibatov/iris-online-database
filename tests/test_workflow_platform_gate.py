@@ -57,6 +57,36 @@ class WorkflowPlatformGateTests(TestCase):
         self.assertIn("Workflow validation: PASS", output.getvalue())
         self.assertEqual(parser.call_count, 4)
 
+    def test_duplicate_yaml_keys_cannot_hide_workflow_jobs(self):
+        with TemporaryDirectory(prefix="iris-duplicate-workflow-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "probe.yml").write_text(
+                "name: Duplicate jobs fixture\n"
+                "jobs:\n"
+                "  first:\n"
+                "    runs-on: windows-2025\n"
+                "    steps: [{uses: actions/checkout@" + "a" * 40 + "}]\n"
+                "jobs:\n"
+                "  second:\n"
+                "    runs-on: windows-2025\n"
+                "    steps: [{uses: actions/checkout@" + "b" * 40 + "}]\n",
+                encoding="utf-8",
+            )
+            output = StringIO()
+            with (
+                patch.object(workflow, "ROOT", root),
+                patch.object(workflow, "release_policy_failures", return_value=0),
+                patch.object(
+                    workflow, "windows_powershell_executable", return_value=None
+                ),
+                redirect_stdout(output),
+            ):
+                result = workflow.main()
+            self.assertEqual(result, 1, output.getvalue())
+            self.assertIn("FAIL [WF001]", output.getvalue())
+
     def test_flow_style_action_cannot_bypass_commit_pin_gate(self):
         with TemporaryDirectory(prefix="iris-action-pin-") as directory:
             root = Path(directory)
