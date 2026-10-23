@@ -1,19 +1,19 @@
-# Iris Online Database — продолжение после итерации 101
+# Iris Online Database — продолжение после итерации 102
 
-**UTC:** 2026-10-23 21:17:21 UTC. **Статус:** одна узкая итерация RED→GREEN, полный Go/Windows QA BLOCKED/NOT RUN. НЕ релиз.
+**UTC:** 2026-10-23 22:19:50 UTC. **Статус:** одна узкая итерация RED→GREEN; полный Go BLOCKED, Windows QA NOT RUN. НЕ релиз.
 
-## Подлинная база
+## Подлинный вход
 
-- Library `/Iris Online Database/Engineering_Candidates/IrisOnlineDB_AI_2026-10-23_iter100.zip`, SHA-256 `345b20a49020be89ae4b1f6595c17b46090a12cde96be976c6f0262e78195024`, 5 779 832 байта, 372 ZIP-файла; CRC 372/372 PASS, CRC-таблица SHA-256 `7708237c8703bc1362e8ac98f69fa862764bc521b77bfec4f124ec0bc3f072cd`; один корень, полная распаковка и побайтовое сравнение PASS. Conversation/Library ZIP идентичны; latest/immutable checkpoint iter100 идентичны.
-- Git вход `ai-development`, HEAD `4e4c134a2231256fb3c1813200510e4db07c96ff`, parent `fa726d7ac45942731e57cc00d8b8458701b429e3`, clean, fsck PASS (старый dangling commit). VERSION `2.0.5`, `.go-version` `1.26.6`; архитектура/build/release docs, `IrisTools.ps1`, журнал и continuation проверены. Методический `Engineering_Maintenance_Standard_OpenAI_2026-10-22.md` в доступной Library не найден.
+- Library и conversation `IrisOnlineDB_AI_2026-10-23_iter101.zip` идентичны: SHA-256 `ff67aee2862cb447ac23c3409cd22f4fa7b2f97f4a846b291a982b0197c3ff3d`, 5 909 451 байт, 381 ZIP-файл, один корень, CRC 381/381 PASS, CRC-таблица SHA-256 `c26b63aaa8d9a7992f07c10bc7fe0a7e267fafd63df808956401b3006bfa1ca2`, полная распаковка и побайтовое сравнение 381/381 PASS. Latest/immutable checkpoint iter101 совпали (SHA-256 `c34a73be32d96a1f91663318d345dcd79412d3d916ef1893b01f9fee92c7aa3f`).
+- Git вход `ai-development`, HEAD `742251b571c304b6f6df413605168f480534998c`, parent `4e4c134a2231256fb3c1813200510e4db07c96ff`, clean, fsck PASS (один прежний dangling commit). VERSION `2.0.5`, `.go-version` `1.26.6`, go.mod>=1.25. Архитектура/build/release docs, `IrisTools.ps1`, AI log и continuation проверены. `Engineering_Maintenance_Standard_OpenAI_2026-10-22.md` в доступной Library не обнаружен.
 
-## Итерация 101
+## Итерация 102
 
-- `tools/validate_workflows.py` пропускал custom POSIX shell `bash -e {0}`, `sh -e {0}`, `bash.exe -e {0}` в Windows workflow, выдавая ложный static PASS. RED: 4 FAIL и 2 контрольных PASS. Минимальная проверка первого токена команды с необязательным `.exe`: GREEN 8/8 подслучаев, включая workflow/job defaults. Python unittest **230 PASS**. UI, игровые данные, профиль, сеть, Go/security pins не менялись.
-- QA: Python unittest 230 PASS (`PYTHONPATH=tools`, pycache вне source), compileall PASS, data audit `fatal=[]` items=13 927 PASS, repository audit PASS, node --check PASS, offline Playwright PASS, gofmt PASS, git diff/fsck PASS. Workflow static PASS, Windows PowerShell NOT RUN (exit 2); полный workflow NOT PASS. Полный Go test/vet/race BLOCKED (Linux Go 1.23.2 < go.mod>=1.25, pin 1.26.6); изолированный Go NOT RUN; Windows Wails/WebView2/Quality Gate NOT RUN; основной TCP frontend smoke NOT RUN; Staticcheck/govulncheck/Ruff/Bandit/pip-audit/Gitleaks NOT RUN.
+- `tools/validate_workflows.py`: обязательные CI-триггеры `push` и `pull_request` по `main`, а также `workflow_dispatch`, теперь проверяются структурно через YAML BaseLoader (без преобразования `on` в bool). До патча 3 ложных PASS на отключённых/неправильных триггерах (3 FAIL новых теста), после 3 PASS и контрольный PASS. Изменены только validator, тест, журнал, continuation.
+- QA: Python unittest **231 PASS** (`PYTHONPATH=tools`, pycache вне source), compileall PASS, data audit `fatal=[]` items 13 927 PASS, repository audit PASS, node --check PASS, gofmt PASS, offline Playwright PASS, git diff/fsck PASS. Workflow static PASS, Windows PowerShell NOT RUN (exit 2), полный workflow NOT PASS. Полный Go test/vet/race BLOCKED (Go 1.23.2 < go.mod 1.25, offline); изолированный Go NOT RUN; Windows Wails/WebView2/Quality Gate NOT RUN; основной TCP frontend smoke NOT RUN; Staticcheck/govulncheck/Ruff/Bandit/pip-audit/Gitleaks NOT RUN.
 
-## Продолжение и запреты
+## Продолжение
 
-- Только локальный коммит `ai-development`, чистое дерево; полный ZIP с `.git`, SHA/CRC/полной распаковкой/cmp/Git fsck. Library upload/readback/cmp; immutable checkpoint upload/readback/cmp, latest pointer только после полного подтверждения. Выходной SHA ZIP и Git HEAD фиксировать во внешнем checkpoint, без самоссылки.
-- Архивная `.go-version=1.26.6` не сверена с работающей Windows-копией после merge `ai-development`→`main` и Go/security обновлений. Windows-копию не заменять, Go/security не понижать, не трогать main/remote/tags/Releases; ZIP не релиз.
-- **Одно следующее действие:** при наличии подлинного снимка работающей Windows-копии сверить HEAD, Go pin и security toolchain без замены файлов.
+- Только локальный commit `ai-development`, clean tree; полный ZIP с `.git` и CRC/распаковкой/побайтовой идентичностью/Git fsck/SHA. Library upload/readback/cmp и immutable checkpoint upload/readback/cmp обязательны; latest обновлять только после полной проверки. Выходные ZIP SHA и Git HEAD во внешнем checkpoint без самоссылки.
+- Критическое расхождение: архивная `.go-version=1.26.6` не сверена с работающей Windows-копией после merge и обновлений Go/security. Windows-копию не заменять; Go/security не понижать; main/remote/tags/Releases не менять, ZIP не релиз.
+- **Одно следующее действие:** получить подлинный read-only снимок работающей Windows-копии и сверить HEAD, Go и security pins без замены файлов.

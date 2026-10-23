@@ -3,6 +3,7 @@
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from shutil import copyfile
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
@@ -11,6 +12,40 @@ import validate_workflows as workflow
 
 
 class WorkflowPlatformGateTests(TestCase):
+
+    def test_ci_trigger_removal_cannot_bypass_release_policy(self):
+        """Disabled CI triggers must fail the static release policy."""
+        with TemporaryDirectory(prefix="iris-ci-trigger-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            ci_path = workflows / "ci.yml"
+            original = ci_path.read_text(encoding="utf-8")
+            trigger_block = (
+                "on:\n"
+                "  push:\n    branches: [main]\n"
+                "  pull_request:\n    branches: [main]\n"
+                "  workflow_dispatch:\n"
+            )
+            self.assertIn(trigger_block, original)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for disabled in (
+                    "on: []\n",
+                    "on:\n  workflow_dispatch:\n",
+                    "on:\n  push:\n    branches: [develop]\n"
+                    "  pull_request:\n    branches: [main]\n"
+                    "  workflow_dispatch:\n",
+                ):
+                    with self.subTest(disabled=disabled):
+                        ci_path.write_text(
+                            original.replace(trigger_block, disabled, 1),
+                            encoding="utf-8",
+                        )
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+
     def test_non_windows_reports_not_run_after_static_checks(self):
         output = StringIO()
         with (

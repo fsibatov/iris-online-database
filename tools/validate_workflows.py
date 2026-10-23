@@ -231,6 +231,29 @@ def powershell_step_failures(document: dict[object, object]) -> int:
     return failures
 
 
+
+def ci_trigger_failures(ci: str) -> int:
+    """Require main push/PR and manual CI triggers, not merely a jobs block."""
+    try:
+        # BaseLoader preserves the literal `on` key (SafeLoader treats it as True).
+        document = yaml.load(ci, Loader=yaml.BaseLoader)
+    except yaml.YAMLError:
+        return 1
+    if not isinstance(document, dict):
+        return 1
+    triggers = document.get("on")
+    if not isinstance(triggers, dict) or "workflow_dispatch" not in triggers:
+        return 1
+    for event in ("push", "pull_request"):
+        settings = triggers.get(event)
+        if not isinstance(settings, dict):
+            return 1
+        branches = settings.get("branches")
+        if not isinstance(branches, list) or "main" not in branches:
+            return 1
+    return 0
+
+
 def release_policy_failures() -> int:
     failures = 0
     ci_path = ROOT / ".github" / "workflows" / "ci.yml"
@@ -242,6 +265,8 @@ def release_policy_failures() -> int:
         dependency = dependency_path.read_text(encoding="utf-8")
     except OSError:
         return 1
+
+    failures += ci_trigger_failures(ci)
 
     required_checks = (
         "name: Windows quality and security",
