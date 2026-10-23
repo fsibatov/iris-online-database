@@ -46,6 +46,33 @@ class WorkflowPlatformGateTests(TestCase):
                         )
                         self.assertGreater(workflow.release_policy_failures(), 0)
 
+    def test_required_ci_job_names_cannot_be_spoofed_by_comments(self):
+        """Comments must not satisfy required Windows job identity checks."""
+        with TemporaryDirectory(prefix="iris-ci-job-names-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            ci_path = workflows / "ci.yml"
+            original = ci_path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for job_name in (
+                    "Windows quality and security",
+                    "Windows race detector",
+                    "Native Windows Wails release matrix",
+                ):
+                    with self.subTest(job_name=job_name):
+                        marker = "name: " + job_name
+                        self.assertIn(marker, original)
+                        ci_path.write_text(
+                            original.replace(marker, "name: Disabled placeholder", 1)
+                            + "\n# " + marker + "\n",
+                            encoding="utf-8",
+                        )
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+
     def test_non_windows_reports_not_run_after_static_checks(self):
         output = StringIO()
         with (

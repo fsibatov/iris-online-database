@@ -268,13 +268,26 @@ def release_policy_failures() -> int:
 
     failures += ci_trigger_failures(ci)
 
-    required_checks = (
-        "name: Windows quality and security",
-        "name: Windows race detector",
-        "name: Native Windows Wails release matrix",
-    )
-    if any(marker not in ci for marker in required_checks):
+    required_checks = {
+        "Windows quality and security",
+        "Windows race detector",
+        "Native Windows Wails release matrix",
+    }
+    try:
+        ci_document = yaml.load(ci, Loader=UniqueKeySafeLoader)
+    except yaml.YAMLError:
+        ci_document = None
+    jobs = ci_document.get("jobs") if isinstance(ci_document, dict) else None
+    if not isinstance(jobs, dict):
         failures += 1
+    else:
+        actual_checks = {
+            job.get("name")
+            for job in jobs.values()
+            if isinstance(job, dict) and isinstance(job.get("name"), str)
+        }
+        if not required_checks.issubset(actual_checks):
+            failures += 1
     if "ubuntu-" in ci or "ubuntu-" in codeql or "ubuntu-" in dependency:
         failures += 1
     if ci.count("runs-on: windows-2025") < 3:
