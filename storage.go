@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -888,6 +889,11 @@ func loadPendingDeleteList(path string) (pendingDeleteList, error) {
 	data, err := readLimitedFile(path, maxPendingListBytes)
 	if err != nil {
 		return pendingDeleteList{}, err
+	}
+	// encoding/json replaces malformed UTF-8 with U+FFFD, which changes
+	// queued filenames and can hide an intact backup. Reject the raw bytes.
+	if !utf8.Valid(data) {
+		return pendingDeleteList{}, errors.New("pending-delete JSON contains invalid UTF-8")
 	}
 	if err := validateNoDuplicateJSONKeys(data); err != nil {
 		return pendingDeleteList{}, err
