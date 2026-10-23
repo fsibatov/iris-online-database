@@ -39,11 +39,20 @@ def expected_metadata_markers(goarch: str) -> tuple[tuple[str, str], ...]:
 
 
 def missing_metadata_categories(metadata: str, goarch: str = "amd64") -> list[str]:
-    return [
-        category
-        for category, marker in expected_metadata_markers(goarch)
-        if marker not in metadata
-    ]
+    records = [line.strip().split("\t") for line in metadata.splitlines()]
+    missing = []
+    for category, marker in expected_metadata_markers(goarch):
+        if category == "WAILS_VERSION":
+            expected = ["dep", *marker.split("\t")]
+            present = any(
+                record[:3] == expected and len(record) in {3, 4}
+                for record in records
+            )
+        else:
+            present = ["build", marker] in records
+        if not present:
+            missing.append(category)
+    return missing
 
 
 def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:

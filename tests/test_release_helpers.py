@@ -203,12 +203,41 @@ class ReleaseHelperTests(unittest.TestCase):
         )
 
     def test_release_metadata_diagnostic_identifies_cgo_without_raw_payload(self):
-        valid = "\n".join(marker for _category, marker in EXPECTED_METADATA_MARKERS)
+        valid = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
         self.assertEqual(missing_metadata_categories(valid), [])
         cgo_enabled = valid.replace("CGO_ENABLED=0", "CGO_ENABLED=1")
         categories = missing_metadata_categories(cgo_enabled)
         self.assertEqual(categories, ["CGO_DISABLED"])
         self.assertNotIn("CGO_ENABLED=1", " ".join(categories))
+
+    def test_release_metadata_rejects_substring_spoofing(self):
+        # go version -m emits tab-separated build and dependency records.
+        markers = dict(expected_metadata_markers("amd64"))
+        legitimate = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in markers.items()
+        )
+        self.assertEqual(missing_metadata_categories(legitimate), [])
+        self.assertEqual(
+            missing_metadata_categories(
+                legitimate.replace(markers["WAILS_VERSION"], markers["WAILS_VERSION"] + "\th1:checksum")
+            ),
+            [],
+        )
+        wrong_record = legitimate.replace("build\tGOOS=windows", "dep\tGOOS=windows")
+        self.assertEqual(missing_metadata_categories(wrong_record), ["TARGET_OS"])
+
+        forged = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}SPOOF"
+            for category, marker in markers.items()
+        )
+        self.assertEqual(
+            missing_metadata_categories(forged), list(markers),
+            "substring matches must not satisfy Go build metadata requirements",
+        )
 
     def test_release_metadata_matrix_has_exact_architecture_markers(self):
         expected_levels = {
@@ -223,7 +252,10 @@ class ReleaseHelperTests(unittest.TestCase):
                 self.assertEqual(
                     markers["TARGET_LEVEL"], expected_levels[target.goarch]
                 )
-                metadata = "\n".join(markers.values())
+                metadata = "\n".join(
+                    f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+                    for category, marker in markers.items()
+                )
                 self.assertEqual(
                     missing_metadata_categories(metadata, target.goarch), []
                 )

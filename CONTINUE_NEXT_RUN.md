@@ -1,23 +1,23 @@
-# Iris Online Database — продолжение после инженерной итерации 94
+# Iris Online Database — продолжение после инженерной итерации 95
 
-**UTC:** 2026-10-23 14:18 UTC. **Статус:** одна узкая правка RED→GREEN; полный Go/Windows gate BLOCKED/NOT RUN. НЕ релиз.
+**UTC:** 2026-10-23 15:19:36 UTC. **Статус:** один узкий патч RED→GREEN, полный Go/Windows gate BLOCKED/NOT RUN. НЕ релиз.
 
-## Подлинная база
+## Входная подлинная база
 
-Перечислены conversation ZIP iter88–93 и Library ZIP iter86–93/checkpoint; выбран самый новый подтверждённый Library ZIP `/Iris Online Database/Engineering_Candidates/IrisOnlineDB_AI_2026-10-23_iter93.zip`. SHA-256 `47ce322db2c36760cd3879f9503e8b8216478da29a0638fa9077f373d2e81825`, 4 889 090 байт, 309 ZIP-файлов, один корень; CRC 309/309 PASS, CRC-таблица SHA-256 `fa47909e1bc9b362b99bc9f7bc7f054bd2a8c8f19621ede0db68ef06930ce970`, полная распаковка/побайтовая идентичность 309/309 PASS; conversation/Library ZIP и latest/immutable checkpoint iter93 cmp PASS. Вход Git `ai-development` HEAD `228b8bfc7a614a1c3db5208ce9003d2230c0c049`, parent `7e9281c093b132062a439944e36d632a3e9ce540`, clean/fsck PASS; VERSION `2.0.5`, `.go-version` `1.26.6`; обязательные docs и IrisTools.ps1 проверены. Методический файл из Library не обнаружен; явные требования соблюдены.
+Conversation ZIP iter88–94; Library ZIP iter86–94, latest/immutable checkpoint. Самая новая подтверждённая полная база: `/Iris Online Database/Engineering_Candidates/IrisOnlineDB_AI_2026-10-23_iter94.zip`, SHA-256 `a3971d773c967168602463721a1fb07afb65eed8a347a126d2980be67afbd106`, 5 015 530 байт, 318 файлов; CRC 318/318 PASS, CRC-таблица SHA-256 `450bebdd3e74888fa08e73c178d88e2acceef1e8edc3673d4ce57f8137220c6a` (`filename\tCRC32\n`), полная распаковка и побайтовая идентичность 318/318 PASS; conversation/Library ZIP cmp PASS; latest/immutable checkpoint cmp PASS. Вход Git `ai-development` HEAD `5412f8fc6f84f1b7ff56199d3cc247432d73ced8`, parent `228b8bfc7a614a1c3db5208ce9003d2230c0c049`, clean/fsck PASS. VERSION `2.0.5`, `.go-version` `1.26.6`, обязательные документы/IrisTools.ps1 проверены. Методический файл OpenAI в доступной Library не найден.
 
-## Одно изменение
+## Исправление и тесты
 
-`tools/verify_release_assets.py` пропускал symlink на внешние файлы под всеми четырьмя разрешёнными именами. `tests/test_release_helpers.py::test_release_assets_reject_symlinked_entries`: RED до патча — 4 FAIL, ложный PASS валидатора; GREEN после — 4 PASS, обычный набор файлов контрольный PASS. Минимальный запрет symlink и не-regular file до чтения. Изменены только verifier и тест; игровых данных/UI/профиля/Go/security pin/сети не касались.
+`tools/verify_executables.py` принимал ложные подстроки Go metadata (`GOOS=windowsSPOOF` и аналогичные). `tests/test_release_helpers.py::test_release_metadata_rejects_substring_spoofing`: RED до патча (7 категорий пропущено), GREEN после; проверены настоящий tab-separated `go version -m`, optional h1 и подмена типа записи. Маркеры теперь требуют точного поля build или точной пары dependency module/version. Игровые данные, UI, сеть, профиль и Go/security pin не менялись.
 
 ## Фактический QA
 
-Python unittest **222 PASS** (`PYTHONPATH=tools`, pycache вне source), compileall PASS, data audit `fatal=[]`, repository audit PASS, `node --check web/app.js` PASS, офлайн Chromium/Playwright PASS, gofmt PASS, git diff --check/fsck PASS. Первоначальный unittest FAIL из-за `tools/__pycache__`, созданного диагностикой; удалён, полный повтор 222 PASS. Workflow static PASS, Windows PowerShell **NOT RUN** (exit 2); полный Go test/vet/race **BLOCKED** (Linux Go 1.23.2 < go.mod 1.25), изолированный Go не запускался; Windows Quality Gate **NOT RUN**, основной TCP frontend smoke **NOT RUN**, security Staticcheck/govulncheck/Ruff/Bandit/pip-audit/Gitleaks **NOT RUN**.
+Python unittest **223 PASS**, compileall PASS, data audit `fatal=[]`, repository audit PASS, `node --check` PASS, offline Playwright PASS, gofmt PASS, git diff/fsck PASS. Workflow static PASS, PowerShell NOT RUN [WINDOWS_POWERSHELL] exit 2. Полный Go test/vet/race BLOCKED (Linux Go 1.23.2 < go.mod >=1.25, pin 1.26.6); изолированный Go NOT RUN, Windows Quality Gate NOT RUN, основной TCP frontend smoke NOT RUN, Staticcheck/govulncheck/Ruff/Bandit/pip-audit/Gitleaks NOT RUN.
 
-## Целостность и продолжение
+## Выход и продолжение
 
-После локального коммита в `ai-development` ожидается один полный ZIP с `.git`, CRC, распаковкой, побайтовой идентичностью, Git/fsck и SHA-256; загрузить в Library, повторно материализовать/cmp, рядом immutable checkpoint, также материализовать/cmp. Финальный ZIP SHA и HEAD фиксировать во внешнем checkpoint, не внутри ZIP. Latest pointer менять только после полного readback. Main/remote/tags/Releases не менять, ZIP не релиз.
+После коммита в `ai-development` нужен полный ZIP с `.git`, SHA-256, CRC, распаковкой и побайтовой сверкой, Git clean/fsck. Затем upload в Library и повторная материализация/cmp, immutable checkpoint upload/readback/cmp, только после — обновление latest checkpoint. Финальные SHA/HEAD хранить во внешнем checkpoint, чтобы не создавать самоссылку. При любом сбое — PARTIAL/BLOCKED, latest не продвигать.
 
-**Критическое расхождение:** архивная `.go-version=1.26.6` не сверена с работающей Windows-копией после merge ai-development→main и Go/security обновлений. Не заменять Windows-копию архивом, не понижать Go/security.
+**Критическое расхождение:** архивная `.go-version=1.26.6` не сверена с работающей Windows-копией после merge `ai-development`→`main` и Go/security обновлений. Архивом Windows-копию не заменять; Go/security не понижать; ZIP не релиз; GitHub только для сравнения.
 
 **Одно следующее действие:** при наличии подлинного снимка работающей Windows-копии сверить HEAD, Go pin и security toolchain без замены файлов.
