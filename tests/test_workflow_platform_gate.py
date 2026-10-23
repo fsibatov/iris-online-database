@@ -155,3 +155,41 @@ class WorkflowPlatformGateTests(TestCase):
                     ):
                         result = workflow.main()
                     self.assertEqual(result, expected, output.getvalue())
+
+    def test_flow_style_posix_shell_cannot_bypass_windows_gate(self):
+        with TemporaryDirectory(prefix="iris-flow-shell-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            fixture = workflows / "probe.yml"
+            for extra, expected in (
+                ("    steps: [{shell: bash, run: echo hello}]\n", 1),
+                ("    steps: [{shell: sh, run: echo hello}]\n", 1),
+                (
+                    "    defaults: {run: {shell: bash}}\n"
+                    "    steps: [{run: echo hello}]\n",
+                    1,
+                ),
+                ("    steps:\n      - shell: bash\n        run: echo hello\n", 1),
+                ("    steps: [{shell: pwsh, run: echo hello}]\n", 2),
+            ):
+                with self.subTest(extra=extra):
+                    fixture.write_text(
+                        "name: Shell fixture\n"
+                        "jobs:\n"
+                        "  build:\n"
+                        "    runs-on: windows-2025\n"
+                        + extra,
+                        encoding="utf-8",
+                    )
+                    output = StringIO()
+                    with (
+                        patch.object(workflow, "ROOT", root),
+                        patch.object(workflow, "release_policy_failures", return_value=0),
+                        patch.object(
+                            workflow, "windows_powershell_executable", return_value=None
+                        ),
+                        redirect_stdout(output),
+                    ):
+                        result = workflow.main()
+                    self.assertEqual(result, expected, output.getvalue())

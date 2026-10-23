@@ -17,7 +17,7 @@ ACTION_SHA = re.compile(r"[^@\s]+@[0-9a-f]{40}\Z")
 LOCAL_ACTION = re.compile(r"\./[^\s]+\Z")
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 JOB_ENV_DISALLOWED_CONTEXT = re.compile(r"\b(?:env|job|runner|steps)\.")
-POSIX_SHELL = re.compile(r"^\s*shell:\s*(?:bash|sh)\s*$", re.IGNORECASE | re.MULTILINE)
+POSIX_SHELL = frozenset({"bash", "sh"})
 POWERSHELL_PARSER = r"""param([Parameter(Mandatory = $true)][string]$ScriptPath)
 $Tokens = $null
 $Errors = $null
@@ -110,12 +110,24 @@ def unpinned_action_failures(document: dict[object, object]) -> int:
     return failures
 
 
-def windows_only_workflow_failures(document: dict[object, object], text: str) -> int:
+def windows_only_workflow_failures(document: dict[object, object], _text: str) -> int:
     jobs = document.get("jobs")
     if not isinstance(jobs, dict):
         return 1
 
+    def is_posix_shell(value: object) -> bool:
+        return isinstance(value, str) and value.strip().lower() in POSIX_SHELL
+
     failures = 0
+    for scope in (document, *jobs.values()):
+        if not isinstance(scope, dict):
+            continue
+        defaults = scope.get("defaults")
+        if isinstance(defaults, dict):
+            run = defaults.get("run")
+            if isinstance(run, dict) and is_posix_shell(run.get("shell")):
+                failures += 1
+
     for job in jobs.values():
         if not isinstance(job, dict):
             failures += 1
@@ -123,8 +135,12 @@ def windows_only_workflow_failures(document: dict[object, object], text: str) ->
         runs_on = job.get("runs-on")
         if not isinstance(runs_on, str) or not runs_on.startswith("windows-"):
             failures += 1
+        steps = job.get("steps")
+        if isinstance(steps, list):
+            for step in steps:
+                if isinstance(step, dict) and is_posix_shell(step.get("shell")):
+                    failures += 1
 
-    failures += len(POSIX_SHELL.findall(text))
     return failures
 
 
