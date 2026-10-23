@@ -13,6 +13,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 ACTION_PIN = re.compile(r"^\s*uses:\s*[^@\s]+@([0-9a-f]{40})(?:\s|$)", re.MULTILINE)
 ACTION_REFERENCE = re.compile(r"^\s*uses:\s*[^@\s]+@([^\s#]+)", re.MULTILINE)
+ACTION_SHA = re.compile(r"[^@\s]+@[0-9a-f]{40}\Z")
+LOCAL_ACTION = re.compile(r"\./[^\s]+\Z")
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 JOB_ENV_DISALLOWED_CONTEXT = re.compile(r"\b(?:env|job|runner|steps)\.")
 POSIX_SHELL = re.compile(r"^\s*shell:\s*(?:bash|sh)\s*$", re.IGNORECASE | re.MULTILINE)
@@ -50,6 +52,32 @@ def invalid_job_env_contexts(document: dict[object, object]) -> int:
             for expression in EXPRESSION.findall(value):
                 if JOB_ENV_DISALLOWED_CONTEXT.search(expression):
                     failures += 1
+    return failures
+
+
+def unpinned_action_failures(document: dict[object, object]) -> int:
+    """Inspect parsed YAML: flow-style `uses` entries evade line-based regexes."""
+    jobs = document.get("jobs")
+    if not isinstance(jobs, dict):
+        return 1
+
+    failures = 0
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        references = []
+        if "uses" in job:
+            references.append(job["uses"])
+        steps = job.get("steps")
+        if isinstance(steps, list):
+            for step in steps:
+                if isinstance(step, dict) and "uses" in step:
+                    references.append(step["uses"])
+        for reference in references:
+            if not isinstance(reference, str) or not (
+                ACTION_SHA.fullmatch(reference) or LOCAL_ACTION.fullmatch(reference)
+            ):
+                failures += 1
     return failures
 
 
@@ -253,6 +281,7 @@ def main() -> int:
             failures += 1
             continue
         failures += invalid_job_env_contexts(document)
+        failures += unpinned_action_failures(document)
         failures += windows_only_workflow_failures(document, text)
         if native_powershell:
             failures += powershell_step_failures(document)

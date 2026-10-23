@@ -3,6 +3,7 @@
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -55,3 +56,37 @@ class WorkflowPlatformGateTests(TestCase):
         self.assertEqual(result, 0)
         self.assertIn("Workflow validation: PASS", output.getvalue())
         self.assertEqual(parser.call_count, 4)
+
+    def test_flow_style_action_cannot_bypass_commit_pin_gate(self):
+        with TemporaryDirectory(prefix="iris-action-pin-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            fixture = workflows / "probe.yml"
+            for action, expected in (
+                ("actions/checkout@main", 1),
+                ("actions/checkout@1234567890abcdef1234567890abcdef12345678", 2),
+            ):
+                with self.subTest(action=action):
+                    fixture.write_text(
+                        "name: Pin fixture\n"
+                        "jobs:\n"
+                        "  build:\n"
+                        "    runs-on: windows-2025\n"
+                        "    steps:\n"
+                        f"      - {{uses: {action}}}\n",
+                        encoding="utf-8",
+                    )
+                    output = StringIO()
+                    with (
+                        patch.object(workflow, "ROOT", root),
+                        patch.object(
+                            workflow, "release_policy_failures", return_value=0
+                        ),
+                        patch.object(
+                            workflow, "windows_powershell_executable", return_value=None
+                        ),
+                        redirect_stdout(output),
+                    ):
+                        result = workflow.main()
+                    self.assertEqual(result, expected, output.getvalue())
