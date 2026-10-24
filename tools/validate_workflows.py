@@ -284,6 +284,19 @@ def release_policy_failures() -> int:
     failures += ci_trigger_failures(ci)
     # CodeQL must scan all main pushes/PRs, not only a scheduled subset.
     failures += ci_trigger_failures(codeql, require_dispatch=False)
+    # Dependency review must run on every pull request. A present action/job
+    # is not a security gate if its workflow is manual-only or PR-filtered.
+    try:
+        dependency_events = yaml.load(dependency, Loader=yaml.BaseLoader)
+    except yaml.YAMLError:
+        dependency_events = None
+    triggers = dependency_events.get("on") if isinstance(dependency_events, dict) else None
+    if (
+        not isinstance(triggers, dict)
+        or "pull_request" not in triggers
+        or triggers["pull_request"] not in ("", None, {})
+    ):
+        failures += 1
 
     required_checks = {
         "Windows quality and security",

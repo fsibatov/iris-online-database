@@ -82,6 +82,35 @@ class WorkflowPlatformGateTests(TestCase):
                 path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_dependency_review_requires_unfiltered_pull_request_trigger(self):
+        """A review gate that never runs on relevant PRs is not a gate."""
+        with TemporaryDirectory(prefix="iris-dependency-trigger-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            path = workflows / "dependency-review.yml"
+            original = path.read_text(encoding="utf-8")
+            trigger = "on:\n  pull_request:\n"
+            self.assertIn(trigger, original)
+            cases = {
+                "missing-pr": "on:\n  workflow_dispatch:\n",
+                "target-only": "on:\n  pull_request_target:\n",
+                "filtered-paths": "on:\n  pull_request:\n    paths: [README.md]\n",
+                "filtered-paths-ignore": "on:\n  pull_request:\n    paths-ignore: [tools/**]\n",
+                "filtered-branches": "on:\n  pull_request:\n    branches: [develop]\n",
+                "filtered-types": "on:\n  pull_request:\n    types: [opened]\n",
+            }
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for case, replacement in cases.items():
+                    with self.subTest(case=case):
+                        path.write_text(original.replace(trigger, replacement, 1), encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_ci_trigger_removal_cannot_bypass_release_policy(self):
         """Disabled CI triggers must fail the static release policy."""
         with TemporaryDirectory(prefix="iris-ci-trigger-") as directory:
