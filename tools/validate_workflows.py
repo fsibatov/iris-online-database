@@ -316,7 +316,18 @@ def release_policy_failures() -> int:
         "- name: Install pinned Windows release Go tools",
         "- name: Parse and self-test Windows PowerShell 5.1 tooling",
     )
-    positions = [windows.find(marker) for marker in ordered_steps]
+    windows_job = jobs.get("windows-build") if isinstance(jobs, dict) else None
+    steps = windows_job.get("steps") if isinstance(windows_job, dict) else None
+    step_names = (
+        [step.get("name") if isinstance(step, dict) else None for step in steps]
+        if isinstance(steps, list)
+        else []
+    )
+    required_names = [marker.removeprefix("- name: ") for marker in ordered_steps]
+    positions = [
+        step_names.index(name) if name in step_names else -1
+        for name in required_names
+    ]
     if any(position < 0 for position in positions) or positions != sorted(positions):
         failures += 1
     for marker in (

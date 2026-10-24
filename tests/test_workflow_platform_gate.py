@@ -73,6 +73,41 @@ class WorkflowPlatformGateTests(TestCase):
                         )
                         self.assertGreater(workflow.release_policy_failures(), 0)
 
+    def test_windows_build_setup_order_cannot_be_spoofed_by_comments(self):
+        """Only real Windows build steps may satisfy the required setup sequence."""
+        with TemporaryDirectory(prefix="iris-windows-build-order-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
+            ci_path = workflows / "ci.yml"
+            original = ci_path.read_text(encoding="utf-8")
+            windows_start = original.index("  windows-build:")
+            prefix, windows = original[:windows_start], original[windows_start:]
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for step_name in (
+                    "Setup Python 3.13",
+                    "Setup pinned Go",
+                    "Install pinned Windows release Go tools",
+                    "Parse and self-test Windows PowerShell 5.1 tooling",
+                ):
+                    with self.subTest(step_name=step_name):
+                        marker = "      - name: " + step_name
+                        self.assertIn(marker, windows)
+                        altered = windows.replace(
+                            marker,
+                            "      - name: Disabled setup placeholder\n"
+                            "      # - name: " + step_name,
+                            1,
+                        )
+                        ci_path.write_text(prefix + altered, encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+
     def test_non_windows_reports_not_run_after_static_checks(self):
         output = StringIO()
         with (
