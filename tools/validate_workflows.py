@@ -290,6 +290,15 @@ def release_policy_failures() -> int:
         }
         if not required_checks.issubset(actual_checks):
             failures += 1
+        # Required Windows gates must run unconditionally for every CI trigger.
+        # A job-level `if` can silently skip a correctly named security gate.
+        if any(
+            isinstance(job, dict)
+            and job.get("name") in required_checks
+            and "if" in job
+            for job in jobs.values()
+        ):
+            failures += 1
     if "ubuntu-" in ci or "ubuntu-" in codeql or "ubuntu-" in dependency:
         failures += 1
     def pinned_windows_runner_count(document: object) -> int:

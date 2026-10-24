@@ -46,6 +46,29 @@ class WorkflowPlatformGateTests(TestCase):
                         )
                         self.assertGreater(workflow.release_policy_failures(), 0)
 
+    def test_required_windows_jobs_cannot_be_skipped_by_job_if(self):
+        """A named required check is ineffective when its entire job is skipped."""
+        with TemporaryDirectory(prefix="iris-required-ci-job-if-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            ci_path = workflows / "ci.yml"
+            original = ci_path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for job in ("windows-quality", "windows-race", "windows-build"):
+                    for condition in ("false", "'false'", "${{ false }}"):
+                        with self.subTest(job=job, condition=condition):
+                            header = f"  {job}:\n"
+                            self.assertIn(header, original)
+                            ci_path.write_text(
+                                original.replace(header, header + f"    if: {condition}\n", 1),
+                                encoding="utf-8",
+                            )
+                            self.assertGreater(workflow.release_policy_failures(), 0)
+
     def test_required_ci_job_names_cannot_be_spoofed_by_comments(self):
         """Comments must not satisfy required Windows job identity checks."""
         with TemporaryDirectory(prefix="iris-ci-job-names-") as directory:
