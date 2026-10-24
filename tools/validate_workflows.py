@@ -413,6 +413,43 @@ def release_policy_failures() -> int:
         or pinned_windows_runner_count(dependency_document) < 1
     ):
         failures += 1
+    # A pinned Windows runner alone does not prove dependency review ran.
+    dependency_jobs = (
+        dependency_document.get("jobs")
+        if isinstance(dependency_document, dict) else None
+    )
+    dependency_job = (
+        dependency_jobs.get("dependency-review")
+        if isinstance(dependency_jobs, dict) else None
+    )
+    dependency_steps = (
+        dependency_job.get("steps") if isinstance(dependency_job, dict) else None
+    )
+    review_actions = (
+        [
+            step
+            for step in dependency_steps
+            if isinstance(step, dict)
+            and isinstance(step.get("uses"), str)
+            and re.fullmatch(
+                r"actions/dependency-review-action@[0-9a-f]{40}", step["uses"]
+            )
+        ]
+        if isinstance(dependency_steps, list)
+        else []
+    )
+    if (
+        not isinstance(dependency_job, dict)
+        or dependency_job.get("runs-on") != "windows-2025"
+        or "if" in dependency_job
+        or "continue-on-error" in dependency_job
+        or len(review_actions) != 1
+        or "if" in review_actions[0]
+        or "continue-on-error" in review_actions[0]
+        or not isinstance(review_actions[0].get("with"), dict)
+        or review_actions[0]["with"].get("fail-on-severity") != "high"
+    ):
+        failures += 1
     if (
         "name: Analyze (${{ matrix.language }})" not in codeql
         or "language: [go, python]" not in codeql

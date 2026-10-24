@@ -13,6 +13,75 @@ import validate_workflows as workflow
 
 class WorkflowPlatformGateTests(TestCase):
 
+    def test_dependency_review_gate_cannot_be_removed_or_silenced(self):
+        """Dependency review must execute and reject high-severity changes."""
+        with TemporaryDirectory(prefix="iris-dependency-review-gate-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
+            path = workflows / "dependency-review.yml"
+            original = path.read_text(encoding="utf-8")
+            action = "      - name: Dependency review\n"
+            job = "  dependency-review:\n"
+            self.assertIn(action, original)
+            self.assertIn(job, original)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                cases = (
+                    (
+                        "removed-action",
+                        original.replace(
+                            "        uses: actions/dependency-review-action@",
+                            "        run: Write-Host 'skipped' # actions/dependency-review-action@",
+                            1,
+                        ),
+                    ),
+                    (
+                        "step-condition",
+                        original.replace(action, action + "        if: false\n", 1),
+                    ),
+                    (
+                        "step-ignore-failure",
+                        original.replace(
+                            action, action + "        continue-on-error: true\n", 1,
+                        ),
+                    ),
+                    (
+                        "severity-downgrade",
+                        original.replace(
+                            "          fail-on-severity: high",
+                            "          fail-on-severity: low",
+                            1,
+                        ),
+                    ),
+                    (
+                        "job-condition",
+                        original.replace(job, job + "    if: false\n", 1),
+                    ),
+                    (
+                        "job-ignore-failure",
+                        original.replace(
+                            job, job + "    continue-on-error: true\n", 1,
+                        ),
+                    ),
+                    (
+                        "job-runner-downgrade",
+                        original.replace("    runs-on: windows-2025", "    runs-on: windows-2022", 1),
+                    ),
+                )
+                for case, modified in cases:
+                    with self.subTest(case=case):
+                        self.assertNotEqual(modified, original)
+                        path.write_text(modified, encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_ci_trigger_removal_cannot_bypass_release_policy(self):
         """Disabled CI triggers must fail the static release policy."""
         with TemporaryDirectory(prefix="iris-ci-trigger-") as directory:
