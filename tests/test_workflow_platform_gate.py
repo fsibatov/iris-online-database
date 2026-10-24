@@ -76,6 +76,31 @@ class WorkflowPlatformGateTests(TestCase):
                 ci_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_pr_event_type_filters_cannot_skip_required_checks(self):
+        """PR event filters must not suppress CI or CodeQL on new commits."""
+        with TemporaryDirectory(prefix="iris-pr-event-types-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for filename in ("ci.yml", "codeql.yml"):
+                    path = workflows / filename
+                    original = path.read_text(encoding="utf-8")
+                    marker = "  pull_request:\n    branches: [main]\n"
+                    self.assertIn(marker, original)
+                    for types in ("[closed]", "[labeled]", "[opened]"):
+                        with self.subTest(workflow=filename, types=types):
+                            path.write_text(
+                                original.replace(marker, marker + f"    types: {types}\n", 1),
+                                encoding="utf-8",
+                            )
+                            self.assertGreater(workflow.release_policy_failures(), 0)
+                    path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_analyzer_job_cannot_ignore_failures(self):
         """Job-level continue-on-error must not mask failed Go/Python scans."""
         with TemporaryDirectory(prefix="iris-codeql-job-fail-open-") as directory:

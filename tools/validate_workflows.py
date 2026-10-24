@@ -257,6 +257,10 @@ def ci_trigger_failures(ci: str, *, require_dispatch: bool = True) -> int:
         # pushes and pull requests (including changes to Go/security code).
         if "paths" in settings or "paths-ignore" in settings:
             return 1
+        # A PR `types` filter can omit synchronize/reopened and skip checks
+        # on updated commits even when the main branch filter is intact.
+        if event == "pull_request" and "types" in settings:
+            return 1
     return 0
 
 
