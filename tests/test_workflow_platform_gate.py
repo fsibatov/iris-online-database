@@ -76,6 +76,39 @@ class WorkflowPlatformGateTests(TestCase):
                 ci_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_codeql_main_triggers_cannot_be_disabled_or_path_filtered(self):
+        """CodeQL must scan every main push and pull request, not only cron."""
+        with TemporaryDirectory(prefix="iris-codeql-trigger-policy-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            codeql_path = workflows / "codeql.yml"
+            original = codeql_path.read_text(encoding="utf-8")
+            push = "  push:\n    branches: [main]\n"
+            pull = "  pull_request:\n    branches: [main]\n"
+            self.assertIn(push, original)
+            self.assertIn(pull, original)
+            cases = (
+                ("remove-push", push, ""),
+                ("remove-pr", pull, ""),
+                ("wrong-push-branch", push, "  push:\n    branches: [develop]\n"),
+                ("wrong-pr-branch", pull, "  pull_request:\n    branches: [develop]\n"),
+                ("filter-push", push, push + "    paths: ['docs/**']\n"),
+                ("filter-pr", pull, pull + "    paths-ignore: ['**/*.go']\n"),
+            )
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for name, before, after in cases:
+                    with self.subTest(name=name):
+                        codeql_path.write_text(
+                            original.replace(before, after, 1), encoding="utf-8"
+                        )
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                codeql_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_required_windows_jobs_cannot_be_skipped_by_job_if(self):
         """A named required check is ineffective when its entire job is skipped."""
         with TemporaryDirectory(prefix="iris-required-ci-job-if-") as directory:

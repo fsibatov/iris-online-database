@@ -232,8 +232,8 @@ def powershell_step_failures(document: dict[object, object]) -> int:
 
 
 
-def ci_trigger_failures(ci: str) -> int:
-    """Require main push/PR and manual CI triggers, not merely a jobs block."""
+def ci_trigger_failures(ci: str, *, require_dispatch: bool = True) -> int:
+    """Require unfiltered main push/PR; CI also requires manual dispatch."""
     try:
         # BaseLoader preserves the literal `on` key (SafeLoader treats it as True).
         document = yaml.load(ci, Loader=yaml.BaseLoader)
@@ -242,7 +242,9 @@ def ci_trigger_failures(ci: str) -> int:
     if not isinstance(document, dict):
         return 1
     triggers = document.get("on")
-    if not isinstance(triggers, dict) or "workflow_dispatch" not in triggers:
+    if not isinstance(triggers, dict) or (
+        require_dispatch and "workflow_dispatch" not in triggers
+    ):
         return 1
     for event in ("push", "pull_request"):
         settings = triggers.get(event)
@@ -271,6 +273,8 @@ def release_policy_failures() -> int:
         return 1
 
     failures += ci_trigger_failures(ci)
+    # CodeQL must scan all main pushes/PRs, not only a scheduled subset.
+    failures += ci_trigger_failures(codeql, require_dispatch=False)
 
     required_checks = {
         "Windows quality and security",
