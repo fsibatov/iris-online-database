@@ -97,6 +97,52 @@ class WorkflowPlatformGateTests(TestCase):
                         self.assertGreater(workflow.release_policy_failures(), 0)
                         path.write_text(original, encoding="utf-8")
 
+    def test_codeql_go_build_gate_cannot_be_spoofed_or_disabled(self):
+        """A commented-out or disabled Go build is not CodeQL coverage."""
+        with TemporaryDirectory(prefix="iris-codeql-build-gate-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            codeql_path = workflows / "codeql.yml"
+            original = codeql_path.read_text(encoding="utf-8")
+            start = original.index("      - name: Build Windows Go sources\n")
+            end = original.index("      - name: Analyze\n", start)
+            build_step = original[start:end]
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for case, replacement in (
+                    (
+                        "commented-out-build",
+                        "      # Build Windows Go sources\n"
+                        "      # iris-codeql-go-temp-\n",
+                    ),
+                    (
+                        "disabled-build",
+                        build_step.replace(
+                            "        if: matrix.language == 'go'\n",
+                            "        if: false\n",
+                            1,
+                        ),
+                    ),
+                    (
+                        "no-build-commands",
+                        "      - name: Build Windows Go sources\n"
+                        "        if: matrix.language == 'go'\n"
+                        "        shell: powershell\n"
+                        "        run: Write-Output 'skipped'\n"
+                        "      # iris-codeql-go-temp-\n",
+                    ),
+                ):
+                    with self.subTest(case=case):
+                        codeql_path.write_text(
+                            original[:start] + replacement + original[end:],
+                            encoding="utf-8",
+                        )
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                        codeql_path.write_text(original, encoding="utf-8")
+
     def test_windows_build_setup_order_cannot_be_spoofed_by_comments(self):
         """Only real Windows build steps may satisfy the required setup sequence."""
         with TemporaryDirectory(prefix="iris-windows-build-order-") as directory:

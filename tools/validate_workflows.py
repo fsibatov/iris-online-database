@@ -311,8 +311,23 @@ def release_policy_failures() -> int:
     if (
         "name: Analyze (${{ matrix.language }})" not in codeql
         or "language: [go, python]" not in codeql
-        or "Build Windows Go sources" not in codeql
-        or "iris-codeql-go-temp-" not in codeql
+    ):
+        failures += 1
+    codeql_jobs = codeql_document.get("jobs") if isinstance(codeql_document, dict) else None
+    analyze = codeql_jobs.get("analyze") if isinstance(codeql_jobs, dict) else None
+    codeql_steps = analyze.get("steps") if isinstance(analyze, dict) else None
+    go_build_steps = (
+        [step for step in codeql_steps if isinstance(step, dict)
+         and step.get("name") == "Build Windows Go sources"]
+        if isinstance(codeql_steps, list) else []
+    )
+    if len(go_build_steps) != 1 or not (
+        go_build_steps[0].get("if") == "matrix.language == 'go'"
+        and go_build_steps[0].get("shell") == "powershell"
+        and isinstance(go_build_steps[0].get("run"), str)
+        and all(marker in go_build_steps[0]["run"] for marker in (
+            "iris-codeql-go-temp-", "go test -count=1 ./...", "go build -trimpath"
+        ))
     ):
         failures += 1
 
