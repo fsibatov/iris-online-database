@@ -922,3 +922,46 @@ class WorkflowPlatformGateTests(TestCase):
                         self.assertGreater(workflow.release_policy_failures(), 0)
                 codeql_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
+
+    def test_required_windows_gate_steps_must_execute_real_commands(self):
+        """A named no-op step cannot inherit proof from commented-out commands."""
+        with TemporaryDirectory(prefix="iris-ci-gate-noop-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            ci_path = workflows / "ci.yml"
+            original = ci_path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for name in (
+                    "Run canonical Windows release gate",
+                    "Windows amd64 race detector",
+                    "Windows Go tests",
+                ):
+                    with self.subTest(step=name):
+                        header = f"      - name: {name}\n"
+                        start = original.index(header)
+                        run_start = original.index("        run: |\n", start)
+                        script_start = run_start + len("        run: |\n")
+                        ends = [
+                            pos for pos in (
+                                original.find("\n      - name:", script_start),
+                                original.find("\n  windows-", script_start),
+                            ) if pos >= 0
+                        ]
+                        end = min(ends) if ends else len(original)
+                        old_script = original[script_start:end]
+                        # Keep all original text markers as YAML comments; only
+                        # the actual executable step is replaced by a no-op.
+                        modified = (
+                            original[:run_start]
+                            + "        run: Write-Host 'skipped'\n"
+                            + original[end:]
+                            + "\n# " + old_script.replace("\n", "\n# ") + "\n"
+                        )
+                        ci_path.write_text(modified, encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                ci_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)

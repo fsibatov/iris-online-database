@@ -357,11 +357,29 @@ def release_policy_failures() -> int:
     # A step-level `if` can skip the actual quality, race, or Go test gate
     # while the enclosing mandatory Windows job still reports success.
     required_gate_steps = {
-        "windows-quality": "Run canonical Windows release gate",
-        "windows-race": "Windows amd64 race detector",
-        "windows-build": "Windows Go tests",
+        "windows-quality": (
+            "Run canonical Windows release gate",
+            (
+                "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\IrisTools.ps1 -Action Test",
+                "if ($gateExitCode -ne 0) { exit $gateExitCode }",
+            ),
+        ),
+        "windows-race": (
+            "Windows amd64 race detector",
+            (
+                "go test -race -count=1 ./...",
+                "if ($raceExitCode -ne 0) { exit $raceExitCode }",
+            ),
+        ),
+        "windows-build": (
+            "Windows Go tests",
+            (
+                "go test -count=1 ./...",
+                "if ($goTestExitCode -ne 0) { exit $goTestExitCode }",
+            ),
+        ),
     }
-    for job_id, gate_name in required_gate_steps.items():
+    for job_id, (gate_name, commands) in required_gate_steps.items():
         job = jobs.get(job_id) if isinstance(jobs, dict) else None
         steps = job.get("steps") if isinstance(job, dict) else None
         gate_steps = (
@@ -369,7 +387,24 @@ def release_policy_failures() -> int:
              and step.get("name") == gate_name]
             if isinstance(steps, list) else []
         )
-        if len(gate_steps) != 1 or "if" in gate_steps[0]:
+        if len(gate_steps) != 1:
+            failures += 1
+            continue
+        gate = gate_steps[0]
+        script = gate.get("run")
+        if (
+            "if" in gate or "uses" in gate
+            or gate.get("shell") != "powershell"
+            or not isinstance(script, str)
+        ):
+            failures += 1
+            continue
+        # Text markers in comments or unrelated steps do not execute the gate.
+        active_lines = [
+            line.strip() for line in script.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        if any(command not in active_lines for command in commands):
             failures += 1
     if pinned_windows_runner_count(ci_document) < 3:
         failures += 1
