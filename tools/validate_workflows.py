@@ -354,6 +354,23 @@ def release_policy_failures() -> int:
                 for step in steps
             ):
                 failures += 1
+    # A step-level `if` can skip the actual quality, race, or Go test gate
+    # while the enclosing mandatory Windows job still reports success.
+    required_gate_steps = {
+        "windows-quality": "Run canonical Windows release gate",
+        "windows-race": "Windows amd64 race detector",
+        "windows-build": "Windows Go tests",
+    }
+    for job_id, gate_name in required_gate_steps.items():
+        job = jobs.get(job_id) if isinstance(jobs, dict) else None
+        steps = job.get("steps") if isinstance(job, dict) else None
+        gate_steps = (
+            [step for step in steps if isinstance(step, dict)
+             and step.get("name") == gate_name]
+            if isinstance(steps, list) else []
+        )
+        if len(gate_steps) != 1 or "if" in gate_steps[0]:
+            failures += 1
     if pinned_windows_runner_count(ci_document) < 3:
         failures += 1
     if (
