@@ -161,6 +161,43 @@ class WorkflowPlatformGateTests(TestCase):
                 ci_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_required_windows_job_steps_cannot_ignore_errors(self):
+        """A failing required Windows step must not be marked successful."""
+        with TemporaryDirectory(prefix="iris-required-ci-step-fail-open-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            ci_path = workflows / "ci.yml"
+            original = ci_path.read_text(encoding="utf-8")
+            cases = (
+                ("windows-quality", "Run canonical Windows release gate"),
+                ("windows-race", "Windows amd64 race detector"),
+                ("windows-build", "Windows Go tests"),
+            )
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for job_id, step_name in cases:
+                    for setting in ("true", "${{ true }}"):
+                        with self.subTest(job=job_id, setting=setting):
+                            header = f"  {job_id}:\n"
+                            step = f"      - name: {step_name}\n"
+                            self.assertIn(header, original)
+                            job_start = original.index(header)
+                            self.assertIn(step, original[job_start:])
+                            step_start = original.index(step, job_start)
+                            modified = (
+                                original[:step_start]
+                                + step
+                                + f"        continue-on-error: {setting}\n"
+                                + original[step_start + len(step):]
+                            )
+                            ci_path.write_text(modified, encoding="utf-8")
+                            self.assertGreater(workflow.release_policy_failures(), 0)
+                ci_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_required_ci_job_names_cannot_be_spoofed_by_comments(self):
         """Comments must not satisfy required Windows job identity checks."""
         with TemporaryDirectory(prefix="iris-ci-job-names-") as directory:

@@ -334,6 +334,17 @@ def release_policy_failures() -> int:
         for job_id in ("windows-quality", "windows-race", "windows-build")
     ):
         failures += 1
+    # A required job also fails open when an individual gate step has
+    # `continue-on-error`, even if the job itself propagates other failures.
+    if isinstance(jobs, dict):
+        for job_id in ("windows-quality", "windows-race", "windows-build"):
+            job = jobs.get(job_id)
+            steps = job.get("steps") if isinstance(job, dict) else None
+            if not isinstance(steps, list) or not steps or any(
+                not isinstance(step, dict) or "continue-on-error" in step
+                for step in steps
+            ):
+                failures += 1
     if pinned_windows_runner_count(ci_document) < 3:
         failures += 1
     if (
