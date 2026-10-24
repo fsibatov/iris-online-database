@@ -1,0 +1,26 @@
+name: Расхождение игровых данных
+description: Проверка предмета, монстра или источника получения.
+body:
+  - type: dropdown
+    id: server
+    attributes:
+      label: Сервер
+      options:
+        - The Original
+        - Iris Kiss Kiss
+        - Общие исходные ресурсы
+    validations:
+      required: true
+  - type: input
+    id: record
+    attributes:
+      label: Версия приложения, тип записи и ID
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Расхождение и подтверждение
+      description: Укажите исходную таблицу, её версию или другое проверяемое подтверждение.
+    validations:
+      required: true

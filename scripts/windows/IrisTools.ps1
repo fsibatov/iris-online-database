@@ -7,6 +7,8 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Version = (Get-Content -LiteralPath (Join-Path $Root "VERSION") -Raw).Trim()
+$ReleaseConfig = Get-Content -LiteralPath (Join-Path $Root "build\release.json") -Raw | ConvertFrom-Json
+$SourceBranch = if ($ReleaseConfig.sourceBranch) { [string]$ReleaseConfig.sourceBranch } else { "main" }
 $GoPin = (Get-Content -LiteralPath (Join-Path $Root ".go-version") -Raw).Trim()
 $env:GOTOOLCHAIN = "local"
 $WailsPin = "v2.14.0"
@@ -32,14 +34,13 @@ if (Test-Path -LiteralPath $AuditEnvPointer -PathType Leaf) {
             $AuditPython = Join-Path $AuditEnv "Scripts\python.exe"
         }
     } catch {
-        # Ignore a stale/corrupt local cache pointer. Ensure-AuditEnvironment validates it later.
     }
 }
 $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $ToolRoot "playwright"
 $PinnedGitleaksDirectory = Join-Path $ToolRoot "gitleaks-$GitleaksPin"
 $RepositorySlug = "fsibatov/iris-online-database"
 $ReleaseGitName = "fsibatov"
-$ReleaseGitEmail = "farushik01@gmail.com"
+$ReleaseGitEmail = "137914856+fsibatov@users.noreply.github.com"
 $ReleaseGpgExecutable = "C:\Program Files\Git\usr\bin\gpg.exe"
 $ReleaseGpgFingerprint = "B0A5D341B2EE901172F485DE9BC0EBCFE2795291"
 
@@ -300,10 +301,10 @@ function Invoke-Govulncheck {
         $Database = $DatabaseAttempts[$AttemptIndex]
         $Attempts = $DatabaseAttempts.Count
         try {
-            Write-Host "+ govulncheck -db $($Database.URL) ./... (attempt $Attempt/$Attempts)"
+            Write-Host "+ govulncheck -db $($Database.URL) -tags=desktop,wv2runtime.embed,production ./... (attempt $Attempt/$Attempts)"
             $Result = Invoke-CapturedNativeProcess `
                 -File $GovulncheckExecutable `
-                -Arguments @("-db", $Database.URL, "./...") `
+                -Arguments @("-db", $Database.URL, "-tags=desktop,wv2runtime.embed,production", "./...") `
                 -WorkingDirectory $Root `
                 -TimeoutSeconds $TimeoutSeconds
         } catch {
@@ -599,9 +600,6 @@ function Test-WindowsTooling {
         $FailedProbes.Add("STATICCHECK_VERSION_PARSE")
     }
     try {
-        # Exercise the exact production path, including the pinned resolver and
-        # direct PowerShell invocation. Do not route this probe through the
-        # generic ProcessStartInfo capture wrapper.
         Invoke-Staticcheck @("-version")
     } catch {
         $FailedProbes.Add("STATICCHECK_DIRECT")
@@ -651,7 +649,7 @@ function Test-WindowsTooling {
         $FailedProbes.Add("OUTPUT_REDACTION")
     }
     try {
-        $CmdExecutable = (Get-Command "cmd.exe" -CommandType Application -ErrorAction Stop).Source
+        $CmdExecutable = Resolve-NativeExecutablePath -File "cmd.exe"
         $SuccessProbe = Invoke-CapturedNativeProcess `
             -File $CmdExecutable `
             -Arguments @("/d", "/s", "/c", "echo No vulnerabilities found. & exit /b 0") `
@@ -857,7 +855,6 @@ function Find-Python313Executable {
                 Add-UniquePathCandidate -List $Candidates -Path $Resolved
             }
         } catch {
-            # Continue with the other explicit executable candidates.
         }
     }
 
@@ -871,8 +868,6 @@ function Ensure-AuditEnvironment {
     New-Item -ItemType Directory -Force -Path $ToolRoot | Out-Null
     $Requirements = Join-Path $Root "tools\requirements-audit.txt"
 
-    # First recover any already-working isolated environment. This path must not
-    # depend on a system Python command being visible in an elevated PowerShell.
     $ExistingCandidates = New-Object System.Collections.Generic.List[string]
     if (Test-Path -LiteralPath $AuditEnvPointer -PathType Leaf) {
         try {
@@ -883,7 +878,6 @@ function Ensure-AuditEnvironment {
                 Add-UniquePathCandidate -List $ExistingCandidates -Path $PointerCandidateFull
             }
         } catch {
-            # Ignore a stale/corrupt pointer and continue with directory discovery.
         }
     }
     Add-UniquePathCandidate -List $ExistingCandidates -Path $AuditEnv
@@ -898,8 +892,6 @@ function Ensure-AuditEnvironment {
         if (-not $CandidatePythonVersion) { continue }
         if (-not (Test-AuditEnvironmentContent -EnvironmentPath $Candidate -ExpectedPythonVersion $CandidatePythonVersion)) { continue }
 
-        # Exact current pins and pip check passed, so it is safe to adopt an older
-        # pre-fingerprint environment and stamp the current deterministic marker.
         $CandidateHash = Get-AuditEnvironmentHash -Requirements $Requirements -PythonVersion $CandidatePythonVersion
         $CandidateMarker = Join-Path $Candidate ".iris-requirements-sha256"
         Set-Content -LiteralPath $CandidateMarker -Value $CandidateHash -Encoding ASCII
@@ -911,9 +903,6 @@ function Ensure-AuditEnvironment {
         }
     }
 
-    # No reusable environment exists. Only now require a bootstrap Python 3.13.
-    # Search explicit user/system installs, py.exe, and any recoverable venv Python
-    # because App Execution Aliases may disappear after UAC elevation.
     $BasePython = Find-Python313Executable -AuditEnvironmentCandidates $ExistingCandidates.ToArray()
     if (-not $BasePython) {
         throw "Python 3.13 executable is missing and no validated Python audit environment is available. Run INSTALL/UPDATE TOOLS, then retry."
@@ -956,7 +945,6 @@ function Ensure-AuditEnvironment {
         Use-AuditEnvironment -EnvironmentPath $NewAuditEnv
         Set-Content -LiteralPath $AuditEnvPointer -Value $NewAuditEnv -Encoding UTF8
     } catch {
-        # Best-effort cleanup only. A locked partial venv must not hide the real failure.
         if (Test-Path -LiteralPath $NewAuditEnv) {
             Remove-Item -LiteralPath $NewAuditEnv -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -1268,11 +1256,9 @@ function Install-Tools {
 }
 
 function Assert-CleanTree {
+    param([switch]$RequireMain)
     Push-Location $Root
     try {
-        # NTFS does not preserve POSIX executable-bit semantics. Disable file-mode
-        # tracking before the cleanliness check so Windows metadata cannot create a
-        # false modified state for byte-identical tracked files.
         if ($env:OS -eq "Windows_NT") {
             & git config --local core.filemode false
             if ($LASTEXITCODE -ne 0) {
@@ -1284,7 +1270,8 @@ function Assert-CleanTree {
         if ($Status) { throw "The Git working tree must be clean." }
         $Branch = (& git branch --show-current).Trim()
         if ($LASTEXITCODE -ne 0) { throw "Git branch detection failed." }
-        if ($Branch -ne "main") { throw "Release operations require branch main." }
+        if ($RequireMain -and $Branch -ne "main") { throw "Publishing requires branch main; preparation does not publish the audit branch." }
+        if ($Branch -notin @("main", $SourceBranch)) { throw "Preparation requires the configured source branch or main." }
     } finally { Pop-Location }
 }
 
@@ -1304,12 +1291,15 @@ function Repair-ReleaseSources {
     try {
         $BeforeHead = (& git rev-parse HEAD | Out-String).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $BeforeHead) { throw "Git HEAD could not be resolved before auto-fix." }
-        $RemoteMain = (& git rev-parse "origin/main" | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or -not $RemoteMain) { throw "origin/main could not be resolved before auto-fix." }
-        & git merge-base --is-ancestor "origin/main" HEAD *> $null
-        if ($LASTEXITCODE -ne 0) { throw "Release HEAD is not based on the fetched origin/main." }
+        $Branch = (& git branch --show-current | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $Branch) { throw "Git branch could not be resolved before auto-fix." }
+        $RemoteBranch = "origin/$Branch"
+        $RemoteHead = (& git rev-parse $RemoteBranch | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $RemoteHead) { throw "$RemoteBranch could not be resolved before auto-fix." }
+        & git merge-base --is-ancestor $RemoteBranch HEAD *> $null
+        if ($LASTEXITCODE -ne 0) { throw "Release HEAD is not based on the fetched $RemoteBranch." }
 
-        $GoFiles = @(Get-ChildItem -LiteralPath $Root -Filter "*.go" -File | ForEach-Object { $_.FullName })
+        $GoFiles = @(Get-ChildItem -LiteralPath $Root -Filter "*.go" -File -Recurse | ForEach-Object { $_.FullName })
         if ($GoFiles.Count -gt 0) {
             $GofmtArguments = @("-w", "--") + $GoFiles
             Invoke-Checked "gofmt" $GofmtArguments 180
@@ -1332,8 +1322,10 @@ function Repair-ReleaseSources {
         if (@($Status | Where-Object { $_ -match '^\?\?' }).Count -gt 0) {
             throw "Safe auto-fix produced unexpected untracked files; review is required."
         }
-        if ($BeforeHead -eq $RemoteMain) {
-            throw "Safe auto-fix changed the already-published origin/main commit; automatic amendment is disabled."
+        $PublishedRefs = @(& git for-each-ref "--contains=$BeforeHead" "--format=%(refname)" refs/remotes/origin)
+        if ($LASTEXITCODE -ne 0) { throw "Published commit detection failed." }
+        if ($BeforeHead -eq $RemoteHead -or $PublishedRefs.Count -gt 0) {
+            throw "Safe auto-fix changed an already-published commit; automatic amendment is disabled."
         }
 
         Invoke-Checked "git" @("diff", "--check") 60
@@ -1367,6 +1359,50 @@ function Repair-ReleaseSources {
     }
 }
 
+function Invoke-PipAudit {
+    $PipAuditCache = Join-Path ([IO.Path]::GetTempPath()) ("iris-pip-audit-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $PipAuditCache -ErrorAction Stop | Out-Null
+    try {
+        Invoke-Checked (Join-Path $AuditEnv "Scripts\pip-audit.exe") @("--local", "--cache-dir", $PipAuditCache) 600
+    } finally {
+        Remove-Item -LiteralPath $PipAuditCache -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Initialize-WindowsLegacy {
+    $ConfigPath = Join-Path $Root "tools\compat\windows7.json"
+    $Config = [IO.File]::ReadAllText($ConfigPath) | ConvertFrom-Json
+    $Directory = Join-Path $ToolRoot ("windows7-" + $Config.go_version + "-" + $Config.patch_sha256.Substring(0, 16))
+    $GoExecutable = Resolve-NativeExecutablePath -File "go"
+    Invoke-Checked $AuditPython @("-B", "tools/prepare_windows_legacy.py", "--go", $GoExecutable, "--directory", $Directory) 120
+    return [pscustomobject]@{
+        Overlay = Join-Path $Directory "overlay.json"
+        Marker = "IrisWindowsLegacy/go$($Config.go_version)/$($Config.patch_sha256)"
+    }
+}
+
+function Test-WindowsLegacy {
+    $Legacy = Initialize-WindowsLegacy
+    $EnvironmentNames = @("GOARCH", "CGO_ENABLED", "GOAMD64", "GO386")
+    $SavedEnvironment = @{}
+    foreach ($Name in $EnvironmentNames) {
+        $SavedEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, "Process")
+    }
+    try {
+        $env:CGO_ENABLED = "0"
+        $env:GOAMD64 = "v1"
+        $env:GO386 = "sse2"
+        foreach ($Architecture in @("amd64", "386")) {
+            $env:GOARCH = $Architecture
+            Invoke-Checked "go" @("test", "-overlay=$($Legacy.Overlay)", "-tags=windows_legacy", "-count=1", "./...") 900
+        }
+    } finally {
+        foreach ($Name in $EnvironmentNames) {
+            [Environment]::SetEnvironmentVariable($Name, $SavedEnvironment[$Name], "Process")
+        }
+    }
+}
+
 function Test-Release {
     param([switch]$SkipToolingCheck)
     Assert-CleanTree
@@ -1386,8 +1422,6 @@ function Test-Release {
     }
     $env:PYTHONPYCACHEPREFIX = $ExternalPyCache
 
-    # Remove only known generated output left by an interrupted/older Windows
-    # gate. Any unexpected repository hygiene issue remains visible to the audit.
     Clear-PythonGenerated
     Clear-BuildGenerated
 
@@ -1398,7 +1432,7 @@ function Test-Release {
         Write-Host "Wails: $WailsPin @ $WailsExecutable"
         $BeforeHead = (& git rev-parse HEAD).Trim()
         Invoke-Checked $AuditPython @("-B", "tools/repository_audit.py") 120
-        $GoFiles = Get-ChildItem -LiteralPath $Root -Filter "*.go" -File | ForEach-Object { $_.FullName }
+        $GoFiles = Get-ChildItem -LiteralPath $Root -Filter "*.go" -File -Recurse | ForEach-Object { $_.FullName }
         $Unformatted = (& gofmt -l -- $GoFiles)
         if ($LASTEXITCODE -ne 0) { throw "gofmt failed." }
         if ($Unformatted) { throw "Go source is not formatted." }
@@ -1406,6 +1440,7 @@ function Test-Release {
         Invoke-Checked "go" @("mod", "tidy", "-diff") 180
         Invoke-Checked "go" @("build", "-trimpath", "-o", (Join-Path $env:TEMP "iris-build-probe.exe"), ".") 600
         Invoke-Checked "go" @("test", "-count=1", "./...") 900
+        Test-WindowsLegacy
         Invoke-Checked "go" @("vet", "./...") 600
         Invoke-Staticcheck @("./...")
         Invoke-Govulncheck
@@ -1416,9 +1451,12 @@ function Test-Release {
         Invoke-Checked (Join-Path $AuditEnv "Scripts\ruff.exe") @("check", "--no-cache", ".") 300
         Invoke-Checked (Join-Path $AuditEnv "Scripts\ruff.exe") @("format", "--check", "--no-cache", ".") 300
         Invoke-Checked (Join-Path $AuditEnv "Scripts\bandit.exe") @("-q", "-r", "tools") 300
-        Invoke-Checked (Join-Path $AuditEnv "Scripts\pip-audit.exe") @("--local", "--cache-dir", (Join-Path $AuditEnv "pip-audit-cache")) 600
+        Invoke-PipAudit
         Invoke-Checked $AuditPython @("-B", "tools/validate_workflows.py") 120
         Invoke-Checked "node" @("--check", "web/app.js") 120
+        Invoke-Checked "node" @("--check", "web/profile.js") 120
+        Invoke-Checked "node" @("--check", "web/theme.js") 120
+        Invoke-Checked "node" @("--test", "tests/frontend_behavior.test.mjs") 120
         foreach ($Audit in @("data_presentation_audit.py", "frontend_smoke_test.py")) {
             Invoke-Checked $AuditPython @("-B", ("tools/" + $Audit)) 900
         }
@@ -1429,7 +1467,7 @@ function Test-Release {
         Invoke-Checked $AuditPython @("-B", "tools/repository_audit.py") 120
         Assert-CleanTree
         if ((& git rev-parse HEAD).Trim() -ne $BeforeHead) { throw "HEAD changed during the RELEASE gate." }
-        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--write") 120
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--write", "--expected-branch", ((& git branch --show-current).Trim())) 120
         Write-Host "RELEASE gate: PASS" -ForegroundColor Green
     } finally {
         Pop-Location
@@ -1444,8 +1482,10 @@ function Clear-BuildGenerated {
         $Target = Join-Path $Root $Path
         if (Test-Path -LiteralPath $Target) { Remove-Item -LiteralPath $Target -Recurse -Force }
     }
-    $AppIcon = Join-Path $Root "build\appicon.png"
-    if (Test-Path -LiteralPath $AppIcon) { Remove-Item -LiteralPath $AppIcon -Force }
+    foreach ($Path in @("build\appicon.png", "iris-online-database-res.syso")) {
+        $Target = Join-Path $Root $Path
+        if (Test-Path -LiteralPath $Target) { Remove-Item -LiteralPath $Target -Force }
+    }
 }
 
 function Build-Release {
@@ -1454,18 +1494,21 @@ function Build-Release {
     $WailsExecutable = Get-PinnedWailsExecutable
     Push-Location $Root
     try {
-        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify", "--expected-branch", ((& git branch --show-current).Trim())) 120
         if (-not $OutputDirectory) { $script:OutputDirectory = Join-Path (Split-Path $Root -Parent) "iris-online-database-release-$Version" }
         $OutputFull = [IO.Path]::GetFullPath($OutputDirectory)
         if ($OutputFull.StartsWith($Root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Release output must be outside the source tree." }
         New-Item -ItemType Directory -Force -Path $OutputFull | Out-Null
         $Head = (& git rev-parse HEAD).Trim()
+        $Legacy = Initialize-WindowsLegacy
         $Targets = @(
-            [pscustomobject]@{ Platform = "windows/amd64"; Suffix = "x64"; LevelName = "GOAMD64"; LevelValue = "v1" },
-            [pscustomobject]@{ Platform = "windows/386"; Suffix = "x86"; LevelName = "GO386"; LevelValue = "sse2" },
-            [pscustomobject]@{ Platform = "windows/arm64"; Suffix = "arm64"; LevelName = "GOARM64"; LevelValue = "v8.0" }
+            [pscustomobject]@{ Platform = "windows/amd64"; Suffix = "x64"; LevelName = "GOAMD64"; LevelValue = "v1"; Legacy = $false },
+            [pscustomobject]@{ Platform = "windows/386"; Suffix = "x86"; LevelName = "GO386"; LevelValue = "sse2"; Legacy = $false },
+            [pscustomobject]@{ Platform = "windows/arm64"; Suffix = "arm64"; LevelName = "GOARM64"; LevelValue = "v8.0"; Legacy = $false },
+            [pscustomobject]@{ Platform = "windows/amd64"; Suffix = "7-8.1-x64"; LevelName = "GOAMD64"; LevelValue = "v1"; Legacy = $true },
+            [pscustomobject]@{ Platform = "windows/386"; Suffix = "7-8.1-x86"; LevelName = "GO386"; LevelValue = "sse2"; Legacy = $true }
         )
-        $EnvironmentNames = @("CGO_ENABLED", "GOAMD64", "GO386", "GOARM64")
+        $EnvironmentNames = @("CGO_ENABLED", "GOAMD64", "GO386", "GOARM64", "GOFLAGS")
         $SavedEnvironment = @{}
         foreach ($Name in $EnvironmentNames) {
             $SavedEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, "Process")
@@ -1477,6 +1520,7 @@ function Build-Release {
             Remove-Item -LiteralPath $Artifact -Force -ErrorAction SilentlyContinue
         }
         Remove-Item -LiteralPath (Join-Path $OutputFull "SHA256SUMS.txt") -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $OutputFull "SHA256SUMS.txt.asc") -Force -ErrorAction SilentlyContinue
         Clear-BuildGenerated
         try {
             foreach ($Target in $Targets) {
@@ -1485,7 +1529,15 @@ function Build-Release {
                 Remove-Item Env:\GOARM64 -ErrorAction SilentlyContinue
                 $env:CGO_ENABLED = "0"
                 Set-Item -Path "Env:$($Target.LevelName)" -Value $Target.LevelValue
-                Invoke-Checked $WailsExecutable @(
+                $LinkFlags = "-buildid= -X main.appVersion=$Version -X main.releaseMarker=IrisOnlineRelease/$Version/$Head"
+                $ExtraArguments = @()
+                [Environment]::SetEnvironmentVariable("GOFLAGS", $SavedEnvironment["GOFLAGS"], "Process")
+                if ($Target.Legacy) {
+                    $env:GOFLAGS = '"-overlay=' + $Legacy.Overlay + '"'
+                    $LinkFlags += " -X main.legacyCompatibilityMarker=$($Legacy.Marker)"
+                    $ExtraArguments = @("-tags", "windows_legacy")
+                }
+                $BuildArguments = @(
                     "build",
                     "-platform", $Target.Platform,
                     "-webview2", "embed",
@@ -1496,8 +1548,9 @@ function Build-Release {
                     "-nosyncgomod",
                     "-m",
                     "-o", "IrisOnlineDatabase.exe",
-                    "-ldflags", "-buildid= -X main.appVersion=$Version -X main.releaseMarker=IrisOnlineRelease/$Version/$Head"
-                ) 1200
+                    "-ldflags", $LinkFlags
+                ) + $ExtraArguments
+                Invoke-Checked $WailsExecutable $BuildArguments 1200
                 $Artifact = Join-Path $OutputFull "IrisOnlineDB-$Version-Windows-$($Target.Suffix).exe"
                 Copy-Item -LiteralPath (Join-Path $Root "build\bin\IrisOnlineDatabase.exe") -Destination $Artifact -Force
             }
@@ -1519,36 +1572,38 @@ function Build-Release {
         Set-Content -LiteralPath (Join-Path $OutputFull "SHA256SUMS.txt") -Value $ChecksumLines -Encoding ASCII
         Assert-CleanTree
         Invoke-Checked $AuditPython @("-B", "tools/verify_release_assets.py", "--directory", $OutputFull, "--version", $Version) 120
-        Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version) 120
+        Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version, "--expected-commit", $Head) 120
         Invoke-Checked $AuditPython @("-B", "tools/verify_windows_resources.py", "--directory", $OutputFull, "--version", $Version) 120
         if ((& git rev-parse HEAD).Trim() -ne $Head) { throw "HEAD changed during release artifact build." }
-        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
-        Write-Host "Release build: PASS (Windows x64, x86, arm64)" -ForegroundColor Green
+        Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify", "--expected-branch", ((& git branch --show-current).Trim())) 120
+        Write-Host "Release build: PASS (Windows 10/11 x64, x86, arm64; Windows 7/8/8.1 x64, x86)" -ForegroundColor Green
         Write-Host $OutputFull
     } finally { Pop-Location }
 }
 
 function Prepare-Release {
-    # Fetch first so packaged release candidates can repair a deliberately
-    # thin local Git history before any VCS-aware Go command is executed.
-    Invoke-GitFetchMain
     Test-WindowsTooling
     Ensure-AuditEnvironment
-
-    # Only deterministic, tool-classified safe edits are automatic. The strict
-    # gate below is then rerun from a clean amended commit and still fails closed
-    # on tests, security findings, data issues, workflow errors or build failures.
-    Repair-ReleaseSources
-    Test-Release -SkipToolingCheck
-    Build-Release
-    Write-Host "PREPARE RELEASE: PASS" -ForegroundColor Green
+    Push-Location $Root
+    try {
+        Invoke-Checked $AuditPython @("-B", "tools/restore_repository.py", "--name", $ReleaseGitName, "--email", $ReleaseGitEmail) 600
+        Invoke-GitFetchMain
+        $Branch = (& git branch --show-current | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "Git branch detection failed." }
+        if ($Branch -eq $SourceBranch -and $Branch -ne "main") {
+            Invoke-Checked "git" @("-C", $Root, "fetch", "--prune", "--refetch", "origin", "refs/heads/${Branch}:refs/remotes/origin/$Branch") 300
+        }
+        Repair-ReleaseSources
+        Test-Release -SkipToolingCheck
+        Build-Release
+        Write-Host "PREPARE RELEASE: PASS" -ForegroundColor Green
+    } finally {
+        Pop-Location
+    }
 }
 
 function Invoke-GitFetchMain {
-    # Release candidates can intentionally contain a thin local Git object set.
-    # --refetch avoids negotiation through an incomplete local ancestry and
-    # repairs the fetched main history as if it were being obtained fresh.
-    Invoke-Checked "git" @("fetch", "--prune", "--refetch", "origin", "main") 300
+    Invoke-Checked "git" @("-C", $Root, "fetch", "--prune", "--refetch", "origin", "refs/heads/main:refs/remotes/origin/main") 300
 }
 
 function Assert-ReleaseSigningIdentity {
@@ -1572,6 +1627,26 @@ function Assert-ReleaseSigningIdentity {
         }
     }
     if (-not $FingerprintFound) { throw "Configured GPG release fingerprint is unavailable in the secret keyring." }
+}
+
+function Sign-ReleaseChecksums {
+    param([Parameter(Mandatory = $true)][string]$Directory)
+    $Checksums = Join-Path $Directory "SHA256SUMS.txt"
+    $Signature = Join-Path $Directory "SHA256SUMS.txt.asc"
+    Invoke-Checked $ReleaseGpgExecutable @(
+        "--batch", "--yes", "--armor", "--local-user", $ReleaseGpgFingerprint,
+        "--output", $Signature, "--detach-sign", $Checksums
+    ) 120
+    $Result = Invoke-CapturedNativeProcess `
+        -File $ReleaseGpgExecutable `
+        -Arguments @("--batch", "--status-fd", "1", "--verify", $Signature, $Checksums) `
+        -WorkingDirectory $Root `
+        -TimeoutSeconds 60
+    $Pattern = "(?m)^\[GNUPG:\] VALIDSIG " + [regex]::Escape($ReleaseGpgFingerprint) + "(?:\s|$)"
+    if ($Result.TimedOut -or $Result.ExitCode -ne 0 -or ([string]$Result.Stdout) -notmatch $Pattern) {
+        throw "Checksum manifest signature verification failed."
+    }
+    return $Signature
 }
 
 function Assert-ReleaseTag {
@@ -1675,7 +1750,7 @@ function Get-GitHubCheckRuns {
 }
 
 function Publish-Commit {
-    Assert-CleanTree
+    Assert-CleanTree -RequireMain
     Ensure-AuditEnvironment
     Push-Location $Root
     try {
@@ -1693,7 +1768,7 @@ function Publish-Commit {
 }
 
 function Create-Release {
-    Assert-CleanTree
+    Assert-CleanTree -RequireMain
     Ensure-AuditEnvironment
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw "GitHub CLI (gh) is required." }
     Push-Location $Root
@@ -1704,7 +1779,7 @@ function Create-Release {
         $RemoteHead = (& git rev-parse "origin/main" | Out-String).Trim()
         if ($LASTEXITCODE -ne 0 -or $Head -ne $RemoteHead) { throw "HEAD is not the published origin/main commit." }
         $Checks = Get-GitHubCheckRuns -Head $Head
-        $RequiredChecks = @("Windows quality and security", "Windows race detector", "Native Windows Wails release matrix", "Analyze (go)", "Analyze (python)")
+        $RequiredChecks = @("Windows quality and security", "Windows race detector", "Native Windows Wails release matrix", "Analyze (go)", "Analyze (python)", "Analyze (javascript-typescript)")
         foreach ($Name in $RequiredChecks) {
             $Matches = @($Checks | Where-Object { $_.name -eq $Name })
             if (-not $Matches) { throw "Required GitHub check is missing: $Name" }
@@ -1715,21 +1790,30 @@ function Create-Release {
         if (-not $OutputDirectory) { $script:OutputDirectory = Join-Path (Split-Path $Root -Parent) "iris-online-database-release-$Version" }
         $OutputFull = [IO.Path]::GetFullPath($OutputDirectory)
         Invoke-Checked $AuditPython @("-B", "tools/verify_release_assets.py", "--directory", $OutputFull, "--version", $Version) 120
-        Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version) 120
+        Invoke-Checked $AuditPython @("-B", "tools/verify_executables.py", "--directory", $OutputFull, "--version", $Version, "--expected-commit", $Head) 120
         Invoke-Checked $AuditPython @("-B", "tools/verify_windows_resources.py", "--directory", $OutputFull, "--version", $Version) 120
         Invoke-Checked $AuditPython @("-B", "tools/release_fingerprint.py", "--verify") 120
         Assert-ReleaseSigningIdentity
 
         $Tag = "v$Version"
-        Ensure-ReleaseTag -Tag $Tag -Head $Head
 
         $ArtifactNames = @(
             "IrisOnlineDB-$Version-Windows-x64.exe",
             "IrisOnlineDB-$Version-Windows-x86.exe",
-            "IrisOnlineDB-$Version-Windows-arm64.exe"
+            "IrisOnlineDB-$Version-Windows-arm64.exe",
+            "IrisOnlineDB-$Version-Windows-7-8.1-x64.exe",
+            "IrisOnlineDB-$Version-Windows-7-8.1-x86.exe"
         )
         $Artifacts = @($ArtifactNames | ForEach-Object { Join-Path $OutputFull $_ })
         $Checksums = Join-Path $OutputFull "SHA256SUMS.txt"
+        $Signature = Sign-ReleaseChecksums -Directory $OutputFull
+        Invoke-Checked $AuditPython @("-B", "tools/verify_release_assets.py", "--directory", $OutputFull, "--version", $Version) 120
+        $ReleaseTemplatePath = Join-Path $Root "build\release.json"
+        $ReleaseTemplate = [IO.File]::ReadAllText($ReleaseTemplatePath, (New-Object Text.UTF8Encoding($false))) | ConvertFrom-Json
+        if (-not ($ReleaseTemplate.title -is [string]) -or -not $ReleaseTemplate.title.Contains("{version}")) {
+            throw "Release title template must contain {version}."
+        }
+        $ReleaseTitle = $ReleaseTemplate.title.Replace("{version}", $Version)
         $ChangelogPath = Join-Path $Root "CHANGELOG.md"
         $ChangelogText = [IO.File]::ReadAllText($ChangelogPath, (New-Object Text.UTF8Encoding($false)))
         $VersionPattern = [Regex]::Escape($Version)
@@ -1745,10 +1829,12 @@ function Create-Release {
         $ReleaseNotesPath = [IO.Path]::GetTempFileName()
         try {
             [IO.File]::WriteAllText($ReleaseNotesPath, $ReleaseNotes, (New-Object Text.UTF8Encoding($false)))
+            Ensure-ReleaseTag -Tag $Tag -Head $Head
             $ReleaseArguments = @("release", "create", $Tag) + $Artifacts + @(
                 $Checksums,
+                $Signature,
                 "--verify-tag",
-                "--title", "Iris Online Database $Version",
+                "--title", $ReleaseTitle,
                 "--notes-file", $ReleaseNotesPath
             )
             Invoke-Checked "gh" $ReleaseArguments 600

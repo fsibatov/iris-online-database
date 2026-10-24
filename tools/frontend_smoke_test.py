@@ -1,18 +1,20 @@
-"""Deterministic Chromium smoke test for the embedded desktop frontend."""
-
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import shutil
 import threading
+from contextlib import suppress
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 CURRENT_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -84,6 +86,29 @@ MONSTER = {
         }
     ],
     "worldRuleCount": 0,
+}
+
+MONSTER_LARGE_LOOT = {
+    **MONSTER,
+    "monster": {**MONSTER["monster"], "id": 43},
+    "slots": [
+        {
+            "choices": [
+                {
+                    "items": [
+                        {
+                            "itemId": 5000 + index,
+                            "item": f"Тестовая добыча {index + 1}",
+                            "baseSelectionChance": 1,
+                            "baseAttemptChance": 1,
+                        }
+                        for index in range(65)
+                    ]
+                },
+                {"items": [{"itemId": 2003, "item": "Тестовый усиленный посох"}]},
+            ]
+        }
+    ],
 }
 
 CHEST_ITEM = {
@@ -219,9 +244,13 @@ TRANSFORMATION_CATALOG = {
 
 
 class FixtureState:
-    def __init__(self) -> None:
+    def __init__(self, screenshots: Path | None = None) -> None:
         self.profile = profile()
         self.community_failures = False
+        self.stage = "initialization"
+        self.page_errors: list[str] = []
+        self.page_state: dict[str, object] | None = None
+        self.screenshots = screenshots
 
 
 class FixtureServer(ThreadingHTTPServer):
@@ -247,7 +276,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler contract
+    def do_GET(self) -> None:  # noqa: N802
         parsed = urlsplit(self.path)
         if parsed.path == "/api/user-data":
             self.send_json(self.server.state.profile)
@@ -297,6 +326,50 @@ class FixtureHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/monsters/42":
             self.send_json(MONSTER)
             return
+        if parsed.path == "/api/monsters/43":
+            data = MONSTER_LARGE_LOOT
+            if parse_qs(parsed.query).get("server") == ["original"]:
+                data = {
+                    **data,
+                    "slots": [{"choices": data["slots"][0]["choices"][1:]}],
+                }
+            self.send_json(data)
+            return
+        if parsed.path == "/api/monsters":
+            self.send_json(
+                {
+                    "monsters": [MONSTER_LARGE_LOOT["monster"]],
+                    "total": 1,
+                    "page": 1,
+                    "pages": 1,
+                }
+            )
+            return
+        if parsed.path == "/api/items":
+            self.send_json(
+                {
+                    "items": [
+                        item["item"] for item in (CHEST_ITEM, RUNE_ITEM, ENHANCED_ITEM)
+                    ],
+                    "total": 3,
+                    "page": 1,
+                    "pages": 1,
+                }
+            )
+            return
+        if re.fullmatch(r"/api/items/50(?:[0-5][0-9]|6[0-4])", parsed.path):
+            item_id = int(parsed.path.rsplit("/", 1)[1])
+            self.send_json(
+                {
+                    **RUNE_ITEM,
+                    "item": {
+                        **RUNE_ITEM["item"],
+                        "id": item_id,
+                        "name": f"Тестовая добыча {item_id - 4999}",
+                    },
+                }
+            )
+            return
         if parsed.path == "/api/items/2001":
             self.send_json(CHEST_ITEM)
             return
@@ -317,7 +390,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
             return
         self.serve_asset(parsed.path)
 
-    def do_PUT(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler contract
+    def do_PUT(self) -> None:  # noqa: N802
         if urlsplit(self.path).path != "/api/user-data":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -354,9 +427,12 @@ class FixtureHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def launch_browser(playwright):
+def launch_browser(playwright, *, hide_scrollbars: bool = True):
+    ignored_arguments = [] if hide_scrollbars else ["--hide-scrollbars"]
     try:
-        return playwright.chromium.launch(headless=True)
+        return playwright.chromium.launch(
+            headless=True, ignore_default_args=ignored_arguments
+        )
     except PlaywrightError:
         executable = next(
             (
@@ -372,7 +448,11 @@ def launch_browser(playwright):
         )
         if not executable:
             raise
-        return playwright.chromium.launch(headless=True, executable_path=executable)
+        return playwright.chromium.launch(
+            headless=True,
+            executable_path=executable,
+            ignore_default_args=ignored_arguments,
+        )
 
 
 def playwright_failure_category(error: PlaywrightError) -> str:
@@ -381,14 +461,461 @@ def playwright_failure_category(error: PlaywrightError) -> str:
         return "BROWSER_MISSING"
     if "host system is missing dependencies" in message:
         return "BROWSER_DEPENDENCIES"
+    if isinstance(error, PlaywrightTimeoutError):
+        return "BROWSER_TIMEOUT"
+    if "target page, context or browser has been closed" in message:
+        return "BROWSER_CLOSED"
     return "BROWSER_RUNTIME"
+
+
+def failure_details(error: object) -> str:
+    message = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", str(error)).strip()
+    return re.sub(
+        r"(?i)(?:[a-z]:[\\/]Users[\\/]|/(?:home|Users)/)[^\\/\r\n\"']+",
+        "[user]",
+        message,
+    )
+
+
+def report_failure(state: FixtureState, error: object, category: str) -> int:
+    unavailable = category in {"BROWSER_MISSING", "BROWSER_DEPENDENCIES"}
+    status = "NOT EXECUTABLE" if unavailable else "FAIL"
+    print(f"Embedded frontend smoke test: {status} [{category}]")
+    print(f"Stage: {state.stage}")
+    print(failure_details(error))
+    if state.page_state is not None:
+        print(f"Page: {json.dumps(state.page_state, ensure_ascii=True)}")
+    for page_error in state.page_errors:
+        print(f"JavaScript: {failure_details(page_error)}")
+    return 2 if unavailable else 1
+
+
+def smoke_page(context, state: FixtureState):
+    page = context.new_page()
+    errors: list[str] = []
+    state.page_errors = errors
+    state.page_state = None
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    return page, errors
+
+
+def capture_failure_state(page, state: FixtureState) -> None:
+    if page is None:
+        return
+    try:
+        state.page_state = page.evaluate(
+            """() => ({
+                route: location.hash,
+                focus: document.activeElement?.id || document.activeElement?.tagName,
+                dialogOpen: document.getElementById('infoDialog')?.open,
+                filtersOpen: document.getElementById('filterDrawer')?.hidden === false,
+                scrollLocked: document.documentElement.classList.contains('overlay-open'),
+                viewport: [innerWidth, innerHeight],
+                contentWidth: document.body?.getBoundingClientRect().width
+            })"""
+        )
+    except PlaywrightError:
+        state.page_state = None
+    with suppress(PlaywrightError, OSError):
+        save_screenshot(page, state, "failure")
+
+
+def save_screenshot(page, state: FixtureState, suffix: str = "") -> None:
+    if state.screenshots is None:
+        return
+    state.screenshots.mkdir(parents=True, exist_ok=True)
+    name = re.sub(r"[^a-zA-Z0-9_-]+", "-", state.stage).strip("-")
+    if suffix:
+        name += f"-{suffix}"
+    page.screenshot(path=str(state.screenshots / f"{name}.png"), animations="disabled")
+
+
+def refresh_news(page) -> None:
+    button = page.locator('[data-action="refresh-vk-news"]')
+    button.click()
+    page.locator('[data-action="refresh-vk-news"]:not(:disabled)').wait_for(
+        state="visible"
+    )
+
+
+def require_header_text(page) -> None:
+    require(
+        page.locator(
+            "#battlegroundStatus[title], #battlegroundStatus [title], "
+            "#versionStatus[title], #versionStatus [title]"
+        ).count()
+        == 0,
+        "header statuses show redundant hover tooltips",
+    )
+    require(
+        page.locator("#battlegroundCountdown").evaluate(
+            """node => {
+                const timer = getComputedStyle(node);
+                const version = getComputedStyle(document.querySelector('.version-status-number'));
+                return ['fontFamily', 'fontSize', 'fontWeight'].every(key => timer[key] === version[key]);
+            }"""
+        ),
+        "countdown typography differs from the version number",
+    )
+    for selector in ("#battlegroundStatus", "#versionStatus"):
+        geometry = page.locator(selector).evaluate(
+            """node => {
+                const bounds = node.getBoundingClientRect();
+                const boxes = Array.from(node.children, child => child.getBoundingClientRect());
+                const dot = node.querySelector('.version-status-dot')?.getBoundingClientRect();
+                const center = (bounds.top + bounds.bottom) / 2;
+                return {
+                    diameter: dot ? Math.min(dot.width, dot.height) : null,
+                    gap: Math.min(...boxes.slice(1).map((box, index) => box.left - boxes[index].right)),
+                    aligned: boxes.every(box => Math.abs((box.top + box.bottom) / 2 - center) <= 1),
+                    contained: boxes.every(box =>
+                        box.left >= bounds.left && box.right <= bounds.right &&
+                        box.top >= bounds.top && box.bottom <= bounds.bottom)
+                };
+            }"""
+        )
+        require(
+            (geometry["diameter"] is None or geometry["diameter"] >= 10)
+            and geometry["gap"] >= 4
+            and geometry["aligned"]
+            and geometry["contained"],
+            f"header status elements do not fit on one line: {selector}, {geometry}",
+        )
+    samples = {
+        "#battlegroundName": ["Противостояние", "Захват флага", "Горнило"],
+        "#battlegroundCountdown": ["00:00", "29:59"],
+        ".version-status-number": [f"Версия {CURRENT_VERSION}"],
+        "#versionStatusText": [
+            "Не проверена",
+            "Проверка…",
+            "Проверить",
+            "Обновление",
+            "Актуальная",
+        ],
+    }
+    for selector, texts in samples.items():
+        node = page.locator(selector)
+        require(node.is_visible(), f"header text is hidden: {selector}")
+        metrics = node.evaluate(
+            """(node, samples) => {
+                const bounds = node.getBoundingClientRect();
+                const style = getComputedStyle(node);
+                const range = document.createRange();
+                range.selectNodeContents(node);
+                const text = range.getBoundingClientRect();
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+                const widths = samples.map(value => context.measureText(value).width);
+                return {
+                    text: node.textContent,
+                    width: bounds.width,
+                    requiredWidth: Math.max(text.width, ...widths),
+                    top: text.top - bounds.top,
+                    bottom: bounds.bottom - text.bottom,
+                    lineHeight: style.lineHeight
+                };
+            }""",
+            texts,
+        )
+        require(
+            metrics["requiredWidth"] <= metrics["width"] + 1
+            and metrics["top"] >= -1
+            and metrics["bottom"] >= -1,
+            f"header text does not fit: {selector}, {metrics}",
+        )
+
+
+def exercise_layout(page, state: FixtureState, mode: str) -> None:
+    selectors = (".topbar", "#searchWidget", "#battlegroundStatus", "#versionStatus")
+    for theme in ("dark", "light"):
+        state.stage = f"layout/{mode}/{theme}/theme"
+        if page.locator("html").get_attribute("data-theme") != theme:
+            page.locator("#moreButton").click()
+            page.locator('[data-menu-action="theme"]').click()
+        require(
+            page.locator("html").get_attribute("data-theme") == theme,
+            f"requested theme was not applied: {theme}",
+        )
+        for width, height in (
+            (320, 820),
+            (390, 844),
+            (720, 520),
+            (1024, 768),
+            (1280, 820),
+            (1440, 1000),
+        ):
+            page.set_viewport_size({"width": width, "height": height})
+            baseline = {}
+            for route in ("home", "transformations", "item/2001"):
+                state.stage = f"layout/{mode}/{theme}/{width}px/route:{route}"
+                page.evaluate("route => { location.hash = route; }", route)
+                page.wait_for_selector(f'.page[data-route="{route}"]:not([aria-busy])')
+                page.evaluate("window.scrollTo({top: 0, behavior: 'instant'})")
+                require(
+                    not page.evaluate(
+                        "document.documentElement.scrollWidth > document.documentElement.clientWidth"
+                    ),
+                    f"horizontal overflow: {theme}, {width}px, {route}",
+                )
+                for selector in selectors:
+                    box = page.locator(selector).bounding_box()
+                    require(box is not None, f"missing layout element: {selector}")
+                    if selector in baseline:
+                        require(
+                            all(
+                                abs(box[key] - baseline[selector][key]) <= 1
+                                for key in ("x", "y", "width", "height")
+                            ),
+                            f"header shifts between routes: {selector}, {theme}, {width}px",
+                        )
+                    else:
+                        baseline[selector] = box
+                require(
+                    re.fullmatch(
+                        r"\d{2}:\d{2}",
+                        page.locator("#battlegroundCountdown").inner_text().strip(),
+                    )
+                    is not None,
+                    "countdown contains extra labels",
+                )
+                require(
+                    page.locator("#battlegroundName").inner_text()
+                    in ("Противостояние", "Захват флага", "Горнило"),
+                    "battleground name is missing or incorrect",
+                )
+                require(
+                    re.search(
+                        r"БГ|UTC",
+                        page.locator("#battlegroundStatus").inner_text(),
+                    )
+                    is None,
+                    "battleground contains a redundant label or server time",
+                )
+                require_header_text(page)
+                save_screenshot(page, state)
+                require(
+                    page.locator("#battlegroundCountdown").evaluate(
+                        r"""node => {
+                            const [r, g, b] = getComputedStyle(node).color.match(/\d+/g).map(Number);
+                            return g > r && g > b;
+                        }"""
+                    ),
+                    f"countdown is not green in the {theme} theme",
+                )
+                require(
+                    page.locator("#serverSelect").evaluate(
+                        "node => node.getBoundingClientRect().width >= 120"
+                    ),
+                    f"server selector collapsed at {width}px",
+                )
+            overlay_baseline = {
+                selector: page.locator(selector).bounding_box()
+                for selector in (*selectors, "#mainContent", "#mobileNav")
+                if page.locator(selector).is_visible()
+            }
+            scroll_before = page.evaluate("window.scrollY")
+            dialog_top = None
+            for action in ("about", "data"):
+                state.stage = f"layout/{mode}/{theme}/{width}px/dialog:{action}/open"
+                page.locator("#moreButton").click()
+                page.locator(f'[data-menu-action="{action}"]').click()
+                page.wait_for_selector("#infoDialog[open]")
+                box = page.locator("#infoDialog").bounding_box()
+                require(box is not None, "information dialog is missing")
+                if dialog_top is not None:
+                    require(
+                        abs(box["y"] - dialog_top) <= 1,
+                        "information dialogs change their opening position",
+                    )
+                dialog_top = box["y"]
+                save_screenshot(page, state)
+                for selector, before in overlay_baseline.items():
+                    box = page.locator(selector).bounding_box()
+                    require(
+                        box is not None
+                        and before is not None
+                        and abs(box["x"] - before["x"]) <= 1
+                        and abs(box["width"] - before["width"]) <= 1,
+                        f"opening a dialog shifts the page: {selector}, {width}px, "
+                        f"before={before}, after={box}",
+                    )
+                state.stage = f"layout/{mode}/{theme}/{width}px/dialog:{action}/close"
+                page.keyboard.press("Escape")
+                page.wait_for_selector("#infoDialog[open]", state="hidden")
+                page.locator("html:not(.overlay-open) #moreButton:focus").wait_for(
+                    state="visible"
+                )
+                require(
+                    abs(page.evaluate("window.scrollY") - scroll_before) <= 1,
+                    "closing a dialog changed the page scroll position",
+                )
+                for selector, before in overlay_baseline.items():
+                    box = page.locator(selector).bounding_box()
+                    require(
+                        box is not None
+                        and before is not None
+                        and abs(box["x"] - before["x"]) <= 1
+                        and abs(box["width"] - before["width"]) <= 1,
+                        f"closing a dialog shifts the page: {selector}, {width}px, "
+                        f"before={before}, after={box}",
+                    )
+            state.stage = f"layout/{mode}/{theme}/{width}px/filters/open"
+            page.evaluate("location.hash = 'transformations'")
+            page.wait_for_selector('.catalog-page[data-route="transformations"]')
+            before = page.locator(".topbar").bounding_box()
+            page.locator(".filter-button").click()
+            page.wait_for_selector("#filterDrawer", state="visible")
+            save_screenshot(page, state)
+            box = page.locator(".topbar").bounding_box()
+            require(
+                before is not None
+                and box is not None
+                and abs(box["x"] - before["x"]) <= 1
+                and abs(box["width"] - before["width"]) <= 1,
+                f"opening filters shifts the header: {width}px, before={before}, after={box}",
+            )
+            state.stage = f"layout/{mode}/{theme}/{width}px/filters/close"
+            page.locator("#closeFiltersButton").click()
+            page.wait_for_selector("#filterDrawer", state="hidden")
+            require(
+                page.evaluate(
+                    "!document.documentElement.classList.contains('overlay-open')"
+                    " && !document.querySelector('.app-shell').hasAttribute('inert')"
+                ),
+                "closing filters left the background locked",
+            )
+    state.stage = f"layout/{mode}/restore-home"
+    page.locator("#moreButton").click()
+    page.locator('[data-menu-action="theme"]').click()
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.evaluate("location.hash = 'home'")
+    page.wait_for_selector('.home-page[data-route="home"]')
+
+
+def exercise_item_navigation(page, base_url: str, state: FixtureState) -> None:
+    for theme, width, height in (("dark", 1280, 820), ("light", 720, 520)):
+        state.stage = f"navigation/{theme}/{width}px/catalog"
+        page.set_viewport_size({"width": 1280, "height": 820})
+        page.goto(f"{base_url}#items", wait_until="networkidle")
+        page.reload(wait_until="networkidle")
+        page.locator("#serverSelect").select_option("kiss")
+        page.locator('.page[data-route="items"][data-server="kiss"]').wait_for()
+        if page.locator("html").get_attribute("data-theme") != theme:
+            page.locator("#moreButton").click()
+            page.locator('[data-menu-action="theme"]').click()
+        expect(page.locator("html")).to_have_attribute("data-theme", theme)
+        page.locator('[data-view="list"]').click()
+        page.set_viewport_size({"width": width, "height": height})
+        page.locator('.result-main[data-item-id="2001"]').click()
+        page.locator('.page[data-route="item/2001"]').wait_for()
+        page.locator("[data-route-back]").click()
+        selected = page.locator('.result-row.is-selected a[aria-current="true"]')
+        expect(selected).to_have_attribute("data-item-id", "2001")
+        save_screenshot(page, state)
+
+        state.stage = f"navigation/{theme}/{width}px/cards"
+        page.set_viewport_size({"width": 1280, "height": 820})
+        page.locator('[data-view="cards"]').click()
+        page.set_viewport_size({"width": width, "height": height})
+        expect(selected).to_have_attribute("data-item-id", "2001")
+        page.locator('.result-main[data-item-id="2002"]').click()
+        page.locator('.page[data-route="item/2002"]').wait_for()
+        page.go_back()
+        expect(selected).to_have_count(1)
+        expect(selected).to_have_attribute("data-item-id", "2002")
+        with page.expect_response(lambda response: "/api/items?" in response.url):
+            page.locator("[data-catalog-order]").select_option("desc")
+        page.locator("[data-catalog-results]:not([aria-busy])").wait_for()
+        expect(selected).to_have_attribute("data-item-id", "2002")
+        page.locator("#serverSelect").select_option("original")
+        page.locator('.page[data-route="items"][data-server="original"]').wait_for()
+        expect(selected).to_have_count(0)
+        page.locator("#serverSelect").select_option("kiss")
+        page.locator('.page[data-route="items"][data-server="kiss"]').wait_for()
+        expect(selected).to_have_attribute("data-item-id", "2002")
+        save_screenshot(page, state)
+
+        state.stage = f"navigation/{theme}/{width}px/loot-expanded"
+        page.evaluate("location.hash = 'monster/43'")
+        page.locator('.page[data-route="monster/43"]').wait_for()
+        page.locator('[data-open-details="monster-drops"]').click()
+        group = page.locator('[data-drop-group="0"]')
+        group.locator("summary").click()
+        rows = group.locator("a[data-item-id]")
+        expect(rows).to_have_count(30)
+        page.locator('[data-drop-more="0"]').click()
+        expect(rows).to_have_count(60)
+        page.locator('[data-drop-group="1"] summary').click()
+        expect(page.locator('[data-drop-group="1"] a')).to_have_count(1)
+        item = group.locator('[data-item-id="5050"]')
+        item.scroll_into_view_if_needed()
+        scroll_top = page.evaluate("scrollY")
+        item.click()
+        page.locator('.page[data-route="item/5050"]').wait_for()
+        page.locator("[data-route-back]").click()
+        page.locator('.page[data-route="monster/43"] .monster-drops[open]').wait_for()
+        expect(page.locator("[data-drop-group][open]")).to_have_count(2)
+        expect(rows).to_have_count(60)
+        expect(item).to_have_attribute("aria-current", "true")
+        require(
+            abs(page.evaluate("scrollY") - scroll_top) <= 1,
+            "returning to expanded loot did not restore the scroll position",
+        )
+        require(
+            item.evaluate("node => getComputedStyle(node).boxShadow != 'none'"),
+            "selected loot item has no visible highlight",
+        )
+        save_screenshot(page, state)
+        group.locator("summary").click()
+        group.locator("summary").click()
+        expect(rows).to_have_count(60)
+
+        state.stage = f"navigation/{theme}/{width}px/loot-preview"
+        page.locator('.drop-preview-list [data-item-id="5000"]').click()
+        page.locator('.page[data-route="item/5000"]').wait_for()
+        page.go_back()
+        page.locator('.page[data-route="monster/43"]').wait_for()
+        expect(
+            page.locator('a[data-item-id="5000"][aria-current="true"]')
+        ).to_have_count(2)
+        expect(
+            page.locator('a[data-item-id="5050"][aria-current="true"]')
+        ).to_have_count(0)
+        save_screenshot(page, state)
+
+        state.stage = f"navigation/{theme}/{width}px/loot-server-switch"
+        page.locator("#serverSelect").select_option("original")
+        page.locator('.page[data-route="monsters"][data-server="original"]').wait_for()
+        page.locator('.result-main[href="#monster/43"]').click()
+        page.locator(
+            '.page[data-route="monster/43"][data-server="original"]'
+        ).wait_for()
+        expect(page.locator(".monster-drops[open]")).to_have_count(0)
+        expect(page.locator("a.is-selected")).to_have_count(0)
+        expect(page.locator('.drop-preview-list a[data-item-id="2003"]')).to_have_count(
+            1
+        )
+        page.locator("#serverSelect").select_option("kiss")
+        page.locator('.page[data-route="monsters"][data-server="kiss"]').wait_for()
+        page.locator('.result-main[href="#monster/43"]').click()
+        page.locator('.page[data-route="monster/43"][data-server="kiss"]').wait_for()
+        expect(page.locator(".monster-drops[open]")).to_have_count(1)
+        expect(rows).to_have_count(60)
+        expect(
+            page.locator('a[data-item-id="5000"][aria-current="true"]')
+        ).to_have_count(2)
+    page.set_viewport_size({"width": 1280, "height": 900})
 
 
 def exercise_frontend(base_url: str, state: FixtureState) -> None:
     with sync_playwright() as playwright:
+        state.stage = "browser/hidden-scrollbars/launch"
         browser = launch_browser(playwright)
+        page = None
         try:
             for scale in (1, 1.25, 1.5, 2):
+                state.stage = f"startup/scale:{scale}"
                 context = browser.new_context(
                     viewport={"width": 720, "height": 820},
                     device_scale_factor=scale,
@@ -401,12 +928,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                     }}}};
                     """
                 )
-                page = context.new_page()
-                errors: list[str] = []
-                page.on(
-                    "pageerror",
-                    lambda error, page_errors=errors: page_errors.append(str(error)),
-                )
+                page, errors = smoke_page(context, state)
                 page.goto(base_url, wait_until="networkidle")
                 page.wait_for_selector(".vk-news-card")
                 require(
@@ -414,6 +936,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                     == f"Версия {CURRENT_VERSION}",
                     "version label regression",
                 )
+                require_header_text(page)
                 require(
                     "Запись № 62337" in page.locator(".vk-news-card-meta").inner_text(),
                     "VK post metadata regression",
@@ -422,8 +945,8 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                     page.locator(".vk-news-card img[onerror]").count() == 0,
                     "remote news text was not escaped",
                 )
-                page.get_by_role("button", name="Проверить новую запись").click()
-                page.wait_for_timeout(250)
+                state.stage = f"news/scale:{scale}/refresh"
+                refresh_news(page)
                 toast_text = page.locator("#toast").inner_text().strip()
                 require(
                     toast_text == "Новых записей ВКонтакте нет.",
@@ -438,6 +961,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 require(not errors, "desktop frontend raised a JavaScript error")
                 context.close()
 
+            state.stage = "desktop/startup"
             context = browser.new_context(viewport={"width": 1280, "height": 900})
             context.add_init_script(
                 """
@@ -447,10 +971,10 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 }}}};
                 """
             )
-            page = context.new_page()
-            errors = []
-            page.on("pageerror", lambda error: errors.append(str(error)))
+            page, errors = smoke_page(context, state)
             page.goto(base_url, wait_until="networkidle")
+            exercise_layout(page, state, "hidden-scrollbars")
+            state.stage = "desktop/external-links"
             page.locator('.home-resources a[href="https://irisonline.ru/"]').click()
             require(
                 page.url.startswith(base_url), "external link navigated inside WebView"
@@ -471,6 +995,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 "middle-click bypassed the external URL bridge",
             )
 
+            state.stage = "desktop/chest"
             page.evaluate("location.hash = 'item/2001'")
             page.wait_for_selector('.detail-page[data-route="item/2001"]')
             require(
@@ -478,6 +1003,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 == "Покупной",
                 "purchased tooltip category color/label regression",
             )
+            state.stage = "desktop/chest/contained-item"
             page.locator('.chest-content-row[href="#item/2002"]').click()
             page.wait_for_selector('.detail-page[data-route="item/2002"]')
             require(
@@ -501,6 +1027,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 back_style["size"] >= 16 and back_style["weight"] >= 700,
                 "detail back action is not visually prominent",
             )
+            state.stage = "desktop/chest/back"
             back.click()
             page.wait_for_selector('.detail-page[data-route="item/2001"]')
             require(
@@ -508,6 +1035,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 "back from a contained item did not restore its chest",
             )
 
+            state.stage = "desktop/title"
             page.evaluate("location.hash = 'title/991'")
             page.wait_for_selector('.detail-page[data-route="title/991"]')
             title_heading = page.get_by_role("heading", name="Антагонист I")
@@ -553,6 +1081,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 page.get_by_text("Связанный предмет — ID", exact=True).count() == 1,
                 "title technical item reference is missing",
             )
+            state.stage = "desktop/title/360px"
             page.set_viewport_size({"width": 360, "height": 780})
             page.wait_for_timeout(50)
             mobile_badge_metrics = page.evaluate(
@@ -593,6 +1122,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
             )
             page.set_viewport_size({"width": 1280, "height": 900})
 
+            state.stage = "desktop/enhancement"
             page.evaluate("location.hash = 'item/2003'")
             page.wait_for_selector('.detail-page[data-route="item/2003"]')
             enhancement = page.locator("[data-enhancement-level]")
@@ -622,6 +1152,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
             )
             page.set_viewport_size({"width": 1280, "height": 900})
 
+            state.stage = "desktop/transformations/catalogue"
             page.evaluate("location.hash = 'transformations'")
             page.wait_for_selector('.catalog-page[data-catalog-kind="transformations"]')
             niil = page.locator(
@@ -634,6 +1165,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 "Niil utility effects are missing from the transformation preview",
             )
 
+            state.stage = "desktop/transformations/detail"
             page.evaluate("location.hash = 'transformation/3001'")
             page.wait_for_selector('.detail-page[data-route="transformation/3001"]')
             require(
@@ -657,6 +1189,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 "transformation detail still renders an empty-data placeholder",
             )
             for narrow_width in (320, 380):
+                state.stage = f"desktop/transformations/{narrow_width}px"
                 page.set_viewport_size({"width": narrow_width, "height": 780})
                 page.wait_for_timeout(50)
                 require(
@@ -667,6 +1200,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 )
             page.set_viewport_size({"width": 1280, "height": 900})
 
+            state.stage = "desktop/monster"
             page.evaluate("location.hash = 'monster/42'")
             page.wait_for_selector('.detail-page[data-route="monster/42"]')
             rows = page.locator(".drop-preview-list a")
@@ -697,11 +1231,13 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 "full loot action is missing",
             )
 
+            exercise_item_navigation(page, base_url, state)
+
+            state.stage = "news/stale-response"
             page.evaluate("location.hash = 'home'")
             page.wait_for_selector(".vk-news-card")
             state.community_failures = True
-            page.get_by_role("button", name="Проверить новую запись").click()
-            page.wait_for_timeout(250)
+            refresh_news(page)
             require(
                 page.locator(".vk-news-card").count() == 1,
                 "last-known-good VK card disappeared after network failure",
@@ -722,6 +1258,7 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 f"stale VK refresh has misleading status text: {toast_text!r}",
             )
 
+            state.stage = "desktop/search-shortcut"
             page.keyboard.press("/")
             require(
                 page.locator("#globalSearch").evaluate(
@@ -731,14 +1268,44 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
             )
             require(not errors, "desktop frontend raised a JavaScript error")
             context.close()
+        except (PlaywrightError, RuntimeError, AssertionError):
+            capture_failure_state(page, state)
+            raise
+        finally:
+            browser.close()
+
+        state.stage = "browser/visible-scrollbars/launch"
+        state.page_errors = []
+        browser = launch_browser(playwright, hide_scrollbars=False)
+        page = None
+        try:
+            context = browser.new_context(
+                viewport={"width": 1280, "height": 900}, device_scale_factor=1.25
+            )
+            page, errors = smoke_page(context, state)
+            page.goto(base_url, wait_until="networkidle")
+            exercise_layout(page, state, "visible-scrollbars")
+            require(not errors, "scrollbar layout raised a JavaScript error")
+            context.close()
+        except (PlaywrightError, RuntimeError, AssertionError):
+            capture_failure_state(page, state)
+            raise
         finally:
             browser.close()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.parse_args()
-    state = FixtureState()
+    parser.add_argument(
+        "--screenshots", type=Path, default=os.environ.get("IRIS_UI_SCREENSHOTS")
+    )
+    arguments = parser.parse_args()
+    screenshots = (
+        Path(arguments.screenshots).resolve() if arguments.screenshots else None
+    )
+    if screenshots is not None and (screenshots == ROOT or ROOT in screenshots.parents):
+        parser.error("Screenshots must be saved outside the source repository.")
+    state = FixtureState(screenshots)
     server = FixtureServer(state)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -748,14 +1315,9 @@ def main() -> int:
             exercise_frontend(f"http://{host}:{port}/", state)
         except PlaywrightError as error:
             category = playwright_failure_category(error)
-            if category in {"BROWSER_MISSING", "BROWSER_DEPENDENCIES"}:
-                print(f"Embedded frontend smoke test: NOT EXECUTABLE [{category}]")
-                return 2
-            print(f"Embedded frontend smoke test: FAIL [{category}]")
-            return 1
-        except RuntimeError as error:
-            print(f"Embedded frontend smoke test: FAIL [REGRESSION] {error}")
-            return 1
+            return report_failure(state, error, category)
+        except (RuntimeError, AssertionError) as error:
+            return report_failure(state, error, "REGRESSION")
     finally:
         server.shutdown()
         server.server_close()

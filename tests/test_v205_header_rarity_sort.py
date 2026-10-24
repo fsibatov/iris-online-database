@@ -16,14 +16,18 @@ class Version205HeaderRaritySortTests(unittest.TestCase):
         cls.styles = (ROOT / "web" / "styles.css").read_text(encoding="utf-8")
         cls.main_go = (ROOT / "main.go").read_text(encoding="utf-8")
 
-    def test_battleground_timer_is_present_and_uses_server_time(self):
+    def test_battleground_timer_shows_the_event_and_countdown(self):
         self.assertIn('id="battlegroundStatus"', self.html)
-        self.assertIn(
-            "const BATTLEGROUND_SERVER_OFFSET_MS = 3 * 60 * 60 * 1000;", self.script
-        )
-        self.assertIn("['Противостояние', 'Захват флага', 'Горнило']", self.script)
+        self.assertIn('id="battlegroundCountdown"', self.html)
+        self.assertIn('id="battlegroundName"', self.html)
+        self.assertNotIn('id="battlegroundStart"', self.html)
+        self.assertIn('role="timer" aria-live="off"', self.html)
         self.assertIn("const BATTLEGROUND_INTERVAL_MS = 30 * 60 * 1000;", self.script)
         self.assertIn("const BATTLEGROUND_FIRST_START_MS = 3 * 60 * 1000;", self.script)
+        timer_markup = self.html.split('id="battlegroundStatus"', 1)[1].split(
+            "</div>", 1
+        )[0]
+        self.assertNotRegex(timer_markup, r"БГ|UTC")
         self.assertIn(
             "window.setTimeout(scheduleBattlegroundStatus, 1000 - (Date.now() % 1000))",
             self.script,
@@ -38,7 +42,6 @@ class Version205HeaderRaritySortTests(unittest.TestCase):
         start = self.script.index("function battlegroundState")
         end = self.script.index("function renderBattlegroundStatus", start)
         function = self.script[start:end]
-        names = ["Противостояние", "Захват флага", "Горнило"]
         timestamps = []
         expected = []
         for slot in range(48):
@@ -48,8 +51,7 @@ class Version205HeaderRaritySortTests(unittest.TestCase):
             timestamps.append(server_iso)
             expected.append(
                 {
-                    "name": names[slot % len(names)],
-                    "start": f"{hour:02d}:{minute:02d}",
+                    "name": ("Противостояние", "Захват флага", "Горнило")[slot % 3],
                     "countdown": "00:00",
                 }
             )
@@ -103,10 +105,10 @@ class Version205HeaderRaritySortTests(unittest.TestCase):
         self.assertEqual(
             json.loads(completed.stdout),
             [
-                {"name": "Противостояние", "start": "00:03", "countdown": "01:00"},
-                {"name": "Захват флага", "start": "00:33", "countdown": "29:59"},
-                {"name": "Горнило", "start": "23:33", "countdown": "00:00"},
-                {"name": "Противостояние", "start": "00:03", "countdown": "29:59"},
+                {"name": "Противостояние", "countdown": "01:00"},
+                {"name": "Захват флага", "countdown": "29:59"},
+                {"name": "Горнило", "countdown": "00:00"},
+                {"name": "Противостояние", "countdown": "29:59"},
             ],
         )
 
@@ -201,43 +203,30 @@ class Version205HeaderRaritySortTests(unittest.TestCase):
             home_start : self.script.index("function addHistory", home_start)
         ]
         self.assertNotIn("globalSearch.focus", home)
-        server_start = self.script.index("serverSelect.addEventListener('change'")
+        server_start = self.script.index("async function changeServer()")
         server_change = self.script[
             server_start : self.script.index(
                 "moreButton.addEventListener", server_start
             )
         ]
         self.assertIn(
-            "void renderRoute().finally(() => serverSelect.focus({ preventScroll: true }));",
+            "if (state.server === nextServer && !applicationClosing) serverSelect.focus({ preventScroll: true });",
             server_change,
         )
 
-    def test_header_statuses_remain_compact_without_clipping_primary_text(self):
-        self.assertIn(
-            ".battleground-status strong { color: var(--text); font-weight: 700; }",
-            self.styles,
-        )
-        self.assertNotIn(".battleground-status strong { max-width:", self.styles)
-        self.assertNotIn(".battleground-status strong { display: none; }", self.styles)
-        self.assertNotIn(".version-status-text { max-width:", self.styles)
-        self.assertIn(
-            ".battleground-status time, .version-status-text { display: none; }",
-            self.styles,
-        )
-        self.assertIn("grid-template-columns: minmax(0, 1fr) auto;", self.styles)
-        self.assertIn(".version-status-prefix { display: none; }", self.styles)
-        self.assertIn(".version-status-prefix-short { display: inline; }", self.styles)
-        self.assertIn(
-            '<span class="version-status-prefix-short" aria-hidden="true">v</span>',
-            self.html,
-        )
+    def test_header_statuses_reserve_space_and_keep_accessible_labels(self):
+        for selector in (".battleground-status", ".version-status"):
+            rules = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", self.styles)
+            self.assertIsNotNone(rules)
+            self.assertRegex(rules[1], r"\bwidth:\s*\d+px;")
+        self.assertNotIn(".version-status-text { display: none; }", self.styles)
+        version_text = re.search(r"\.version-status-text\s*\{([^}]*)\}", self.styles)
+        self.assertIsNotNone(version_text)
+        self.assertNotRegex(version_text[1], r"overflow|height|ellipsis")
         self.assertIn("versionStatus.setAttribute('aria-label', label);", self.script)
-        self.assertIn("versionStatus.title = label;", self.script)
-        self.assertIn("battlegroundStatus.title = label;", self.script)
-        bg_tag = re.search(
-            r'<div class="header-status-pill battleground-status"[^>]*>', self.html
-        ).group(0)
-        self.assertNotIn('aria-live="polite"', bg_tag)
+        self.assertNotIn("versionStatus.title", self.script)
+        self.assertNotIn("battlegroundStatus.title", self.script)
+        self.assertIn("${next.name}: до начала ${next.countdown}", self.script)
 
     def test_header_status_pills_share_one_visual_component(self):
         self.assertIn('class="header-status-pill battleground-status"', self.html)
@@ -247,9 +236,11 @@ class Version205HeaderRaritySortTests(unittest.TestCase):
                 ".battleground-status {", self.styles.index(".header-status-pill {")
             )
         ]
-        self.assertIn("height: var(--header-status-height);", shared)
+        self.assertIn("min-height: var(--header-status-height);", shared)
         self.assertIn("--header-status-height: 34px;", self.styles)
-        self.assertIn("padding: 0 9px;", shared)
+        self.assertIn("display: inline-flex;", shared)
+        self.assertIn("padding: 3px 9px;", shared)
+        self.assertIn("line-height: 18px;", shared)
         self.assertIn("border: 1px solid var(--border);", shared)
         self.assertIn("border-radius: 999px;", shared)
         self.assertIn("background: var(--surface-2);", shared)

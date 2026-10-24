@@ -1,9 +1,3 @@
-"""Build a lossless additive projection of monsterlist fields omitted by game_data.
-
-The asset does not reinterpret opaque client/server fields. Fields without a
-confirmed player-facing meaning are exposed only in technical details.
-"""
-
 from __future__ import annotations
 
 import argparse

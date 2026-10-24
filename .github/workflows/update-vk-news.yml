@@ -6,6 +6,9 @@ on:
     paths:
       - '.github/workflows/update-vk-news.yml'
       - 'tools/update_vk_news.py'
+      - 'tools/validate_vk_candidate.py'
+      - 'tools/verify_python_environment.py'
+      - 'tools/requirements-audit.txt'
   workflow_dispatch:
   schedule:
     - cron: '7,17,27,37,47,57 * * * *'
@@ -25,12 +28,12 @@ jobs:
       contents: write
     steps:
       - name: Получить репозиторий
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
       - name: Настроить Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: '3.13'
           cache: pip
@@ -41,10 +44,12 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          python -m pip install --disable-pip-version-check --timeout 60 --retries 3 -r tools\requirements-audit.txt
+          $PlaywrightPins = @(Get-Content -LiteralPath tools\requirements-audit.txt | Where-Object { $_ -match '^playwright==[^\s]+$' })
+          if ($PlaywrightPins.Count -ne 1) { throw "Exactly one Playwright pin is required." }
+          python -m pip install --disable-pip-version-check --timeout 60 --retries 3 $PlaywrightPins[0]
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          python -B tools\verify_python_environment.py
+          python -B tools\verify_python_environment.py --packages playwright
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           python -m pip check
@@ -91,74 +96,7 @@ jobs:
           $StaleConfirmations = 0
           $StaleCandidateId = $null
 
-          $ValidatorPath = Join-Path $env:RUNNER_TEMP "vk-candidate-state.py"
-          $ValidatorSource = @'
-          import html
-          import json
-          import re
-          import sys
-          from pathlib import Path
-
-          current_path = Path(sys.argv[1])
-          candidate_path = Path(sys.argv[2])
-          current = json.loads(current_path.read_text(encoding="utf-8"))
-          candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
-
-          BR_TAG = re.compile(r"<br\s*/?>", re.IGNORECASE)
-          HTML_TAG = re.compile(r"<[^>]+>")
-          DECORATIVE_SYMBOL = re.compile(
-              "[\u2600-\u27BF\U0001F300-\U0001FAFF\uFE0F\u200D]"
-          )
-          MARKUP = re.compile(r"[*_`~]+")
-
-          def validate(payload):
-              post_id = payload.get("post_id")
-              post_url = payload.get("post_url")
-              text = str(payload.get("text") or "").strip()
-              if not isinstance(post_id, int) or isinstance(post_id, bool) or post_id <= 0:
-                  raise SystemExit(2)
-              if post_url != f"https://vk.ru/wall-59626511_{post_id}":
-                  raise SystemExit(3)
-              if not text:
-                  raise SystemExit(4)
-              return post_id
-
-          def semantic_text(value):
-              text = BR_TAG.sub("\n", str(value or ""))
-              text = HTML_TAG.sub(" ", html.unescape(text))
-              text = DECORATIVE_SYMBOL.sub("", text)
-              text = MARKUP.sub("", text)
-              return " ".join(text.split()).casefold()
-
-          current_id = validate(current)
-          candidate_id = validate(candidate)
-          identity_keys = (
-              "schema",
-              "community_url",
-              "post_id",
-              "post_url",
-              "published_at",
-          )
-
-          same_identity = all(
-              current.get(key, "") == candidate.get(key, "") for key in identity_keys
-          )
-          same_text = semantic_text(current.get("text")) == semantic_text(
-              candidate.get("text")
-          )
-
-          if candidate_id < current_id:
-              action = "stale"
-          elif candidate_id > current_id:
-              action = "promote"
-          elif same_identity and same_text:
-              action = "same"
-          else:
-              action = "promote"
-
-          print(candidate_id, action)
-          '@
-          [IO.File]::WriteAllText($ValidatorPath, $ValidatorSource, $Utf8NoBom)
+          $ValidatorPath = Join-Path $env:GITHUB_WORKSPACE "tools\validate_vk_candidate.py"
 
           function Invoke-VkUpdater {
             param(

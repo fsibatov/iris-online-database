@@ -1,12 +1,41 @@
 package main
 
 import (
+	"bytes"
 	"errors"
+	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
+
+func TestProfileWriteFailureDoesNotExposePaths(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "private-user")
+	if err := os.WriteFile(blocker, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var messages bytes.Buffer
+	app := &application{
+		profile: &profileStore{path: filepath.Join(blocker, "profile.json"), profile: defaultProfile()},
+		logger:  log.New(&messages, "", 0),
+	}
+	request := httptest.NewRequest(http.MethodPut, "/api/user-data", strings.NewReader(`{"schemaVersion":1}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	app.handleUserData(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("expected failed write, got %d", response.Code)
+	}
+	for _, output := range []string{response.Body.String(), messages.String()} {
+		if strings.Contains(output, blocker) || strings.Contains(output, "private-user") || strings.Contains(output, "profile.json") {
+			t.Fatalf("storage failure exposes internal path: %q", output)
+		}
+	}
+}
 
 func writeLogRecord(t *testing.T, writer *rotatingLogWriter, record string) {
 	t.Helper()

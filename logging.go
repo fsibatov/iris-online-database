@@ -1,12 +1,27 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
 )
+
+func storageFailureReason(err error) string {
+	switch {
+	case errors.Is(err, fs.ErrPermission):
+		return "нет доступа"
+	case errors.Is(err, fs.ErrNotExist):
+		return "файл или папка отсутствует"
+	case errors.Is(err, errUnsafeDestructivePath):
+		return "небезопасный путь"
+	default:
+		return "ошибка записи"
+	}
+}
 
 type rotatingLogWriter struct {
 	mu       sync.Mutex

@@ -20,7 +20,7 @@ import (
 const (
 	githubLatestReleaseAPI = "https://api.github.com/repos/fsibatov/iris-online-database/releases/latest"
 	githubLatestReleaseURL = "https://github.com/fsibatov/iris-online-database/releases/latest"
-	githubReleaseTagPrefix = "https://github.com/fsibatov/iris-online-database/releases/tag/v"
+	githubReleaseTagPrefix = "https://github.com/fsibatov/iris-online-database/releases/tag/"
 	maxUpdateResponseBytes = 32 << 10
 	updateSuccessCacheTTL  = 30 * time.Minute
 	updateFailureCacheTTL  = 30 * time.Second
@@ -38,6 +38,7 @@ const (
 )
 
 var versionPattern = regexp.MustCompile(`(?i)^v?\s*(\d+)\.(\d+)(?:\.(\d+))?\.?$`)
+var releaseTagPattern = regexp.MustCompile(`^v?\d+\.\d+(?:\.\d+)?$`)
 
 type updateCheckResult struct {
 	CurrentVersion    string `json:"currentVersion"`
@@ -132,7 +133,7 @@ func checkLatestRelease(ctx context.Context, client *http.Client, apiURL, curren
 
 func checkLatestReleaseSources(ctx context.Context, client *http.Client, webURL, apiURL, currentVersion string) updateCheckResult {
 	result := updateCheckResult{CurrentVersion: currentVersion}
-	current, err := normalizeVersion(currentVersion)
+	_, err := normalizeVersion(currentVersion)
 	if err != nil {
 		result.Failure = updateFailureConfiguration
 		result.diagnostic = "invalid current version: " + err.Error()
@@ -152,7 +153,7 @@ func checkLatestReleaseSources(ctx context.Context, client *http.Client, webURL,
 	if strings.TrimSpace(webURL) != "" {
 		latest, failure := latestReleaseFromWeb(ctx, client, webURL)
 		if latest != "" {
-			return buildSuccessfulUpdateResult(currentVersion, current, latest)
+			return buildSuccessfulUpdateResult(currentVersion, latest)
 		}
 		failures = append(failures, failure)
 		if failure.Failure == updateFailureCanceled {
@@ -162,7 +163,7 @@ func checkLatestReleaseSources(ctx context.Context, client *http.Client, webURL,
 	if strings.TrimSpace(apiURL) != "" {
 		latest, failure := latestReleaseFromAPI(ctx, client, apiURL)
 		if latest != "" {
-			return buildSuccessfulUpdateResult(currentVersion, current, latest)
+			return buildSuccessfulUpdateResult(currentVersion, latest)
 		}
 		failures = append(failures, failure)
 	}
@@ -206,11 +207,10 @@ func latestReleaseFromAPI(ctx context.Context, client *http.Client, target strin
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return "", updateFailure(updateFailureInvalidResponse, 0, "decode GitHub API response: "+err.Error())
 	}
-	latest, err := normalizeVersion(payload.TagName)
-	if err != nil {
-		return "", updateFailure(updateFailureInvalidResponse, 0, "invalid GitHub release tag: "+err.Error())
+	if _, err := normalizeVersion(payload.TagName); err != nil || !releaseTagPattern.MatchString(payload.TagName) {
+		return "", updateFailure(updateFailureInvalidResponse, 0, "invalid GitHub release tag")
 	}
-	return latest, updateCheckResult{}
+	return payload.TagName, updateCheckResult{}
 }
 
 func latestReleaseFromWeb(ctx context.Context, client *http.Client, target string) (string, updateCheckResult) {
@@ -243,7 +243,7 @@ func latestReleaseFromWeb(ctx context.Context, client *http.Client, target strin
 		return "", updateFailure(updateFailureConfiguration, 0, "invalid configured GitHub release URL: "+err.Error())
 	}
 	redirect, err := base.Parse(location)
-	if err != nil || redirect.Scheme != "https" || !strings.EqualFold(redirect.Hostname(), "github.com") || redirect.User != nil || (redirect.Port() != "" && redirect.Port() != "443") {
+	if err != nil || redirect.Scheme != "https" || !strings.EqualFold(redirect.Hostname(), "github.com") || redirect.User != nil || (redirect.Port() != "" && redirect.Port() != "443") || redirect.RawQuery != "" || redirect.Fragment != "" {
 		return "", updateFailure(updateFailureInvalidResponse, 0, "GitHub release redirect is not trusted")
 	}
 	const expectedPathPrefix = "/fsibatov/iris-online-database/releases/tag/"
@@ -258,22 +258,21 @@ func latestReleaseFromWeb(ctx context.Context, client *http.Client, target strin
 	if err != nil {
 		return "", updateFailure(updateFailureInvalidResponse, 0, "GitHub release redirect tag cannot be decoded")
 	}
-	latest, err := normalizeVersion(tag)
-	if err != nil {
-		return "", updateFailure(updateFailureInvalidResponse, 0, "invalid GitHub release tag: "+err.Error())
+	if _, err := normalizeVersion(tag); err != nil || !releaseTagPattern.MatchString(tag) {
+		return "", updateFailure(updateFailureInvalidResponse, 0, "invalid GitHub release tag")
 	}
-	return latest, updateCheckResult{}
+	return tag, updateCheckResult{}
 }
 
-func buildSuccessfulUpdateResult(currentVersion, current, latest string) updateCheckResult {
+func buildSuccessfulUpdateResult(currentVersion, tag string) updateCheckResult {
 	result := updateCheckResult{
 		CurrentVersion: currentVersion,
-		LatestVersion:  latest,
+		LatestVersion:  strings.TrimPrefix(tag, "v"),
 		Checked:        true,
 	}
-	result.UpdateAvailable = compareNormalizedVersions(latest, current) > 0
+	result.UpdateAvailable = compareVersions(tag, currentVersion) > 0
 	if result.UpdateAvailable {
-		result.ReleaseURL = githubReleaseTagPrefix + latest
+		result.ReleaseURL = githubReleaseTagPrefix + tag
 	}
 	return result
 }

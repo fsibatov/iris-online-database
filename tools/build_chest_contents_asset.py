@@ -1,15 +1,3 @@
-"""Build the additive chest-content projection from Iris Online item_change.txt.
-
-The original server tables are intentionally not bundled with the application.
-Only profiles whose source item is confirmed as an item-change container are
-retained. The confirmation comes from the additive item-ability projection:
-kindOf=3, eventType=3 and changeIndex equal to the source item ID. This includes
-quest-reward boxes that are not catalogued under the UI category "Сундук".
-Source row order and the original item/count/enhanced/changerate values are
-preserved; probability interpretation stays in the Go runtime so it can be
-tested together with the API contract.
-"""
-
 from __future__ import annotations
 
 import argparse

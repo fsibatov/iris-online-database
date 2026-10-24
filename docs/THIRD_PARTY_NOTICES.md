@@ -14,6 +14,10 @@ WebView2 Runtime — системный компонент Microsoft. EXE вкл
 
 Точный список и cryptographic module sums находятся в `go.mod`/`go.sum`. Основные runtime dependencies Wails и его transitives используют permissive MIT/BSD/Apache-style licenses; перед каждым major release список повторно проверяется.
 
+## Go runtime для Windows 7/8/8.1
+
+Используются пять адаптированных файлов официального Go 1.26.6. Лицензия Go BSD находится в `tools/compat/GO-LICENSE.txt`. Дифф основан на восстановлении совместимости в [XTLS/go-win7](https://github.com/XTLS/go-win7/tree/ccc83255f9ad36e06b119066d0b704944afeeb9a); точный источник и контрольные суммы записаны в `tools/compat/windows7.json`. Отличия от исходного диффа описаны в `WINDOWS_LEGACY.md`. Готовый сторонний компилятор не распространяется.
+
 ## Python/Chromium tools
 
 Ruff, Bandit, pip-audit, PyYAML и Playwright/Chromium используются только для разработки, CI и VK updater. Они не входят в Windows release EXE. Exact pins находятся в `tools/requirements-audit.txt`.

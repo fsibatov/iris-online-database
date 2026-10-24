@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "go_version": "1.26.6",
+  "patch": "go1.26.6-windows7.patch",
+  "patch_sha256": "8c53eb41920848bc7103fb610cf49df5c87236be6c16b63d7a51f4dd93d6706b",
+  "reference": "https://github.com/XTLS/go-win7/blob/ccc83255f9ad36e06b119066d0b704944afeeb9a/go-1-26.diff",
+  "files": {
+    "src/crypto/internal/sysrand/rand_windows.go": {
+      "original_sha256": "8122c2f83776b2e76f45631835d8038853886e5db728e24fe97c60179197ed8b",
+      "patched_sha256": "6b84c2a16cac241257583149ec41c2cdb05de2ec1afef02fea7601c499b12c1b"
+    },
+    "src/internal/syscall/windows/syscall_windows.go": {
+      "original_sha256": "bd17d11ec16f619351a85040109b5324a4d7ca1a168cacd398002acfa5fd7611",
+      "patched_sha256": "cd79a79c42761ac7ae126fa6c7cc661bb8f17aad0d2818192a11b8211d19c699"
+    },
+    "src/internal/syscall/windows/zsyscall_windows.go": {
+      "original_sha256": "2c4f681f6ab0d78b942f9abbc78374fe515a77de8a0c83b278601eb90a9ca4c5",
+      "patched_sha256": "697c3b6e6f5ad50968db3f9af2ac339539b55e23e0892946e7efd46679added0"
+    },
+    "src/runtime/os_windows.go": {
+      "original_sha256": "1dc3474dd74a8cd30f6a439d59f52e18a5a2669f4a2060be63443aff9d7f9777",
+      "patched_sha256": "f95d8cf3f8a5b0380cdccaad6423876a10b062848c5d86327a8102c8e10ec79d"
+    },
+    "src/syscall/exec_windows.go": {
+      "original_sha256": "031afbedd3b2e8ee58d890b8ff3df3df67f5556ff174768ec17e9fe31d44ae40",
+      "patched_sha256": "3216b8f9302a96c5c5da3c4a4e39d8cc0fd68fa813b123dc968ac384b38b71ad"
+    }
+  }
+}
