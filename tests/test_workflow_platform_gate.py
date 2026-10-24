@@ -76,6 +76,36 @@ class WorkflowPlatformGateTests(TestCase):
                 ci_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_negative_branch_patterns_cannot_suppress_required_checks(self):
+        """A later negated branch pattern overrides a preceding `main` match."""
+        with TemporaryDirectory(prefix="iris-ci-negative-branch-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for filename in ("ci.yml", "codeql.yml"):
+                    path = workflows / filename
+                    original = path.read_text(encoding="utf-8")
+                    for event in ("push", "pull_request"):
+                        marker = f"  {event}:\n    branches: [main]\n"
+                        self.assertIn(marker, original)
+                        for negative in ("'!main'", "'!m*'"):
+                            with self.subTest(workflow=filename, event=event, negative=negative):
+                                path.write_text(
+                                    original.replace(
+                                        marker,
+                                        f"  {event}:\n    branches: [main, {negative}]\n",
+                                        1,
+                                    ),
+                                    encoding="utf-8",
+                                )
+                                self.assertGreater(workflow.release_policy_failures(), 0)
+                        path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_pr_event_type_filters_cannot_skip_required_checks(self):
         """PR event filters must not suppress CI or CodeQL on new commits."""
         with TemporaryDirectory(prefix="iris-pr-event-types-") as directory:

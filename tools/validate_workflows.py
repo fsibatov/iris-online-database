@@ -253,6 +253,11 @@ def ci_trigger_failures(ci: str, *, require_dispatch: bool = True) -> int:
         branches = settings.get("branches")
         if not isinstance(branches, list) or "main" not in branches:
             return 1
+        # GitHub applies branch patterns in order: a later `!main` (or `!m*`)
+        # excludes main despite the earlier literal match. Mandatory checks
+        # must not rely on negated patterns whose order changes coverage.
+        if any(not isinstance(branch, str) or branch.startswith("!") for branch in branches):
+            return 1
         # Path filters can suppress mandatory Windows CI for otherwise valid
         # pushes and pull requests (including changes to Go/security code).
         if "paths" in settings or "paths-ignore" in settings:

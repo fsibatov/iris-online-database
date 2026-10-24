@@ -1,16 +1,16 @@
-# Iris Online Database — CONTINUE NEXT RUN (iter121)
+# Iris Online Database — CONTINUE NEXT RUN (iter122)
 
-**UTC:** 2026-10-24 17:19:50 UTC. **Status:** one PR-event-filter policy defect RED→GREEN; Linux offline QA partial. Not a release.
+**UTC:** 2026-10-24 18:17:28 UTC. **Status:** one negative-branch-filter CI/CodeQL policy defect RED→GREEN; Linux offline QA partial. NOT a release.
 
-## Input attestation
-- Newest confirmed full Library/conversation `IrisOnlineDB_AI_2026-10-24_iter120.zip`, SHA-256 `d2ba10e0db336eb54096d9b1b1314c9fb841b729d843cbcef5dcb74ac81e35a6`, 8,689,622 bytes, 552 files, sole root, CRC/full extraction/byte identity PASS; sorted CRC manifest SHA-256 `f9e46332c5dae3dd97735bbb698cbd112bbb9cf0d2e6c88707ea2415208817a0`. Immutable/latest checkpoint SHA-256 `b7a5586c5d60afa2c2ef34d74d7995bdbf8b22b491e6aafff496ca08f36e889e`, byte-identical.
-- Git input `ai-development` HEAD `950f40f72f5bb7b1499e36759e33b7e733ba0260`, parent `05ad90b2cd0b5a2aa4b6dd9b4446d5024f1a4063`, clean, fsck exit 0 (pre-existing dangling commit). VERSION `2.0.5`; `.go-version` `1.26.6`; go.mod `1.25.0`. Required docs/IrisTools.ps1/log present. Named engineering standard absent from accessible Library.
+## Verified input
+- Selected newest Library/conversation iter121 ZIP, byte-identical, SHA-256 `de1afd831fb20ab9d90a47724d7156ad9fe09f16107fd30cd64f008bf8a954db`, 8,850,037 bytes, 561 ZIP files, one root `iris-online-database`, CRC/full extraction/byte identity PASS; CRC manifest SHA-256 `372d83f6f0010f02c066e94b30aaa5cafb51b1c8c23685b69f6d469a0bbd453a`. Latest/immutable checkpoint SHA-256 `b0a5034d12ff40020e2bcad6fe6a046fac93e35916b15d0148daf11d8c66e9a0`, byte-identical.
+- Git input `ai-development` HEAD `95872002daa152d99c588359b2e5a4b50b5d0b5b`, parent `950f40f72f5bb7b1499e36759e33b7e733ba0260`, clean, fsck PASS (pre-existing dangling commit). VERSION `2.0.5`, `.go-version` `1.26.6`, go.mod `1.25.0`. ARCHITECTURE/BUILD/RELEASE, IrisTools.ps1 and log present. Named engineering standard not found in accessible Library.
 
-## One iteration
-- `tools/validate_workflows.py::ci_trigger_failures` accepted PR event `types` filters that skip required CI/CodeQL on updated commits. Six negative subcases RED before patch, all GREEN after minimal guard; unchanged workflow controls PASS. Only Python validator, one regression test, log and continuation changed. No Go/UI/game data/security pins/network/profile modified.
-- Actual QA: 250 Python unittest PASS, compileall PASS, data audit fatal=[], repository audit PASS, Node syntax PASS, gofmt PASS, offline Chromium/Playwright navigation PASS, Git diff/fsck PASS. Full Go test/vet/race BLOCKED (Linux Go 1.23.2 < go.mod 1.25.0); isolated Go NOT RUN. Workflow static PASS, native Windows PowerShell NOT RUN, overall workflow NOT PASS. Windows Wails/WebView2/Quality Gate/race NOT RUN; Staticcheck/govulncheck/Ruff/Bandit/pip-audit/Gitleaks NOT RUN. No separate TCP server/telemetry.
-- Commit/ZIP/Library/checkpoint integrity must be verified before pointer update. Output ZIP SHA and HEAD recorded in external checkpoint to avoid circular ZIP hash.
+## One engineering iteration
+- `tools/validate_workflows.py::ci_trigger_failures` accepted later negated branch patterns excluding `main` despite literal `main` entry; eight negative subcases RED before patch and GREEN after minimal guard; unchanged controls PASS. Only Python validator, regression test, log and continuation changed; no workflow, Go, UI, game data, security pins, profile or network changed.
+- QA: Python **251 unittest PASS**, compileall PASS, data audit `fatal=[]`, repository audit PASS, Node check PASS, gofmt PASS, offline Chromium/Playwright navigation PASS, git diff/fsck PASS. Full Go test/vet/race BLOCKED (Go 1.23.2 < go.mod 1.25.0); isolated Go NOT RUN. Workflow static PASS but native Windows PowerShell NOT RUN, overall workflow NOT PASS. Windows Wails/WebView2/Quality Gate/race NOT RUN. TCP frontend smoke NOT RUN; security tools Staticcheck/govulncheck/Ruff/Bandit/pip-audit/Gitleaks NOT RUN.
+- Output HEAD and ZIP SHA are stored in external immutable checkpoint, not in this committed file (self-reference avoidance). Full ZIP `.git`/CRC/extraction/byte identity/Git/fsck/SHA and Library readback required before updating latest pointer. Preserve main, remote, tags, Releases.
 
 ## Critical blocker / exactly one next action
-Archived `.go-version=1.26.6` is NOT reconciled with working Windows copy after merge/security upgrades. Never overwrite Windows working copy, downgrade Go/security, publish or call archive a release.
+Archived `.go-version=1.26.6` NOT reconciled with working Windows copy after merge/security updates. Never overwrite Windows copy, downgrade Go/security, publish or call ZIP a release.
 **Exactly one next action:** obtain authentic read-only snapshot of working Windows copy and compare Git HEAD, `.go-version`, security toolchain without replacing files.
