@@ -322,6 +322,14 @@ def release_policy_failures() -> int:
         for job_id in ("windows-quality", "windows-race", "windows-build")
     ):
         failures += 1
+    # Job-level continue-on-error can report a failed mandatory Windows gate
+    # as successful, even when its runner and steps are otherwise correct.
+    if isinstance(jobs, dict) and any(
+        isinstance(jobs.get(job_id), dict)
+        and "continue-on-error" in jobs[job_id]
+        for job_id in ("windows-quality", "windows-race", "windows-build")
+    ):
+        failures += 1
     if pinned_windows_runner_count(ci_document) < 3:
         failures += 1
     if (
