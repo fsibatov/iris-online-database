@@ -1063,3 +1063,34 @@ class WorkflowPlatformGateTests(TestCase):
                         self.assertGreater(workflow.release_policy_failures(), 0)
                 ci_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
+
+    def test_codeql_matrix_exclude_cannot_silence_language_scans(self):
+        """An exclusion can remove Go/Python jobs despite intact language labels."""
+        with TemporaryDirectory(prefix="iris-codeql-matrix-exclude-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            codeql_path = workflows / "codeql.yml"
+            original = codeql_path.read_text(encoding="utf-8")
+            marker = "        language: [go, python]\n"
+            self.assertIn(marker, original)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for case, languages in (
+                    ("exclude-go", ("go",)),
+                    ("exclude-python", ("python",)),
+                    ("exclude-both", ("go", "python")),
+                ):
+                    with self.subTest(case=case):
+                        exclusion = "        exclude:\n" + "".join(
+                            f"          - language: {language}\n" for language in languages
+                        )
+                        codeql_path.write_text(
+                            original.replace(marker, marker + exclusion, 1),
+                            encoding="utf-8",
+                        )
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                codeql_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)

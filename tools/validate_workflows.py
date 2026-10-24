@@ -484,8 +484,12 @@ def release_policy_failures() -> int:
     strategy = analyze.get("strategy") if isinstance(analyze, dict) else None
     matrix = strategy.get("matrix") if isinstance(strategy, dict) else None
     languages = matrix.get("language") if isinstance(matrix, dict) else None
+    # Matrix exclusions can silently suppress either mandatory language scan
+    # while leaving the visible language list unchanged.
     if not (
-        isinstance(languages, list)
+        isinstance(matrix, dict)
+        and "exclude" not in matrix
+        and isinstance(languages, list)
         and len(languages) == 2
         and all(isinstance(language, str) for language in languages)
         and set(languages) == {"go", "python"}
