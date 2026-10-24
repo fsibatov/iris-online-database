@@ -314,6 +314,14 @@ def release_policy_failures() -> int:
             for job in jobs.values()
         )
 
+    # Counting pinned runners is insufficient: unrelated jobs can mask a
+    # required quality/race/build gate moved to an older Windows image.
+    if not isinstance(jobs, dict) or any(
+        not isinstance(jobs.get(job_id), dict)
+        or jobs[job_id].get("runs-on") != "windows-2025"
+        for job_id in ("windows-quality", "windows-race", "windows-build")
+    ):
+        failures += 1
     if pinned_windows_runner_count(ci_document) < 3:
         failures += 1
     if (

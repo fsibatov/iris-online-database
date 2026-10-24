@@ -150,6 +150,35 @@ class WorkflowPlatformGateTests(TestCase):
                         self.assertGreater(workflow.release_policy_failures(), 0)
                         path.write_text(original, encoding="utf-8")
 
+    def test_required_windows_jobs_cannot_borrow_runner_pins_from_decoys(self):
+        """Each required gate itself must use windows-2025, not an unrelated job."""
+        with TemporaryDirectory(prefix="iris-ci-runner-binding-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            ci_path = workflows / "ci.yml"
+            original = ci_path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for job in ("windows-quality", "windows-race", "windows-build"):
+                    with self.subTest(job=job):
+                        header = f"  {job}:\n"
+                        self.assertIn(header, original)
+                        runner = original.index("    runs-on: windows-2025\n", original.index(header))
+                        modified = (
+                            original[:runner]
+                            + "    runs-on: windows-2022\n"
+                            + original[runner + len("    runs-on: windows-2025\n"):]
+                            + "\n  decoy-runner:\n    runs-on: windows-2025\n"
+                            + "    steps:\n      - run: Write-Output 'decoy'\n"
+                        )
+                        ci_path.write_text(modified, encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                ci_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_go_build_gate_cannot_be_spoofed_or_disabled(self):
         """A commented-out or disabled Go build is not CodeQL coverage."""
         with TemporaryDirectory(prefix="iris-codeql-build-gate-") as directory:
