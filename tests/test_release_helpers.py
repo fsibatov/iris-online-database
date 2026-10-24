@@ -10,11 +10,18 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from frontend_smoke_test import playwright_failure_category
 from playwright.sync_api import Error as PlaywrightError
-from release_fingerprint import FingerprintError, assert_release_tree, source_hash
+from release_fingerprint import (
+    FingerprintError,
+    assert_release_tree,
+    source_hash,
+    verify_fingerprint,
+    write_fingerprint,
+)
 from release_targets import RELEASE_TARGETS
 from repository_audit import python_mode_violation
 from verify_executables import (
@@ -331,6 +338,54 @@ class ReleaseHelperTests(unittest.TestCase):
             self.assertNotEqual(regular_hash, executable_hash)
             with self.assertRaises(FingerprintError):
                 assert_release_tree(root, "main")
+
+    def test_release_fingerprint_rejects_changed_toolchain(self):
+        """Build cannot reuse a gate fingerprint after Go/security tool drift."""
+        with tempfile.TemporaryDirectory(
+            prefix="iris-fingerprint-toolchain-"
+        ) as temporary:
+            root = Path(temporary)
+            subprocess.run(
+                ["git", "init", "--initial-branch=main", str(root)],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            for key, value in (
+                ("user.name", "Iris test"),
+                ("user.email", "test@example.invalid"),
+            ):
+                subprocess.run(
+                    ["git", "-C", str(root), "config", key, value],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+            (root / "VERSION").write_text("2.0.5\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(root), "add", "VERSION"],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-m", "fixture"],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            original = {"go": "go1.26.6", "govulncheck": "v1"}
+            with patch("release_fingerprint.toolchain", return_value=original):
+                write_fingerprint(root, "main")
+                verify_fingerprint(root, "main")
+            for changed in (
+                {"go": "go1.25.0", "govulncheck": "v1"},
+                {"go": "go1.26.6", "govulncheck": "v2"},
+            ):
+                with self.subTest(changed=changed):
+                    with patch("release_fingerprint.toolchain", return_value=changed):
+                        with self.assertRaises(FingerprintError):
+                            verify_fingerprint(root, "main")
 
     def test_python_requirements_are_single_pinned_source(self):
         requirements = (ROOT / "tools" / "requirements-audit.txt").read_text(

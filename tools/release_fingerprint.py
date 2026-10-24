@@ -215,6 +215,8 @@ def verify_fingerprint(root: Path, expected_branch: str) -> None:
     }
     if any(saved.get(key) != value for key, value in expected.items()):
         raise FingerprintError("Release fingerprint does not match the current source")
+    if saved.get("toolchain") != toolchain():
+        raise FingerprintError("Release toolchain differs from tested toolchain")
 
 
 def main() -> int:
