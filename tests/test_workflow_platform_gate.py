@@ -73,6 +73,30 @@ class WorkflowPlatformGateTests(TestCase):
                         )
                         self.assertGreater(workflow.release_policy_failures(), 0)
 
+    def test_required_windows_2025_runners_cannot_be_spoofed_by_comments(self):
+        """The release gate must inspect actual runner values, not YAML comments."""
+        with TemporaryDirectory(prefix="iris-windows-runner-policy-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            filenames = ("ci.yml", "codeql.yml", "dependency-review.yml")
+            for filename in filenames:
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for filename in filenames:
+                    with self.subTest(filename=filename):
+                        path = workflows / filename
+                        original = path.read_text(encoding="utf-8")
+                        self.assertIn("runs-on: windows-2025", original)
+                        path.write_text(
+                            original.replace("runs-on: windows-2025", "runs-on: windows-2022")
+                            + "\n# runs-on: windows-2025\n" * original.count("runs-on: windows-2025"),
+                            encoding="utf-8",
+                        )
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                        path.write_text(original, encoding="utf-8")
+
     def test_windows_build_setup_order_cannot_be_spoofed_by_comments(self):
         """Only real Windows build steps may satisfy the required setup sequence."""
         with TemporaryDirectory(prefix="iris-windows-build-order-") as directory:

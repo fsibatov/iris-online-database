@@ -275,8 +275,10 @@ def release_policy_failures() -> int:
     }
     try:
         ci_document = yaml.load(ci, Loader=UniqueKeySafeLoader)
+        codeql_document = yaml.load(codeql, Loader=UniqueKeySafeLoader)
+        dependency_document = yaml.load(dependency, Loader=UniqueKeySafeLoader)
     except yaml.YAMLError:
-        ci_document = None
+        ci_document = codeql_document = dependency_document = None
     jobs = ci_document.get("jobs") if isinstance(ci_document, dict) else None
     if not isinstance(jobs, dict):
         failures += 1
@@ -290,11 +292,20 @@ def release_policy_failures() -> int:
             failures += 1
     if "ubuntu-" in ci or "ubuntu-" in codeql or "ubuntu-" in dependency:
         failures += 1
-    if ci.count("runs-on: windows-2025") < 3:
+    def pinned_windows_runner_count(document: object) -> int:
+        jobs = document.get("jobs") if isinstance(document, dict) else None
+        if not isinstance(jobs, dict):
+            return 0
+        return sum(
+            isinstance(job, dict) and job.get("runs-on") == "windows-2025"
+            for job in jobs.values()
+        )
+
+    if pinned_windows_runner_count(ci_document) < 3:
         failures += 1
     if (
-        "runs-on: windows-2025" not in codeql
-        or "runs-on: windows-2025" not in dependency
+        pinned_windows_runner_count(codeql_document) < 1
+        or pinned_windows_runner_count(dependency_document) < 1
     ):
         failures += 1
     if (
