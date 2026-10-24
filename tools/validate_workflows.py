@@ -397,6 +397,14 @@ def release_policy_failures() -> int:
     ):
         failures += 1
 
+    # These three mandatory CodeQL stages must propagate failures to the job.
+    # Even an expression-valued continue-on-error can silently mask a scan.
+    if any(
+        "continue-on-error" in step
+        for step in (*go_build_steps, *init_actions, *analyze_actions)
+    ):
+        failures += 1
+
     windows_start = ci.find("  windows-build:")
     if windows_start < 0:
         failures += 1

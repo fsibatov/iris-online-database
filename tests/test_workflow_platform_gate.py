@@ -287,6 +287,35 @@ class WorkflowPlatformGateTests(TestCase):
                 codeql_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_codeql_critical_steps_cannot_ignore_errors(self):
+        """CodeQL init/build/analyze failures must fail the security job."""
+        with TemporaryDirectory(prefix="iris-codeql-fail-open-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            codeql_path = workflows / "codeql.yml"
+            original = codeql_path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for step_name in ("Initialize CodeQL", "Build Windows Go sources", "Analyze"):
+                    for setting in ("true", "${{ true }}"):
+                        with self.subTest(step=step_name, setting=setting):
+                            marker = f"      - name: {step_name}\n"
+                            self.assertIn(marker, original)
+                            codeql_path.write_text(
+                                original.replace(
+                                    marker,
+                                    marker + f"        continue-on-error: {setting}\n",
+                                    1,
+                                ),
+                                encoding="utf-8",
+                            )
+                            self.assertGreater(workflow.release_policy_failures(), 0)
+                codeql_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_init_action_cannot_be_removed_disabled_or_misconfigured(self):
         """CodeQL analysis requires an initialized database for each matrix language."""
         with TemporaryDirectory(prefix="iris-codeql-init-action-") as directory:
