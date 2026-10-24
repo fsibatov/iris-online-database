@@ -336,6 +336,18 @@ def release_policy_failures() -> int:
         failures += 1
     codeql_jobs = codeql_document.get("jobs") if isinstance(codeql_document, dict) else None
     analyze = codeql_jobs.get("analyze") if isinstance(codeql_jobs, dict) else None
+    # Text markers can be preserved in comments while a real matrix entry
+    # silently drops Go or Python from CodeQL coverage.
+    strategy = analyze.get("strategy") if isinstance(analyze, dict) else None
+    matrix = strategy.get("matrix") if isinstance(strategy, dict) else None
+    languages = matrix.get("language") if isinstance(matrix, dict) else None
+    if not (
+        isinstance(languages, list)
+        and len(languages) == 2
+        and all(isinstance(language, str) for language in languages)
+        and set(languages) == {"go", "python"}
+    ):
+        failures += 1
     codeql_steps = analyze.get("steps") if isinstance(analyze, dict) else None
     go_build_steps = (
         [step for step in codeql_steps if isinstance(step, dict)

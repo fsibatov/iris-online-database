@@ -225,6 +225,30 @@ class WorkflowPlatformGateTests(TestCase):
                         self.assertGreater(workflow.release_policy_failures(), 0)
                         codeql_path.write_text(original, encoding="utf-8")
 
+    def test_codeql_matrix_languages_cannot_be_spoofed_by_comments(self):
+        """Both Go and Python must be enabled in the parsed CodeQL matrix."""
+        with TemporaryDirectory(prefix="iris-codeql-matrix-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            codeql_path = workflows / "codeql.yml"
+            original = codeql_path.read_text(encoding="utf-8")
+            marker = "language: [go, python]"
+            self.assertIn(marker, original)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for remaining in ("[python]", "[go]"):
+                    with self.subTest(remaining=remaining):
+                        codeql_path.write_text(
+                            original.replace(marker, f"language: {remaining} # {marker}", 1),
+                            encoding="utf-8",
+                        )
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                codeql_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_windows_build_setup_order_cannot_be_spoofed_by_comments(self):
         """Only real Windows build steps may satisfy the required setup sequence."""
         with TemporaryDirectory(prefix="iris-windows-build-order-") as directory:
