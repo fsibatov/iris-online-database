@@ -251,6 +251,10 @@ def ci_trigger_failures(ci: str) -> int:
         branches = settings.get("branches")
         if not isinstance(branches, list) or "main" not in branches:
             return 1
+        # Path filters can suppress mandatory Windows CI for otherwise valid
+        # pushes and pull requests (including changes to Go/security code).
+        if "paths" in settings or "paths-ignore" in settings:
+            return 1
     return 0
 
 

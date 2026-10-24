@@ -46,6 +46,36 @@ class WorkflowPlatformGateTests(TestCase):
                         )
                         self.assertGreater(workflow.release_policy_failures(), 0)
 
+    def test_ci_path_filters_cannot_silence_required_windows_gates(self):
+        """Path-filtered events can skip all mandatory CI for changed Go files."""
+        with TemporaryDirectory(prefix="iris-ci-path-filter-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            ci_path = workflows / "ci.yml"
+            original = ci_path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for event in ("push", "pull_request"):
+                    for filter_name, pattern in (
+                        ("paths", "['docs/**']"),
+                        ("paths-ignore", "['**/*.go']"),
+                    ):
+                        with self.subTest(event=event, filter=filter_name):
+                            event_block = f"  {event}:\n    branches: [main]\n"
+                            self.assertIn(event_block, original)
+                            modified = original.replace(
+                                event_block,
+                                event_block + f"    {filter_name}: {pattern}\n",
+                                1,
+                            )
+                            ci_path.write_text(modified, encoding="utf-8")
+                            self.assertGreater(workflow.release_policy_failures(), 0)
+                ci_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_required_windows_jobs_cannot_be_skipped_by_job_if(self):
         """A named required check is ineffective when its entire job is skipped."""
         with TemporaryDirectory(prefix="iris-required-ci-job-if-") as directory:
