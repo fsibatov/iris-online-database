@@ -76,6 +76,34 @@ class WorkflowPlatformGateTests(TestCase):
                 ci_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_codeql_analyzer_job_cannot_ignore_failures(self):
+        """Job-level continue-on-error must not mask failed Go/Python scans."""
+        with TemporaryDirectory(prefix="iris-codeql-job-fail-open-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            codeql_path = workflows / "codeql.yml"
+            original = codeql_path.read_text(encoding="utf-8")
+            marker = "  analyze:\n"
+            self.assertIn(marker, original)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for setting in ("true", "${{ true }}", "false"):
+                    with self.subTest(setting=setting):
+                        codeql_path.write_text(
+                            original.replace(
+                                marker,
+                                marker + f"    continue-on-error: {setting}\n",
+                                1,
+                            ),
+                            encoding="utf-8",
+                        )
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                codeql_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_main_triggers_cannot_be_disabled_or_path_filtered(self):
         """CodeQL must scan every main push and pull request, not only cron."""
         with TemporaryDirectory(prefix="iris-codeql-trigger-policy-") as directory:

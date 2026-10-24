@@ -365,6 +365,9 @@ def release_policy_failures() -> int:
     # Job-level conditions can skip both language scans despite intact steps.
     if isinstance(analyze, dict) and "if" in analyze:
         failures += 1
+    # A job-level override masks failed scans even when each CodeQL step fails.
+    if isinstance(analyze, dict) and "continue-on-error" in analyze:
+        failures += 1
     # Text markers can be preserved in comments while a real matrix entry
     # silently drops Go or Python from CodeQL coverage.
     strategy = analyze.get("strategy") if isinstance(analyze, dict) else None

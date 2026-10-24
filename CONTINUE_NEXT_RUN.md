@@ -1,15 +1,16 @@
-# Iris Online Database — continuation after iter118
+# Iris Online Database — CONTINUE NEXT RUN (iter119)
 
-**UTC:** 2026-10-24 14:13:38 UTC. **Status:** one CodeQL runner-binding defect RED→GREEN. NOT a release. Full Go BLOCKED, Windows QA NOT RUN, workflow NOT PASS.
+**UTC:** 2026-10-24 15:13:51 UTC. **Status:** one CodeQL job-level error-propagation defect reproduced and patched; Linux offline QA partial. Not a release.
 
-**Verified input:** latest Library/conversation iter117 ZIP SHA-256 `bcd87320ddb6380000ceef677a6a01f5b34b66ae4b18d7ceb9e5dbac1ffefb37`, 8,213,810 bytes, 525 entries, sole root `iris-online-database`, CRC 525/525, full extraction and byte identity 525/525 PASS, CRC manifest SHA-256 `3bfc6a1215af15a210ba6b115672d85ccd47a0addbfed334d232622db44b15ab`. Latest/immutable iter117 checkpoint byte-identical, SHA-256 `c315de99cc5066f3d6e27ebcd56e4aceb735e2316f1adbc5d78b331744c3367c`. Input Git `ai-development` HEAD `fe476bcdd55f978f3b7688ec54ee475f3df114f5`, parent `b02b608da0043dd0531b983b728f4c74b139290e`, clean, fsck PASS (pre-existing dangling commit). VERSION `2.0.5`, `.go-version` `1.26.6`, go.mod `1.25.0`; required docs and IrisTools.ps1 present. Named Engineering Maintenance Standard not found in accessible own Library; explicit constraints applied.
+## Input attestation
+- Source: Library/conversation `IrisOnlineDB_AI_2026-10-24_iter118.zip`, SHA-256 `96149564fd85f26f621c64f6fb107e4949611dd6b47b156dacb4a92a89d4d92e`, size 8,369,989, 534 files, one root, CRC/full extraction/byte identity PASS. CRC manifest SHA-256 `a8c99361910f81dd89659be918d6fcca02d85dce5f2fd65a5937ea19478f8ce3`. Checkpoint iter118/latest SHA-256 `2b67699ac6c15634ade50878b09f3b5e57599536aa603adf0b90b2670a2f8f1b`, identical.
+- Git input `ai-development` HEAD `fbdfe68864a5de69e1b81565bb801c06303383be`, parent `fe476bcdd55f978f3b7688ec54ee475f3df114f5`, clean, fsck PASS (one pre-existing dangling commit). VERSION `2.0.5`; `.go-version` `1.26.6`; go.mod `1.25.0`. Required architecture/build/release docs, IrisTools.ps1, AI log present. Named OpenAI maintenance standard unavailable in accessible own Library.
 
-**One fix:** `tools/validate_workflows.py` now verifies that CodeQL `jobs.analyze` itself uses `windows-2025`; an unrelated pinned job can no longer mask the analyzer running on `windows-2022`. One regression **RED before** (policy falsely zero), **GREEN after**; unchanged CodeQL control PASS. Minimal Python-only change, low risk; no workflow, game data, UI, profile, Go/security pins, network or telemetry modified.
+## One iteration
+- Defect: `jobs.analyze.continue-on-error` masks failed Go/Python CodeQL scans while workflow policy reported 0 failures. Regression 3 RED before patch, 3 GREEN after patch; unchanged workflow control PASS. Minimal YAML-structure check added; no workflow/application/game-data changes.
+- Actual QA: 248 Python unittest PASS, compileall PASS, data audit fatal=[], repository audit PASS, Node syntax PASS, gofmt PASS, offline Chromium/Playwright navigation PASS, Git diff/fsck PASS. Go test/vet/race BLOCKED (Linux Go 1.23.2 < go.mod 1.25.0); isolated Go contour NOT RUN. Workflow static PASS, Windows PowerShell NOT RUN; overall workflow NOT PASS. Windows Wails/WebView2/Quality Gate/race NOT RUN; security tools Staticcheck/govulncheck/Ruff/Bandit/pip-audit/Gitleaks NOT RUN. No separate TCP server or telemetry.
+- Output must be verified after local commit, then full ZIP with `.git`, Library readback and separate immutable/latest checkpoint readback. ZIP SHA and output Git HEAD belong in external checkpoint. Do not advance pointer until every check passes.
 
-**Actual QA:** Linux Python 3.13.5, `PYTHONPATH=tools`, pycache outside source: 247 unittest PASS, compileall PASS, data audit `fatal=[]` (13927 items, 1342 monsters, 467 sets), repository audit PASS; Node 22.16.0 `node --check web/app.js` PASS, gofmt PASS, offline Chromium Playwright monster-drop PASS, Git fsck/diff check PASS. Workflow static PASS, overall NOT PASS (Windows PowerShell NOT RUN, exit 2). Full Go test/vet/race BLOCKED (Go 1.23.2 < go.mod 1.25.0, offline); isolated Go contour NOT RUN (Python-only patch). Windows Wails/WebView2/Quality Gate/race/PowerShell NOT RUN; frontend TCP smoke NOT RUN (separate server prohibited). Staticcheck/govulncheck/Ruff/Bandit/pip-audit/Gitleaks NOT RUN (unavailable).
-
-**Storage gate:** exactly one local ai-development commit, clean tree, one complete ZIP with `.git`; verify SHA/CRC/full extraction/byte identity/Git/fsck; upload and independently materialize/compare ZIP and immutable checkpoint; only then advance/readback latest. Record output ZIP SHA/HEAD in external checkpoint to avoid ZIP self-reference. No main/remote/tag/Release changes. NOT a release.
-
-**Critical Windows divergence:** archived `.go-version=1.26.6` not reconciled with working Windows copy after merge and Go/security updates. Never replace Windows copy or downgrade Go/security.
-
-**Exactly one next action:** obtain authentic read-only snapshot of working Windows copy and compare Git HEAD, `.go-version` and security toolchain without replacing files.
+## Critical blocker / next action
+Archived `.go-version=1.26.6` is NOT reconciled with the running Windows working copy after merge/security upgrades; do not replace Windows copy, downgrade security/Go, publish or call archive a release.
+**Exactly one next action:** obtain authentic read-only snapshot of Windows working copy and compare Git HEAD, `.go-version`, and security toolchain.
