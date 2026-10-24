@@ -278,6 +278,30 @@ class WorkflowPlatformGateTests(TestCase):
                 ci_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_codeql_analyze_runner_cannot_borrow_pin_from_decoy(self):
+        """The actual Go/Python analyzer must run on pinned Windows 2025."""
+        with TemporaryDirectory(prefix="iris-codeql-runner-binding-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            codeql_path = workflows / "codeql.yml"
+            original = codeql_path.read_text(encoding="utf-8")
+            self.assertIn("  analyze:\n", original)
+            self.assertIn("    runs-on: windows-2025\n", original)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                modified = (
+                    original.replace("    runs-on: windows-2025\n", "    runs-on: windows-2022\n", 1)
+                    + "\n  decoy-runner:\n    runs-on: windows-2025\n"
+                    + "    steps:\n      - run: Write-Output 'decoy'\n"
+                )
+                codeql_path.write_text(modified, encoding="utf-8")
+                self.assertGreater(workflow.release_policy_failures(), 0)
+                codeql_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_go_build_gate_cannot_be_spoofed_or_disabled(self):
         """A commented-out or disabled Go build is not CodeQL coverage."""
         with TemporaryDirectory(prefix="iris-codeql-build-gate-") as directory:

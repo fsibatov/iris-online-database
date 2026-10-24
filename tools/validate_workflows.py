@@ -359,6 +359,9 @@ def release_policy_failures() -> int:
         failures += 1
     codeql_jobs = codeql_document.get("jobs") if isinstance(codeql_document, dict) else None
     analyze = codeql_jobs.get("analyze") if isinstance(codeql_jobs, dict) else None
+    # Bind the pinned runner to the actual analyzer, not an unrelated job.
+    if not isinstance(analyze, dict) or analyze.get("runs-on") != "windows-2025":
+        failures += 1
     # Job-level conditions can skip both language scans despite intact steps.
     if isinstance(analyze, dict) and "if" in analyze:
         failures += 1
