@@ -621,3 +621,32 @@ class WorkflowPlatformGateTests(TestCase):
                     ):
                         result = workflow.main()
                     self.assertEqual(result, 1, output.getvalue())
+
+    def test_codeql_job_level_condition_cannot_disable_security_gate(self):
+        """A conditional CodeQL job can silently skip both language scans."""
+        with TemporaryDirectory(prefix="iris-codeql-job-condition-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            codeql_path = workflows / "codeql.yml"
+            original = codeql_path.read_text(encoding="utf-8")
+            self.assertIn("  analyze:\n", original)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for condition in (
+                    "false",
+                    "${{ false }}",
+                    "${{ github.event_name == 'never' }}",
+                ):
+                    with self.subTest(condition=condition):
+                        codeql_path.write_text(
+                            original.replace(
+                                "  analyze:\n", f"  analyze:\n    if: {condition}\n", 1
+                            ),
+                            encoding="utf-8",
+                        )
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                codeql_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)

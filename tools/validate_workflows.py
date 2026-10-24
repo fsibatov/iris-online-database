@@ -336,6 +336,9 @@ def release_policy_failures() -> int:
         failures += 1
     codeql_jobs = codeql_document.get("jobs") if isinstance(codeql_document, dict) else None
     analyze = codeql_jobs.get("analyze") if isinstance(codeql_jobs, dict) else None
+    # Job-level conditions can skip both language scans despite intact steps.
+    if isinstance(analyze, dict) and "if" in analyze:
+        failures += 1
     # Text markers can be preserved in comments while a real matrix entry
     # silently drops Go or Python from CodeQL coverage.
     strategy = analyze.get("strategy") if isinstance(analyze, dict) else None
