@@ -363,6 +363,16 @@ def release_policy_failures() -> int:
         ))
     ):
         failures += 1
+    # A named CodeQL job without its actual analyze action never publishes
+    # security findings. Comments and unrelated pinned actions do not count.
+    analyze_actions = (
+        [step for step in codeql_steps if isinstance(step, dict)
+         and isinstance(step.get("uses"), str)
+         and re.fullmatch(r"github/codeql-action/analyze@[0-9a-f]{40}", step["uses"])]
+        if isinstance(codeql_steps, list) else []
+    )
+    if len(analyze_actions) != 1 or "if" in analyze_actions[0]:
+        failures += 1
 
     windows_start = ci.find("  windows-build:")
     if windows_start < 0:

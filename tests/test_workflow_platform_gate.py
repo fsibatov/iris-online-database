@@ -249,6 +249,44 @@ class WorkflowPlatformGateTests(TestCase):
                 codeql_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_codeql_analyze_action_cannot_be_removed_or_disabled(self):
+        """CodeQL coverage requires an executable, unconditional analyze action."""
+        with TemporaryDirectory(prefix="iris-codeql-analyze-action-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            codeql_path = workflows / "codeql.yml"
+            original = codeql_path.read_text(encoding="utf-8")
+            action_step = (
+                "      - name: Analyze\n"
+                "        uses: github/codeql-action/analyze@"
+                "db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8\n"
+            )
+            self.assertIn(action_step, original)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for case, replacement in (
+                    ("removed", ""),
+                    ("commented", "      # - name: Analyze\n"),
+                    (
+                        "replaced-by-checkout",
+                        "      - name: Analyze\n"
+                        "        uses: actions/checkout@"
+                        "3d3c42e5aac5ba805825da76410c181273ba90b1\n",
+                    ),
+                    ("disabled", action_step + "        if: false\n"),
+                ):
+                    with self.subTest(case=case):
+                        codeql_path.write_text(
+                            original.replace(action_step, replacement, 1),
+                            encoding="utf-8",
+                        )
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                codeql_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_windows_build_setup_order_cannot_be_spoofed_by_comments(self):
         """Only real Windows build steps may satisfy the required setup sequence."""
         with TemporaryDirectory(prefix="iris-windows-build-order-") as directory:
