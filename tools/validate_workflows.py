@@ -373,6 +373,26 @@ def release_policy_failures() -> int:
     )
     if len(analyze_actions) != 1 or "if" in analyze_actions[0]:
         failures += 1
+    # Without an unconditional init action for each matrix language, CodeQL
+    # cannot establish the database required by the analyze step.
+    init_actions = (
+        [
+            step
+            for step in codeql_steps
+            if isinstance(step, dict)
+            and isinstance(step.get("uses"), str)
+            and re.fullmatch(r"github/codeql-action/init@[0-9a-f]{40}", step["uses"])
+        ]
+        if isinstance(codeql_steps, list)
+        else []
+    )
+    if (
+        len(init_actions) != 1
+        or "if" in init_actions[0]
+        or not isinstance(init_actions[0].get("with"), dict)
+        or init_actions[0]["with"].get("languages") != "${{ matrix.language }}"
+    ):
+        failures += 1
 
     windows_start = ci.find("  windows-build:")
     if windows_start < 0:
