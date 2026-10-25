@@ -590,6 +590,41 @@ class WorkflowPlatformGateTests(TestCase):
                         self.assertGreater(workflow.release_policy_failures(), 0)
                         codeql_path.write_text(original, encoding="utf-8")
 
+    def test_codeql_go_build_commands_must_execute_not_appear_in_comments(self):
+        """Commented commands and Write-Output decoys must not satisfy the Go gate."""
+        with TemporaryDirectory(prefix="iris-codeql-executable-build-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            codeql_path = workflows / "codeql.yml"
+            original = codeql_path.read_text(encoding="utf-8")
+            commands = ("go test -count=1 ./...", "go build -trimpath")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for command in commands:
+                    with self.subTest(command=command, variant="commented"):
+                        modified = original.replace(
+                            "            " + command,
+                            "            # " + command,
+                            1,
+                        )
+                        self.assertNotEqual(modified, original)
+                        codeql_path.write_text(modified, encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                    with self.subTest(command=command, variant="decoy-output"):
+                        modified = original.replace(
+                            "            " + command,
+                            "            Write-Output '" + command + "' # " + command,
+                            1,
+                        )
+                        self.assertNotEqual(modified, original)
+                        codeql_path.write_text(modified, encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                codeql_path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_matrix_languages_cannot_be_spoofed_by_comments(self):
         """Both Go and Python must be enabled in the parsed CodeQL matrix."""
         with TemporaryDirectory(prefix="iris-codeql-matrix-") as directory:

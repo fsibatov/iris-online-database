@@ -533,13 +533,21 @@ def release_policy_failures() -> int:
          and step.get("name") == "Build Windows Go sources"]
         if isinstance(codeql_steps, list) else []
     )
+    # A substring in a comment or Write-Output decoy is not an executable
+    # Go test/build. Require the expected commands on active PowerShell lines.
+    go_build_script = go_build_steps[0].get("run") if len(go_build_steps) == 1 else None
+    active_go_lines = (
+        [line.strip() for line in go_build_script.splitlines()
+         if line.strip() and not line.lstrip().startswith("#")]
+        if isinstance(go_build_script, str) else []
+    )
     if len(go_build_steps) != 1 or not (
         go_build_steps[0].get("if") == "matrix.language == 'go'"
         and go_build_steps[0].get("shell") == "powershell"
-        and isinstance(go_build_steps[0].get("run"), str)
-        and all(marker in go_build_steps[0]["run"] for marker in (
-            "iris-codeql-go-temp-", "go test -count=1 ./...", "go build -trimpath"
-        ))
+        and any("iris-codeql-go-temp-" in line for line in active_go_lines)
+        and "go test -count=1 ./..." in active_go_lines
+        and any(line.startswith("go build -trimpath -o ") and line.endswith(" .")
+                for line in active_go_lines)
     ):
         failures += 1
     # A named CodeQL job without its actual analyze action never publishes
