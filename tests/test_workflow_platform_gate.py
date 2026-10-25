@@ -1151,3 +1151,40 @@ class WorkflowPlatformGateTests(TestCase):
                         self.assertGreater(workflow.release_policy_failures(), 0)
                 path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
+
+    def test_codeql_sarif_upload_requires_effective_write_permission(self):
+        """A successful scan cannot upload findings without security-events: write."""
+        with TemporaryDirectory(prefix="iris-codeql-permission-gate-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            path = workflows / "codeql.yml"
+            original = path.read_text(encoding="utf-8")
+            permission = "  security-events: write\n"
+            job = "  analyze:\n"
+            self.assertIn(permission, original)
+            self.assertIn(job, original)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for case, modified in (
+                    ("missing-global-write", original.replace(permission, "", 1)),
+                    ("global-read-only", original.replace(permission, "  security-events: read\n", 1)),
+                    (
+                        "job-overrides-global-write",
+                        original.replace(job, job + "    permissions:\n      contents: read\n", 1),
+                    ),
+                ):
+                    with self.subTest(case=case):
+                        path.write_text(modified, encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(
+                    original.replace(
+                        job,
+                        job + "    permissions:\n      contents: read\n      security-events: write\n",
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+                self.assertEqual(workflow.release_policy_failures(), 0)

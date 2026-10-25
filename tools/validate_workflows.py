@@ -470,6 +470,20 @@ def release_policy_failures() -> int:
         failures += 1
     codeql_jobs = codeql_document.get("jobs") if isinstance(codeql_document, dict) else None
     analyze = codeql_jobs.get("analyze") if isinstance(codeql_jobs, dict) else None
+    # SARIF publication requires security-events: write in the effective
+    # permissions. A job-level permissions map replaces the workflow map.
+    effective_permissions = (
+        analyze.get("permissions")
+        if isinstance(analyze, dict) and "permissions" in analyze
+        else codeql_document.get("permissions")
+        if isinstance(codeql_document, dict)
+        else None
+    )
+    if (
+        not isinstance(effective_permissions, dict)
+        or effective_permissions.get("security-events") != "write"
+    ):
+        failures += 1
     # Bind the pinned runner to the actual analyzer, not an unrelated job.
     if not isinstance(analyze, dict) or analyze.get("runs-on") != "windows-2025":
         failures += 1
