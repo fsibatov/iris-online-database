@@ -1510,6 +1510,33 @@ class WorkflowPlatformGateTests(TestCase):
                 path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_codeql_go_exit_guards_must_follow_status_captures(self):
+        """A guard before Go runs checks initialized zero, not the failed command."""
+        with TemporaryDirectory(prefix="iris-codeql-guard-order-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            path = workflows / "codeql.yml"
+            original = path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for variable in ("goTestExitCode", "goBuildExitCode"):
+                    with self.subTest(variable=variable):
+                        guard = f"if (${variable} -ne 0) {{ exit ${variable} }}"
+                        lines = original.splitlines(keepends=True)
+                        guard_index = next(i for i, line in enumerate(lines) if line.strip() == guard)
+                        guard_line = lines.pop(guard_index)
+                        try_index = next(i for i, line in enumerate(lines) if line.strip() == "try {")
+                        # Both guards still exist, but the moved guard checks
+                        # the initialized zero before the Go command executes.
+                        lines.insert(try_index, guard_line)
+                        path.write_text("".join(lines), encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_go_status_capture_must_follow_each_command(self):
         """Capturing LASTEXITCODE before Go runs accepts a later failed command."""
         with TemporaryDirectory(prefix="iris-codeql-status-order-") as directory:

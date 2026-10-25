@@ -630,10 +630,11 @@ def release_policy_failures() -> int:
         active_powershell_lines(go_build_script)
         if isinstance(go_build_script, str) else []
     )
-    def captures_next_line(command: str, assignment: str) -> bool:
+    def captures_and_guards_after(command: str, assignment: str, guard: str) -> bool:
         return any(
             active_go_lines[index] == command
             and active_go_lines[index + 1] == assignment
+            and guard in active_go_lines[index + 2:]
             for index in range(len(active_go_lines) - 1)
         )
 
@@ -644,17 +645,21 @@ def release_policy_failures() -> int:
         and "go test -count=1 ./..." in active_go_lines
         and any(line.startswith("go build -trimpath -o ") and line.endswith(" .")
                 for line in active_go_lines)
-        # Running the commands is not enough: without both nonzero-exit
-        # guards, CodeQL can report green after a failed test or build.
-        and captures_next_line("go test -count=1 ./...", "$goTestExitCode = $LASTEXITCODE")
+        # A guard must follow its own command's status capture: an early
+        # guard checks the initialized zero and can hide a failed Go command.
+        and captures_and_guards_after(
+            "go test -count=1 ./...", "$goTestExitCode = $LASTEXITCODE",
+            "if ($goTestExitCode -ne 0) { exit $goTestExitCode }",
+        )
         and any(
             line.startswith("go build -trimpath -o ")
             and line.endswith(" .")
-            and captures_next_line(line, "$goBuildExitCode = $LASTEXITCODE")
+            and captures_and_guards_after(
+                line, "$goBuildExitCode = $LASTEXITCODE",
+                "if ($goBuildExitCode -ne 0) { exit $goBuildExitCode }",
+            )
             for line in active_go_lines
         )
-        and "if ($goTestExitCode -ne 0) { exit $goTestExitCode }" in active_go_lines
-        and "if ($goBuildExitCode -ne 0) { exit $goBuildExitCode }" in active_go_lines
     ):
         failures += 1
     # A named CodeQL job without its actual analyze action never publishes
