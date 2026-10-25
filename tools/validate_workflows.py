@@ -535,6 +535,12 @@ def release_policy_failures() -> int:
     )
     if len(analyze_actions) != 1 or "if" in analyze_actions[0]:
         failures += 1
+    elif isinstance(analyze_actions[0].get("with"), dict) and (
+        "upload" in analyze_actions[0]["with"]
+    ):
+        # CodeQL must publish SARIF. Any upload override can disable it,
+        # including an expression that evaluates to false at runtime.
+        failures += 1
     # Without an unconditional init action for each matrix language, CodeQL
     # cannot establish the database required by the analyze step.
     init_actions = (

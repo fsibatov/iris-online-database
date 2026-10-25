@@ -1125,3 +1125,29 @@ class WorkflowPlatformGateTests(TestCase):
                         self.assertGreater(workflow.release_policy_failures(), 0)
                 codeql_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
+
+    def test_codeql_analyze_cannot_disable_sarif_upload(self):
+        """CodeQL must publish its findings, not merely execute an analyzer."""
+        with TemporaryDirectory(prefix="iris-codeql-upload-gate-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            path = workflows / "codeql.yml"
+            original = path.read_text(encoding="utf-8")
+            marker = "      - name: Analyze\n        uses: github/codeql-action/analyze@"
+            self.assertIn(marker, original)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for case, value in (
+                    ("false-boolean", "false"),
+                    ("false-string", "'false'"),
+                    ("false-expression", "${{ false }}"),
+                ):
+                    with self.subTest(case=case):
+                        changed = original + f"        with:\n          upload: {value}\n"
+                        path.write_text(changed, encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
