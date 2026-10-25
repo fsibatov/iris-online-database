@@ -425,6 +425,27 @@ def release_policy_failures() -> int:
         for job_id in ("windows-quality", "windows-race", "windows-build")
     ):
         failures += 1
+    # Every mandatory Windows gate must use the repository-declared Go toolchain.
+    # A missing, conditional or overridden setup-go can silently run a different
+    # Go version while the required test/build commands remain unchanged.
+    if isinstance(jobs, dict):
+        for job_id in ("windows-quality", "windows-race", "windows-build"):
+            job = jobs.get(job_id)
+            steps = job.get("steps") if isinstance(job, dict) else None
+            go_steps = (
+                [step for step in steps if isinstance(step, dict)
+                 and isinstance(step.get("uses"), str)
+                 and re.fullmatch(r"actions/setup-go@[0-9a-f]{40}", step["uses"])]
+                if isinstance(steps, list) else []
+            )
+            if len(go_steps) != 1 or not (
+                "if" not in go_steps[0]
+                and "continue-on-error" not in go_steps[0]
+                and isinstance(go_steps[0].get("with"), dict)
+                and go_steps[0]["with"].get("go-version-file") == ".go-version"
+                and "go-version" not in go_steps[0]["with"]
+            ):
+                failures += 1
     # A required job also fails open when an individual gate step has
     # `continue-on-error`, even if the job itself propagates other failures.
     if isinstance(jobs, dict):

@@ -13,6 +13,75 @@ import validate_workflows as workflow
 
 class WorkflowPlatformGateTests(TestCase):
 
+    def test_ci_go_setup_must_use_declared_toolchain_unconditionally(self):
+        """Mandatory Windows jobs must not bypass or override .go-version."""
+        with TemporaryDirectory(prefix="iris-ci-go-pin-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
+            path = workflows / "ci.yml"
+            original = path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for job_id in ("windows-quality", "windows-race", "windows-build"):
+                    start = original.index(f"  {job_id}:\n")
+                    end = original.find("\n  windows-", start + 1)
+                    if end < 0:
+                        end = len(original)
+                    job = original[start:end]
+                    setup = (
+                        "      - name: Setup pinned Go\n"
+                        "        uses: actions/setup-go@"
+                    )
+                    self.assertIn(setup, job)
+                    version_file = "          go-version-file: .go-version"
+                    self.assertIn(version_file, job)
+                    cases = (
+                        (
+                            "missing-setup",
+                            job.replace(
+                                "        uses: actions/setup-go@",
+                                "        uses: actions/checkout@",
+                                1,
+                            ),
+                        ),
+                        (
+                            "wrong-version-file",
+                            job.replace(version_file, "          go-version-file: go.mod", 1),
+                        ),
+                        (
+                            "explicit-version-override",
+                            job.replace(version_file, version_file + "\n          go-version: '1.20'", 1),
+                        ),
+                        (
+                            "conditional-setup",
+                            job.replace(setup, setup.replace("        uses:", "        if: false\n        uses:"), 1),
+                        ),
+                        (
+                            "fail-open-setup",
+                            job.replace(
+                                setup,
+                                setup.replace("        uses:", "        continue-on-error: true\n        uses:"),
+                                1,
+                            ),
+                        ),
+                    )
+                    for case, changed in cases:
+                        with self.subTest(job=job_id, case=case):
+                            self.assertNotEqual(changed, job)
+                            path.write_text(
+                                original[:start] + changed + original[end:],
+                                encoding="utf-8",
+                            )
+                            self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_dependency_review_gate_cannot_be_removed_or_silenced(self):
         """Dependency review must execute and reject high-severity changes."""
         with TemporaryDirectory(prefix="iris-dependency-review-gate-") as directory:
