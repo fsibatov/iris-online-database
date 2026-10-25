@@ -1287,6 +1287,22 @@ class WorkflowPlatformGateTests(TestCase):
                     ("removed", original.replace("        uses: actions/setup-go@", "        # uses: actions/setup-go@", 1)),
                     ("disabled", original.replace("        if: matrix.language == 'go'", "        if: false", 1)),
                     ("wrong-version", original.replace("          go-version-file: .go-version", "          go-version-file: other-go-version", 1)),
+                    (
+                        "explicit-version-override",
+                        original.replace(
+                            "          go-version-file: .go-version",
+                            "          go-version-file: .go-version\n          go-version: '1.20'",
+                            1,
+                        ),
+                    ),
+                    (
+                        "dynamic-version-override",
+                        original.replace(
+                            "          go-version-file: .go-version",
+                            "          go-version-file: .go-version\n          go-version: ${{ vars.GO_VERSION }}",
+                            1,
+                        ),
+                    ),
                     ("fail-open", original.replace(setup, "      - name: Setup pinned Go\n        continue-on-error: true\n        if: matrix.language == 'go'\n        uses: actions/setup-go@", 1)),
                 ):
                     with self.subTest(case=case):

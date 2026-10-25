@@ -1,30 +1,13 @@
-# Iris Online Database — CONTINUE NEXT RUN (iter136)
+# Iris Online Database — CONTINUE NEXT RUN (iter137)
 
-**UTC:** 2026-10-25 08:19:28 UTC. **Status:** one local `ai-development` iteration; Windows QA NOT RUN, full Go BLOCKED; workflow NOT PASS; NOT a release.
+**UTC:** 2026-10-25 09:12:27 UTC. **Status:** exactly one local `ai-development` engineering iteration; full Go BLOCKED, Windows QA NOT RUN, workflow NOT PASS; NOT a release.
 
-## Authentic input
+## Provenance, one fix, QA, storage
 
-- Latest confirmed source: Library `/Iris Online Database/Engineering_Candidates/IrisOnlineDB_AI_2026-10-25_iter135.zip` (conversation copy identical).
-- Input ZIP SHA-256 `15a51e63fd594ec53c87d4a80f3e46f2fcf8691b4b2b6215475f79d124abf23f`; size 11,250,477; 687 ZIP files, one root `iris-online-database`; CRC 687/687, full extraction and all file bytes identical; sorted filename/tab/CRC32 manifest SHA-256 `de9fd6bd31b100d4934bc85bf4b301aef5656636b414ece987a0b48e07338700`.
-- Latest and immutable iter135 checkpoints identical SHA-256 `d6a25d7e84630218e519ff965a3ee3f416339a17e918f57dbf1faac1d7648a76`.
-- Git `ai-development` input HEAD `06a9e0eb4b0f8c1be7741f737103c4ffa13d152b`, parent `f23205bb655799329ad59504ebd0de9b9aae33b9`, clean, fsck exit 0 (pre-existing dangling commit `95bfa0933292843980a63d6bb4ce621909363a47`). Main `f17d835e7443eec6d0dd5884ad3ddb53867ad214`, remote refs and nine tags unchanged. VERSION `2.0.5`, `.go-version` `1.26.6`, go.mod `1.25.0`. Required docs/ARCHITECTURE.md, docs/BUILD.md, docs/RELEASE.md, IrisTools.ps1, docs/AI_DEVELOPMENT_LOG.md present.
-- Named Library methodology `Engineering_Maintenance_Standard_OpenAI_2026-10-22.md` not found; explicit engineering constraints applied.
-
-## Exactly one defect and regression
-
-Mandatory Windows CI jobs previously could change/remove/skip `actions/setup-go` or override `.go-version` without release policy failure. 15 negative subcases, 11 RED before patch and 15 GREEN after; unmodified workflow control PASS. Added parsed-YAML setup-go guard to `tools/validate_workflows.py`, regression test to `tests/test_workflow_platform_gate.py`. No actual workflow, app/UI, game data, Windows copy, security pins or network changed.
-
-## Actual QA (Linux, offline)
-
-- Python 3.13.5, `PYTHONPATH=tools`, pycache outside source: 265 unittest PASS, compileall PASS; data_presentation_audit fatal=[] PASS; repository_audit PASS WARN none; Node 22.16.0 node --check web/*.js PASS; gofmt PASS; offline Chromium/Playwright monster-drop smoke PASS; git diff --check/fsck PASS.
-- Workflow static PASS, native Windows PowerShell parser NOT RUN [WINDOWS_POWERSHELL], workflow overall NOT PASS (exit 2).
-- Full Go test/vet/race BLOCKED: Linux Go 1.23.2 vs go.mod>=1.25.0, offline; isolated Go NOT RUN (Python-only change).
-- Windows Wails/WebView2/Quality Gate/PowerShell/race NOT RUN; TCP frontend smoke NOT RUN (separate server forbidden). Staticcheck/govulncheck/Ruff/Bandit/pip-audit/Gitleaks NOT RUN (unavailable).
-
-## Storage and divergence
-
-Output is only an engineering ZIP, not a release. One new local commit on ai-development and clean tree; archive .git, SHA/CRC/full extraction/source identity/Git/fsck, Library upload/readback and immutable checkpoint readback before latest pointer. Output ZIP SHA/HEAD recorded in external checkpoint (not inside ZIP).
-
-**CRITICAL:** Archived `.go-version=1.26.6` has not been reconciled with the working Windows copy after merge ai-development→main and Go/security updates. Do not replace Windows copy or downgrade/publish.
-
-**Exactly one next action:** obtain an authentic read-only snapshot of the working Windows copy and compare Git HEAD, `.go-version`, and security toolchain without replacing files.
+- **Authentic input:** newest Library/conversation `IrisOnlineDB_AI_2026-10-25_iter136.zip`, materialized Library copy byte-identical to conversation copy; SHA-256 `38b22700fac686547cf3c82f2cb677bed6f0917d985771cc29e74bec4de06220`, **11,430,334 bytes**, **696 ZIP entries**, one root `iris-online-database`; CRC 696/696, full extraction and all source↔archive file bytes 696/696 PASS. Sorted `filename\tCRC32\n` manifest SHA-256 `b67243cfd0efeaab6c57d7b709181584d300d82543e098a263535b5671fb2f11`. Latest/immutable iter136 checkpoints byte-identical SHA-256 `2d0170c42016ab73fb36806a41a686e571af1af9a4dce55b577a03b9fcf3f171`. Named `Engineering_Maintenance_Standard_OpenAI_2026-10-22.md` not located in accessible Library; explicit engineering requirements applied.
+- **Input Git:** `ai-development` HEAD `3977e30df77ad44c0aedddbcff672006507729af`, parent `06a9e0eb4b0f8c1be7741f737103c4ffa13d152b`, clean; `git fsck --full --no-reflogs` exit 0 (pre-existing dangling commit `95bfa0933292843980a63d6bb4ce621909363a47`). VERSION `2.0.5`, `.go-version` `1.26.6`, go.mod `1.25.0`; docs/ARCHITECTURE.md, docs/BUILD.md, docs/RELEASE.md, IrisTools.ps1, AI log and continuation present. `main` and `origin/main` `f17d835e7443eec6d0dd5884ad3ddb53867ad214`; remote refs and nine tags preserved.
+- **Exactly one defect, RED→GREEN:** CodeQL `actions/setup-go` step could specify both `go-version-file: .go-version` and an explicit `go-version` (literal or expression), overriding the pinned version while `release_policy_failures()` incorrectly returned zero. Two negative subcases **RED before** (2 failed assertions, original workflow control PASS); both **GREEN after** with a minimal parsed-YAML guard rejecting `go-version` alongside `.go-version`, original control PASS. Benefit: CodeQL toolchain drift cannot be silently introduced via this override. Low risk: actual workflows unchanged; static policy is not native Windows execution. Only tools/validate_workflows.py, tests/test_workflow_platform_gate.py, AI log and continuation changed; Go/UI, game data, security pins, profile, network, telemetry, TCP server and working Windows copy untouched.
+- **Actual offline Linux QA:** Python 3.13.5 `PYTHONPATH=tools`, external `PYTHONPYCACHEPREFIX`: **265 unittest PASS**, compileall PASS; `data_presentation_audit.py` `fatal=[]` PASS; `repository_audit.py` PASS (`WARN: none`); Node 22.16.0 `node --check web/*.js` PASS; gofmt zero unformatted; offline Chromium/Playwright monster-drop navigation smoke PASS; Git diff --check/fsck PASS. Workflow static PASS, native Windows PowerShell parser **NOT RUN [WINDOWS_POWERSHELL]**, workflow overall **NOT PASS** (exit 2). Full Go test/vet/race **BLOCKED**: offline Linux Go 1.23.2 < go.mod 1.25.0; isolated Go **NOT RUN** (Python-only patch). Windows Wails/WebView2/Quality Gate/PowerShell/race **NOT RUN**; frontend TCP smoke NOT RUN (separate server forbidden). Staticcheck/govulncheck/Ruff/Bandit/pip-audit/Gitleaks **NOT RUN** (unavailable).
+- **Storage gate:** one local commit on `ai-development`, clean tree, complete `.git` ZIP SHA/CRC/full extraction/source↔ZIP↔extracted byte identity/Git/fsck and Library upload/readback required. Immutable checkpoint readback before latest pointer; ZIP SHA/HEAD recorded in external checkpoint to avoid circular self-hash. NOT a release; main/remote/tags/Releases unchanged.
+- **Critical Windows divergence:** archived `.go-version=1.26.6` NOT reconciled with working Windows copy after merge `ai-development→main` and Go/security updates. Never replace Windows copy, downgrade Go/security or publish.
+- **Exactly one next action:** obtain authentic read-only snapshot of working Windows copy and compare Git HEAD, `.go-version` and security toolchain without replacing files.

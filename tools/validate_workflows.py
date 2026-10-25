@@ -613,6 +613,9 @@ def release_policy_failures() -> int:
         and "continue-on-error" not in go_setup_steps[0]
         and isinstance(go_setup_steps[0].get("with"), dict)
         and go_setup_steps[0]["with"].get("go-version-file") == ".go-version"
+        # An explicit version wins over the repository file and can silently
+        # retarget CodeQL to an unverified toolchain (including expressions).
+        and "go-version" not in go_setup_steps[0]["with"]
     ):
         failures += 1
     go_build_steps = (
