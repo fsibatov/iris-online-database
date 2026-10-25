@@ -60,6 +60,30 @@ class WorkflowPlatformGateTests(TestCase):
                         ),
                     ),
                     (
+                        "warn-only-true",
+                        original.replace(
+                            "          fail-on-severity: high",
+                            "          fail-on-severity: high\n          warn-only: true",
+                            1,
+                        ),
+                    ),
+                    (
+                        "warn-only-expression",
+                        original.replace(
+                            "          fail-on-severity: high",
+                            "          fail-on-severity: high\n          warn-only: ${{ true }}",
+                            1,
+                        ),
+                    ),
+                    (
+                        "warn-only-quoted",
+                        original.replace(
+                            "          fail-on-severity: high",
+                            '          fail-on-severity: high\n          warn-only: "true"',
+                            1,
+                        ),
+                    ),
+                    (
                         "job-condition",
                         original.replace(job, job + "    if: false\n", 1),
                     ),

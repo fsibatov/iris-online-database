@@ -461,6 +461,9 @@ def release_policy_failures() -> int:
         or "continue-on-error" in review_actions[0]
         or not isinstance(review_actions[0].get("with"), dict)
         or review_actions[0]["with"].get("fail-on-severity") != "high"
+        # `warn-only` turns high-severity findings into non-blocking warnings.
+        # Reject even expression-valued overrides: their result is runtime-dependent.
+        or "warn-only" in review_actions[0]["with"]
     ):
         failures += 1
     if (
