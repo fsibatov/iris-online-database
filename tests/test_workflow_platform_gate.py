@@ -625,6 +625,40 @@ class WorkflowPlatformGateTests(TestCase):
                 codeql_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_codeql_go_build_commands_inside_here_strings_do_not_count(self):
+        """PowerShell here-string content is data, not executed Go commands."""
+        with TemporaryDirectory(prefix="iris-codeql-here-string-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            path = workflows / "codeql.yml"
+            original = path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for command in ("go test -count=1 ./...", "go build -trimpath"):
+                    line = next(
+                        line for line in original.splitlines()
+                        if line.strip().startswith(command)
+                    )
+                    for quote in ("'", '"'):
+                        with self.subTest(command=command, quote=quote):
+                            # The closing delimiter is flush-left in the parsed
+                            # PowerShell script (Windows PowerShell 5.1 syntax).
+                            decoy = (
+                                " " * (len(line) - len(line.lstrip()))
+                                + "$decoy = @" + quote + "\n"
+                                + line + "\n"
+                                + "          " + quote + "@"
+                            )
+                            modified = original.replace(line, decoy, 1)
+                            self.assertNotEqual(modified, original)
+                            path.write_text(modified, encoding="utf-8")
+                            self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_matrix_languages_cannot_be_spoofed_by_comments(self):
         """Both Go and Python must be enabled in the parsed CodeQL matrix."""
         with TemporaryDirectory(prefix="iris-codeql-matrix-") as directory:

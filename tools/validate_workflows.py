@@ -269,6 +269,26 @@ def ci_trigger_failures(ci: str, *, require_dispatch: bool = True) -> int:
     return 0
 
 
+def active_powershell_lines(script: str) -> list[str]:
+    """Exclude comments and PowerShell here-string data from command checks."""
+    active: list[str] = []
+    here_quote: str | None = None
+    for line in script.splitlines():
+        stripped = line.strip()
+        if here_quote is not None:
+            if stripped == here_quote + "@":
+                here_quote = None
+            continue
+        if not stripped or stripped.startswith("#"):
+            continue
+        opener = re.search(r"@(['\"])\s*$", line)
+        if opener:
+            here_quote = opener.group(1)
+            continue
+        active.append(stripped)
+    return active if here_quote is None else []
+
+
 def release_policy_failures() -> int:
     failures = 0
     ci_path = ROOT / ".github" / "workflows" / "ci.yml"
@@ -537,8 +557,7 @@ def release_policy_failures() -> int:
     # Go test/build. Require the expected commands on active PowerShell lines.
     go_build_script = go_build_steps[0].get("run") if len(go_build_steps) == 1 else None
     active_go_lines = (
-        [line.strip() for line in go_build_script.splitlines()
-         if line.strip() and not line.lstrip().startswith("#")]
+        active_powershell_lines(go_build_script)
         if isinstance(go_build_script, str) else []
     )
     if len(go_build_steps) != 1 or not (
