@@ -32,6 +32,7 @@ from verify_executables import (
     verify_executable,
 )
 from verify_release_assets import expected_asset_names, verify_release_assets
+from verify_python_environment import expected_versions
 from verify_windows_resources import parse_pe, verify_target, verify_version_resource, version_tuple
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -532,6 +533,31 @@ class ReleaseHelperTests(unittest.TestCase):
                     with patch("release_fingerprint.toolchain", return_value=changed):
                         with self.assertRaises(FingerprintError):
                             verify_fingerprint(root, "main")
+
+    def test_python_requirements_reject_normalized_duplicate_pins(self):
+        """PEP 503-equivalent names must not bypass unique direct pins."""
+        duplicate_pairs = (
+            ("pip-audit", "pip_audit"),
+            ("pip-audit", "pip.audit"),
+            ("pip--audit", "PIP__AUDIT"),
+            ("PlayWright", "playwright"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            requirements = Path(temporary) / "requirements.txt"
+            for first, second in duplicate_pairs:
+                with self.subTest(first=first, second=second):
+                    requirements.write_text(
+                        f"{first}==1.0\n{second}==2.0\n", encoding="utf-8"
+                    )
+                    with self.assertRaises(ValueError):
+                        expected_versions(requirements)
+            requirements.write_text(
+                "pip-audit==2.10.1\nplaywright==1.62.0\n", encoding="utf-8"
+            )
+            self.assertEqual(
+                expected_versions(requirements),
+                {"pip-audit": "2.10.1", "playwright": "1.62.0"},
+            )
 
     def test_python_requirements_are_single_pinned_source(self):
         requirements = (ROOT / "tools" / "requirements-audit.txt").read_text(
