@@ -231,6 +231,41 @@ class ReleaseHelperTests(unittest.TestCase):
                         (machine, magic, flags & 0xFFFF), (0x8664, 0x20B, 2)
                     )
 
+    def test_pe_duplicate_section_names_are_rejected(self):
+        """Ambiguous .rsrc sections must not select a decoy resource table."""
+        import struct
+
+        pe_offset = 0x80
+        optional = pe_offset + 24
+        section_table = optional + 72
+        cases = (
+            ("duplicate-resource", (b".rsrc", b".rsrc"), False),
+            ("duplicate-text", (b".text", b".text"), False),
+            ("distinct", (b".rsrc", b".text"), True),
+        )
+        for label, names, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(512)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, pe_offset)
+                data[pe_offset : pe_offset + 4] = b"PE\0\0"
+                struct.pack_into("<HH", data, pe_offset + 4, 0x8664, 2)
+                struct.pack_into("<H", data, pe_offset + 20, 72)
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                for index, name in enumerate(names):
+                    start = section_table + index * 40
+                    data[start : start + len(name)] = name
+                    struct.pack_into("<IIII", data, start + 8, 16, index * 4096, 16, 256 + index * 16)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(set(parse_pe(path)[1]), {".rsrc", ".text"})
+                else:
+                    with self.assertRaises(ValueError):
+                        parse_pe(path)
+
     def test_windows_fixed_version_resource_is_exact(self):
         import struct
 

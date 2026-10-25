@@ -46,6 +46,8 @@ def parse_pe(
         virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
             "<IIII", data, off + 8
         )
+        if name in result:
+            raise ValueError("duplicate PE section name")
         result[name] = (virtual_size, virtual_address, raw_size, raw_offset)
     return (
         machine,
