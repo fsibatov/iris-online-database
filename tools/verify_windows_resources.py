@@ -31,7 +31,7 @@ def parse_pe(
     timestamp = struct.unpack_from("<I", data, pe + 8)[0]
     optional_size = struct.unpack_from("<H", data, pe + 20)[0]
     optional = pe + 24
-    if optional + optional_size > len(data):
+    if optional_size < 72 or optional + optional_size > len(data):
         raise ValueError("truncated optional header")
     magic = struct.unpack_from("<H", data, optional)[0]
     subsystem = struct.unpack_from("<H", data, optional + 68)[0]

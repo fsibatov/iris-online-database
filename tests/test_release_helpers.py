@@ -32,7 +32,7 @@ from verify_executables import (
     verify_executable,
 )
 from verify_release_assets import expected_asset_names, verify_release_assets
-from verify_windows_resources import verify_target, verify_version_resource, version_tuple
+from verify_windows_resources import parse_pe, verify_target, verify_version_resource, version_tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -196,6 +196,39 @@ class ReleaseHelperTests(unittest.TestCase):
                 else:
                     with self.assertRaises(SystemExit):
                         verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_pe_optional_header_must_contain_all_read_fields(self):
+        """The section table must not supply missing optional-header flags."""
+        import struct
+
+        pe_offset = 0x80
+        optional = pe_offset + 24
+        for declared_size in (0, 70, 71, 72):
+            with (
+                self.subTest(declared_size=declared_size),
+                tempfile.TemporaryDirectory() as temp,
+            ):
+                data = bytearray(256)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, pe_offset)
+                data[pe_offset : pe_offset + 4] = b"PE\0\0"
+                struct.pack_into("<HH", data, pe_offset + 4, 0x8664, 0)
+                struct.pack_into("<H", data, pe_offset + 20, declared_size)
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                path = Path(temp) / "test.exe"
+                path.write_bytes(data)
+                if declared_size < 72:
+                    with self.assertRaises(ValueError):
+                        parse_pe(path)
+                else:
+                    machine, _sections, _data, _timestamp, magic, flags = parse_pe(
+                        path
+                    )
+                    self.assertEqual(
+                        (machine, magic, flags & 0xFFFF), (0x8664, 0x20B, 2)
+                    )
 
     def test_windows_fixed_version_resource_is_exact(self):
         import struct
