@@ -1509,3 +1509,34 @@ class WorkflowPlatformGateTests(TestCase):
                             self.assertGreater(workflow.release_policy_failures(), 0)
                 path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
+
+    def test_codeql_go_status_capture_must_follow_each_command(self):
+        """Capturing LASTEXITCODE before Go runs accepts a later failed command."""
+        with TemporaryDirectory(prefix="iris-codeql-status-order-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            path = workflows / "codeql.yml"
+            original = path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for command, capture in (
+                    ("go test -count=1 ./...", "$goTestExitCode = $LASTEXITCODE"),
+                    ('go build -trimpath -o (Join-Path $env:RUNNER_TEMP "iris-codeql.exe") .',
+                     "$goBuildExitCode = $LASTEXITCODE"),
+                ):
+                    with self.subTest(command=command):
+                        original_lines = original.splitlines(keepends=True)
+                        cmd_index = next(i for i, line in enumerate(original_lines) if line.strip() == command)
+                        capture_index = next(i for i, line in enumerate(original_lines) if line.strip() == capture)
+                        self.assertEqual(capture_index, cmd_index + 1)
+                        # Same active commands and guards, but status is stale.
+                        original_lines[cmd_index], original_lines[capture_index] = (
+                            original_lines[capture_index], original_lines[cmd_index]
+                        )
+                        path.write_text("".join(original_lines), encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)

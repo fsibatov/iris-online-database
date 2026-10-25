@@ -630,6 +630,13 @@ def release_policy_failures() -> int:
         active_powershell_lines(go_build_script)
         if isinstance(go_build_script, str) else []
     )
+    def captures_next_line(command: str, assignment: str) -> bool:
+        return any(
+            active_go_lines[index] == command
+            and active_go_lines[index + 1] == assignment
+            for index in range(len(active_go_lines) - 1)
+        )
+
     if len(go_build_steps) != 1 or not (
         go_build_steps[0].get("if") == "matrix.language == 'go'"
         and go_build_steps[0].get("shell") == "powershell"
@@ -639,8 +646,13 @@ def release_policy_failures() -> int:
                 for line in active_go_lines)
         # Running the commands is not enough: without both nonzero-exit
         # guards, CodeQL can report green after a failed test or build.
-        and "$goTestExitCode = $LASTEXITCODE" in active_go_lines
-        and "$goBuildExitCode = $LASTEXITCODE" in active_go_lines
+        and captures_next_line("go test -count=1 ./...", "$goTestExitCode = $LASTEXITCODE")
+        and any(
+            line.startswith("go build -trimpath -o ")
+            and line.endswith(" .")
+            and captures_next_line(line, "$goBuildExitCode = $LASTEXITCODE")
+            for line in active_go_lines
+        )
         and "if ($goTestExitCode -ne 0) { exit $goTestExitCode }" in active_go_lines
         and "if ($goBuildExitCode -ne 0) { exit $goBuildExitCode }" in active_go_lines
     ):
