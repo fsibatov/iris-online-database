@@ -1482,6 +1482,32 @@ class WorkflowPlatformGateTests(TestCase):
         script = 'Write-Output "<# literal #>"\ngo test -count=1 ./...'
         self.assertIn("go test -count=1 ./...", workflow.active_powershell_lines(script))
 
+    def test_codeql_pinned_go_setup_precedes_initialization_and_build(self):
+        """CodeQL must not initialize or compile Go before setup-go runs."""
+        with TemporaryDirectory(prefix="iris-codeql-go-setup-order-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            path = workflows / "codeql.yml"
+            original = path.read_text(encoding="utf-8")
+            setup_start = original.index("      - name: Setup pinned Go\n")
+            setup_end = original.index("      - name: Initialize CodeQL\n")
+            setup = original[setup_start:setup_end]
+            without_setup = original[:setup_start] + original[setup_end:]
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for target in ("Build Windows Go sources", "Analyze"):
+                    with self.subTest(setup_moved_before=target):
+                        insertion = without_setup.index(f"      - name: {target}\n")
+                        modified = without_setup[:insertion] + setup + without_setup[insertion:]
+                        self.assertNotEqual(modified, original)
+                        path.write_text(modified, encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_go_exit_codes_must_capture_actual_process_status(self):
         """Exit guards are ineffective when test/build status is overwritten."""
         with TemporaryDirectory(prefix="iris-codeql-status-capture-") as directory:

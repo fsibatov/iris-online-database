@@ -699,6 +699,18 @@ def release_policy_failures() -> int:
     ):
         failures += 1
 
+    # A pinned setup-go action is ineffective if CodeQL initializes or Go
+    # compilation starts before that action installs the declared toolchain.
+    if (
+        isinstance(codeql_steps, list)
+        and len(go_setup_steps) == len(init_actions) == len(go_build_steps) == 1
+        and codeql_steps.index(go_setup_steps[0]) >= min(
+            codeql_steps.index(init_actions[0]),
+            codeql_steps.index(go_build_steps[0]),
+        )
+    ):
+        failures += 1
+
     # These three mandatory CodeQL stages must propagate failures to the job.
     # Even an expression-valued continue-on-error can silently mask a scan.
     if any(
