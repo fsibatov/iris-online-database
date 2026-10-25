@@ -10,8 +10,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from frontend_smoke_test import playwright_failure_category
 from playwright.sync_api import Error as PlaywrightError
@@ -28,6 +29,7 @@ from verify_executables import (
     EXPECTED_METADATA_MARKERS,
     expected_metadata_markers,
     missing_metadata_categories,
+    verify_executable,
 )
 from verify_release_assets import expected_asset_names, verify_release_assets
 from verify_windows_resources import verify_version_resource, version_tuple
@@ -208,6 +210,40 @@ class ReleaseHelperTests(unittest.TestCase):
             'if ($LASTEXITCODE -ne 0) { throw "Git status failed." }',
             assert_clean_tree,
         )
+
+    def test_release_executable_rejects_unpinned_compiler_metadata(self):
+        """A valid Windows binary built with older Go must fail the release gate."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-go-toolchain-gate-") as directory:
+            binary = Path(directory) / "release.exe"
+            binary.write_bytes(b"IrisOnlineRelease/2.0.5/")
+            for case, header, should_pass in (
+                ("older-compiler", "release.exe: go1.23.2", False),
+                ("compiler-suffix", f"release.exe: go{pinned}0", False),
+                ("missing-compiler", "release.exe: unknown", False),
+                (
+                    "wrong-first-line",
+                    "release.exe: go1.23.2\nrelease.exe: go" + pinned,
+                    False,
+                ),
+                ("pinned-compiler", f"release.exe: go{pinned}", True),
+            ):
+                with self.subTest(case=case):
+                    result = SimpleNamespace(
+                        returncode=0, stdout=header + "\n" + markers
+                    )
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=result
+                    ):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaises(SystemExit):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
 
     def test_release_metadata_diagnostic_identifies_cgo_without_raw_payload(self):
         valid = "\n".join(

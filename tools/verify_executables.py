@@ -63,6 +63,17 @@ def missing_metadata_categories(metadata: str, goarch: str = "amd64") -> list[st
     return missing
 
 
+def pinned_go_compiler_matches(metadata: str) -> bool:
+    """The first `go version -m` line identifies the actual compiler."""
+    pinned = (Path(__file__).resolve().parents[1] / ".go-version").read_text(
+        encoding="utf-8"
+    ).strip()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", pinned):
+        return False
+    header = metadata.splitlines()[0] if metadata else ""
+    return re.fullmatch(r".+: go" + re.escape(pinned), header) is not None
+
+
 def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
     result = subprocess.run(
         [go, "version", "-m", str(path)],
@@ -76,6 +87,8 @@ def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
     if result.returncode:
         raise SystemExit(f"could not read Go build metadata ({goarch})")
     metadata = result.stdout
+    if not pinned_go_compiler_matches(metadata):
+        raise SystemExit(f"release Go compiler version mismatch ({goarch})")
     missing = missing_metadata_categories(metadata, goarch)
     if missing:
         raise SystemExit(
