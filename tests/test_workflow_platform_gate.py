@@ -1320,3 +1320,51 @@ class WorkflowPlatformGateTests(TestCase):
                     encoding="utf-8",
                 )
                 self.assertEqual(workflow.release_policy_failures(), 0)
+
+    def test_powershell_block_comments_cannot_spoof_mandatory_gates(self):
+        """PowerShell <# ... #> blocks are non-executable, even when nested."""
+        with TemporaryDirectory(prefix="iris-block-comment-gate-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            targets = {
+                "ci.yml": (
+                    "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\IrisTools.ps1 -Action Test",
+                    "if ($gateExitCode -ne 0) { exit $gateExitCode }",
+                    "go test -race -count=1 ./...",
+                    "if ($raceExitCode -ne 0) { exit $raceExitCode }",
+                    "go test -count=1 ./...",
+                    "if ($goTestExitCode -ne 0) { exit $goTestExitCode }",
+                ),
+                "codeql.yml": (
+                    "go test -count=1 ./...",
+                    'go build -trimpath -o (Join-Path $env:RUNNER_TEMP "iris-codeql.exe") .',
+                ),
+            }
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for filename, commands in targets.items():
+                    path = workflows / filename
+                    original = path.read_text(encoding="utf-8")
+                    for command in commands:
+                        lines = [line for line in original.splitlines() if line.strip() == command]
+                        self.assertEqual(len(lines), 1, command)
+                        line = lines[0]
+                        indent = line[:len(line) - len(line.lstrip())]
+                        for variant in ("plain", "nested"):
+                            with self.subTest(filename=filename, command=command, variant=variant):
+                                prefix = indent + "<#\n"
+                                if variant == "nested":
+                                    prefix += indent + "<# nested block #>\n"
+                                replacement = prefix + line + "\n" + indent + "#>"
+                                path.write_text(original.replace(line, replacement, 1), encoding="utf-8")
+                                self.assertGreater(workflow.release_policy_failures(), 0)
+                        path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
+    def test_block_comment_tokens_inside_powershell_strings_are_not_comments(self):
+        """A quoted <# ... #> is literal data, not a block-comment opener."""
+        script = 'Write-Output "<# literal #>"\ngo test -count=1 ./...'
+        self.assertIn("go test -count=1 ./...", workflow.active_powershell_lines(script))

@@ -270,23 +270,72 @@ def ci_trigger_failures(ci: str, *, require_dispatch: bool = True) -> int:
 
 
 def active_powershell_lines(script: str) -> list[str]:
-    """Exclude comments and PowerShell here-string data from command checks."""
+    """Exclude PowerShell comments and here-string data from command checks."""
     active: list[str] = []
     here_quote: str | None = None
+    block_depth = 0
     for line in script.splitlines():
         stripped = line.strip()
         if here_quote is not None:
             if stripped == here_quote + "@":
                 here_quote = None
             continue
+        if not block_depth and (not stripped or stripped.startswith("#")):
+            continue
+
+        # PowerShell <# ... #> comments may span lines and may be nested.
+        # Track quoted literals so a string containing '<#' is not mistaken
+        # for a comment. Keep newlines separate to avoid fabricating commands.
+        visible: list[str] = []
+        quote: str | None = None
+        index = 0
+        while index < len(line):
+            if block_depth:
+                if line.startswith("<#", index):
+                    block_depth += 1
+                    index += 2
+                elif line.startswith("#>", index):
+                    block_depth -= 1
+                    index += 2
+                else:
+                    index += 1
+                continue
+            char = line[index]
+            if quote is not None:
+                visible.append(char)
+                if quote == '"' and char == "`" and index + 1 < len(line):
+                    index += 1
+                    visible.append(line[index])
+                elif char == quote:
+                    if index + 1 < len(line) and line[index + 1] == quote:
+                        index += 1
+                        visible.append(line[index])
+                    else:
+                        quote = None
+            elif line.startswith("<#", index):
+                block_depth = 1
+                index += 2
+                continue
+            elif char in ("'", '"'):
+                quote = char
+                visible.append(char)
+            elif char == "#":
+                # Ignore block-comment markers in a line comment.
+                visible.append(line[index:])
+                break
+            else:
+                visible.append(char)
+            index += 1
+
+        stripped = "".join(visible).strip()
         if not stripped or stripped.startswith("#"):
             continue
-        opener = re.search(r"@(['\"])\s*$", line)
+        opener = re.search(r"@(['\"])\s*$", stripped)
         if opener:
             here_quote = opener.group(1)
             continue
         active.append(stripped)
-    return active if here_quote is None else []
+    return active if here_quote is None and block_depth == 0 else []
 
 
 def release_policy_failures() -> int:
