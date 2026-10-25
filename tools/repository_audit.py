@@ -87,7 +87,7 @@ SECRET_PATTERNS = (
 )
 ABSOLUTE_PATH_PATTERNS = (
     re.compile(r"(?i)\b[A-Z]:\\Users\\[^\\\s]+\\"),
-    re.compile(r"(?<![\w/])/home/[^/\s]+/"),
+    re.compile(r"(?<![\w/])/(?:home)/[^/\s]+/"),
 )
 AUDIT_MARKERS = re.compile(r"\b(?:TODO|FIXME|HACK|XXX)\b")
 EXECUTABLE_BITS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
@@ -254,11 +254,13 @@ def audit(root: Path) -> tuple[list[Finding], Counter[str]]:
         ):
             findings.append(Finding(Category.PYTHON_MODE))
 
+        # The scanner's own source is not exempt from credential/path checks.
+        if any(pattern.search(text) for pattern in SECRET_PATTERNS):
+            findings.append(Finding(Category.SECRET))
+        if any(pattern.search(text) for pattern in ABSOLUTE_PATH_PATTERNS):
+            findings.append(Finding(Category.DEVELOPER_PATH))
+        # Exclude only its self-referential marker regex from noise warnings.
         if relative != "tools/repository_audit.py":
-            if any(pattern.search(text) for pattern in SECRET_PATTERNS):
-                findings.append(Finding(Category.SECRET))
-            if any(pattern.search(text) for pattern in ABSOLUTE_PATH_PATTERNS):
-                findings.append(Finding(Category.DEVELOPER_PATH))
             marker_count = sum(
                 bool(AUDIT_MARKERS.search(line)) for line in text.splitlines()
             )

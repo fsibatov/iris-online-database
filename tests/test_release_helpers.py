@@ -1039,6 +1039,26 @@ class ReleaseHelperTests(unittest.TestCase):
             self.assertNotIn("private-user", output)
             self.assertNotIn("artifact.exe", output)
 
+    def test_repository_audit_scans_its_own_source_for_sensitive_content(self):
+        fake_token = "ghp_" + "A" * 36
+        sensitive_path = "/" + "home/" + "private-user/work/project"
+        for payload, category in (
+            (fake_token, "SEC001"),
+            (sensitive_path, "SEC002"),
+        ):
+            with self.subTest(category=category):
+                with tempfile.TemporaryDirectory(prefix="iris-self-audit-") as temporary:
+                    root = Path(temporary)
+                    tools = root / "tools"
+                    tools.mkdir()
+                    (tools / "repository_audit.py").write_text(
+                        "# self-audit fixture\n" + payload + "\n", encoding="utf-8"
+                    )
+                    result = self.run_audit(root)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f"[{category}]", result.stdout)
+                    self.assertNotIn(payload, result.stdout)
+
     def test_repository_audit_enforces_python_shebang_mode_coherence(self):
         self.assertTrue(python_mode_violation("#!/usr/bin/env python3\n", 0))
         self.assertTrue(python_mode_violation("print('x')\n", stat.S_IXUSR))
