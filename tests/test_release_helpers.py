@@ -32,7 +32,7 @@ from verify_executables import (
     verify_executable,
 )
 from verify_release_assets import expected_asset_names, verify_release_assets
-from verify_windows_resources import verify_version_resource, version_tuple
+from verify_windows_resources import verify_target, verify_version_resource, version_tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -119,6 +119,83 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn("verify_version_resource(resource_payloads(path, 16)", verifier)
         self.assertIn('"FileVersion".encode("utf-16le")', verifier)
         self.assertIn('"ProductVersion".encode("utf-16le")', verifier)
+
+    def test_release_manifest_requires_effective_windows_settings(self):
+        """Comments and unrelated text must not satisfy PE manifest hardening."""
+        target = RELEASE_TARGETS[0]
+        valid = (ROOT / "build" / "windows" / "wails.exe.manifest").read_text(
+            encoding="utf-8"
+        )
+        cases = (
+            ("valid", valid, True),
+            (
+                "comment-only",
+                '<assembly xmlns="urn:schemas-microsoft-com:asm.v1">'
+                '<!-- asInvoker permonitorv2 longPathAware -->'
+                '</assembly>',
+                False,
+            ),
+            (
+                "malformed-xml",
+                '<assembly><!-- asInvoker permonitorv2 longPathAware -->',
+                False,
+            ),
+            (
+                "entity-declaration",
+                '<!DOCTYPE assembly [<!ENTITY bypass "asInvoker permonitorv2 longPathAware">]>'
+                '<assembly xmlns="urn:schemas-microsoft-com:asm.v1">&bypass;</assembly>',
+                False,
+            ),
+            (
+                "wrong-namespace",
+                valid.replace('urn:schemas-microsoft-com:asm.v3', 'urn:invalid-namespace'),
+                False,
+            ),
+            (
+                "elevated-privileges",
+                valid.replace('level="asInvoker"', 'level="requireAdministrator"')
+                .replace('<description>', '<!-- asInvoker --><description>'),
+                False,
+            ),
+            (
+                "disabled-dpi",
+                valid.replace('permonitorv2,permonitor', 'system')
+                .replace('<description>', '<!-- permonitorv2 --><description>'),
+                False,
+            ),
+            (
+                "disabled-long-paths",
+                valid.replace('>true</longPathAware>', '>false</longPathAware>')
+                .replace('<description>', '<!-- longPathAware true --><description>'),
+                False,
+            ),
+        )
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        pe = (
+            target.pe_machine,
+            {".rsrc": (0, 0, 1, 0)},
+            b"",
+            0,
+            target.pe_magic,
+            2 | (flags << 16),
+        )
+        for case, manifest, should_pass in cases:
+            with self.subTest(case=case), patch(
+                "verify_windows_resources.parse_pe", return_value=pe
+            ), patch(
+                "verify_windows_resources.resource_type_ids",
+                return_value={3, 14, 16, 24},
+            ), patch(
+                "verify_windows_resources.resource_payloads",
+                side_effect=lambda _path, kind: [
+                    manifest.encode("utf-8") if kind == 24 else b"fixture"
+                ],
+            ), patch("verify_windows_resources.verify_version_resource"):
+                if should_pass:
+                    verify_target(Path("fixture.exe"), "2.0.5", target)
+                else:
+                    with self.assertRaises(SystemExit):
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
 
     def test_windows_fixed_version_resource_is_exact(self):
         import struct

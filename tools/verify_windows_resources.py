@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 import struct
+from xml.etree import ElementTree
 
 from release_targets import RELEASE_TARGETS
 
@@ -136,6 +137,43 @@ def decode_manifest(payload: bytes) -> str:
     raise ValueError("manifest is not valid Unicode")
 
 
+def verify_manifest(manifest: str, goarch: str) -> None:
+    """Check effective manifest elements, not strings in comments or descriptions."""
+    if (
+        len(manifest) > 131072
+        or "<!DOCTYPE" in manifest.upper()
+        or "<!ENTITY" in manifest.upper()
+    ):
+        raise SystemExit(f"application manifest XML is unsafe ({goarch})")
+    try:
+        root = ElementTree.fromstring(manifest)
+    except ElementTree.ParseError as error:
+        raise SystemExit(f"application manifest XML is invalid ({goarch})") from error
+
+    asm1 = "{urn:schemas-microsoft-com:asm.v1}"
+    asm3 = "{urn:schemas-microsoft-com:asm.v3}"
+    windows_2016 = "{http://schemas.microsoft.com/SMI/2016/WindowsSettings}"
+    levels = root.findall(
+        f"./{asm3}trustInfo/{asm3}security/{asm3}requestedPrivileges/"
+        f"{asm3}requestedExecutionLevel"
+    )
+    settings = root.findall(f"./{asm3}application/{asm3}windowsSettings")
+    if root.tag != f"{asm1}assembly" or len(levels) != 1 or len(settings) != 1:
+        raise SystemExit(f"application manifest structure is invalid ({goarch})")
+    if levels[0].get("level") != "asInvoker" or levels[0].get("uiAccess") != "false":
+        raise SystemExit(f"application manifest privilege level is invalid ({goarch})")
+
+    dpi = settings[0].findall(f"{windows_2016}dpiAwareness")
+    long_paths = settings[0].findall(f"{windows_2016}longPathAware")
+    if (
+        len(dpi) != 1
+        or (dpi[0].text or "").split(",")[0].strip().lower() != "permonitorv2"
+        or len(long_paths) != 1
+        or (long_paths[0].text or "").strip().lower() != "true"
+    ):
+        raise SystemExit(f"application manifest Windows settings are invalid ({goarch})")
+
+
 def version_tuple(version: str) -> tuple[int, int, int, int]:
     parts = version.split(".")
     if len(parts) not in (3, 4) or any(not part.isdigit() for part in parts):
@@ -225,11 +263,7 @@ def verify_target(path: pathlib.Path, version: str, target) -> None:
     manifests = resource_payloads(path, 24)
     if len(manifests) != 1:
         raise SystemExit(f"application manifest is missing ({target.goarch})")
-    manifest = decode_manifest(manifests[0])
-    lowered_manifest = manifest.lower()
-    for marker in ("permonitorv2", "asinvoker", "longpathaware"):
-        if marker not in lowered_manifest:
-            raise SystemExit(f"application manifest is incomplete ({target.goarch})")
+    verify_manifest(decode_manifest(manifests[0]), target.goarch)
     verify_version_resource(resource_payloads(path, 16), version, target.goarch)
 
     hardening = ["ASLR", "NX", "Terminal Server aware"]
