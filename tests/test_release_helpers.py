@@ -33,7 +33,7 @@ from verify_executables import (
 )
 from verify_release_assets import expected_asset_names, verify_release_assets
 from verify_python_environment import expected_versions
-from verify_windows_resources import parse_pe, verify_target, verify_version_resource, version_tuple
+from verify_windows_resources import directory_entries, parse_pe, verify_target, verify_version_resource, version_tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -265,6 +265,28 @@ class ReleaseHelperTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ValueError):
                         parse_pe(path)
+
+    def test_resource_directory_rejects_duplicate_entry_keys(self):
+        """A later resource type/ID must not be hidden by a first match."""
+        import struct
+
+        cases = (
+            ("duplicate-type", ((16, 0x80000020), (16, 0x80000040)), False),
+            ("duplicate-name-offset", ((0x80000020, 0x80000040), (0x80000020, 0x80000060)), False),
+            ("distinct-types", ((16, 0x80000020), (24, 0x80000040)), True),
+        )
+        for label, entries, valid in cases:
+            with self.subTest(case=label):
+                directory = bytearray(16 + len(entries) * 8)
+                named_count = len(entries) if label == "duplicate-name-offset" else 0
+                struct.pack_into("<HH", directory, 12, named_count, len(entries) - named_count)
+                for index, entry in enumerate(entries):
+                    struct.pack_into("<II", directory, 16 + index * 8, *entry)
+                if valid:
+                    self.assertEqual(directory_entries(directory, 0, len(directory), 0), list(entries))
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
 
     def test_windows_fixed_version_resource_is_exact(self):
         import struct

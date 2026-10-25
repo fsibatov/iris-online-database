@@ -69,9 +69,12 @@ def directory_entries(
     count = named + ids
     if base + 16 + count * 8 > section_end:
         raise ValueError("truncated resource directory")
-    return [
+    entries = [
         struct.unpack_from("<II", data, base + 16 + index * 8) for index in range(count)
     ]
+    if len({name_or_id for name_or_id, _target in entries}) != count:
+        raise ValueError("duplicate resource directory entry")
+    return entries
 
 
 def resource_payloads(path: pathlib.Path, wanted_type: int) -> list[bytes]:
