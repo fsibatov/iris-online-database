@@ -1481,3 +1481,31 @@ class WorkflowPlatformGateTests(TestCase):
         """A quoted <# ... #> is literal data, not a block-comment opener."""
         script = 'Write-Output "<# literal #>"\ngo test -count=1 ./...'
         self.assertIn("go test -count=1 ./...", workflow.active_powershell_lines(script))
+
+    def test_codeql_go_exit_codes_must_capture_actual_process_status(self):
+        """Exit guards are ineffective when test/build status is overwritten."""
+        with TemporaryDirectory(prefix="iris-codeql-status-capture-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            path = workflows / "codeql.yml"
+            original = path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for variable in ("goTestExitCode", "goBuildExitCode"):
+                    assignment = f"${variable} = $LASTEXITCODE"
+                    self.assertEqual(original.count(assignment), 1)
+                    for case, replacement in (
+                        ("removed", ""),
+                        ("forced-success", f"${variable} = 0"),
+                        ("output-decoy", f'Write-Output "{assignment}"'),
+                    ):
+                        with self.subTest(variable=variable, case=case):
+                            changed = original.replace(assignment, replacement, 1)
+                            self.assertNotEqual(changed, original)
+                            path.write_text(changed, encoding="utf-8")
+                            self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)

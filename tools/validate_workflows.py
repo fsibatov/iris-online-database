@@ -639,6 +639,8 @@ def release_policy_failures() -> int:
                 for line in active_go_lines)
         # Running the commands is not enough: without both nonzero-exit
         # guards, CodeQL can report green after a failed test or build.
+        and "$goTestExitCode = $LASTEXITCODE" in active_go_lines
+        and "$goBuildExitCode = $LASTEXITCODE" in active_go_lines
         and "if ($goTestExitCode -ne 0) { exit $goTestExitCode }" in active_go_lines
         and "if ($goBuildExitCode -ne 0) { exit $goBuildExitCode }" in active_go_lines
     ):
