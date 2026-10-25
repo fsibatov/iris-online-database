@@ -1612,3 +1612,66 @@ class WorkflowPlatformGateTests(TestCase):
                         self.assertGreater(workflow.release_policy_failures(), 0)
                 path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
+
+    def test_windows_required_gates_capture_and_guard_actual_exit_codes(self):
+        """Stale captures and early guards cannot certify a failed Windows gate."""
+        with TemporaryDirectory(prefix="iris-ci-exit-order-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
+            path = workflows / "ci.yml"
+            original = path.read_text(encoding="utf-8")
+            cases = (
+                (
+                    "Run canonical Windows release gate",
+                    "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass "
+                    "-File .\\IrisTools.ps1 -Action Test",
+                    "gateExitCode",
+                ),
+                ("Windows amd64 race detector", "go test -race -count=1 ./...", "raceExitCode"),
+                ("Windows Go tests", "go test -count=1 ./...", "goTestExitCode"),
+            )
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for step_name, command, variable in cases:
+                    start = original.index(f"      - name: {step_name}\n")
+                    script_start = original.index("        run: |\n", start) + len("        run: |\n")
+                    ends = [
+                        position for position in (
+                            original.find("\n      - name:", script_start),
+                            original.find("\n  windows-", script_start),
+                        ) if position >= 0
+                    ]
+                    end = min(ends) if ends else len(original)
+                    script = original[script_start:end]
+                    capture = f"${variable} = $LASTEXITCODE"
+                    guard = f"if (${variable} -ne 0) {{ exit ${variable} }}"
+                    lines = script.splitlines(keepends=True)
+                    for case, moved_line in (
+                        ("early-capture", capture),
+                        ("early-guard", guard),
+                    ):
+                        with self.subTest(step=step_name, case=case):
+                            changed = lines.copy()
+                            target = next(
+                                i for i, line in enumerate(changed)
+                                if line.strip() == moved_line
+                            )
+                            moved = changed.pop(target)
+                            command_index = next(
+                                i for i, line in enumerate(changed)
+                                if line.strip() == command
+                            )
+                            changed.insert(command_index, moved)
+                            path.write_text(
+                                original[:script_start] + "".join(changed) + original[end:],
+                                encoding="utf-8",
+                            )
+                            self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)

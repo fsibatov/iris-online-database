@@ -464,6 +464,7 @@ def release_policy_failures() -> int:
             "Run canonical Windows release gate",
             (
                 "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\IrisTools.ps1 -Action Test",
+                "$gateExitCode = $LASTEXITCODE",
                 "if ($gateExitCode -ne 0) { exit $gateExitCode }",
             ),
         ),
@@ -471,6 +472,7 @@ def release_policy_failures() -> int:
             "Windows amd64 race detector",
             (
                 "go test -race -count=1 ./...",
+                "$raceExitCode = $LASTEXITCODE",
                 "if ($raceExitCode -ne 0) { exit $raceExitCode }",
             ),
         ),
@@ -478,6 +480,7 @@ def release_policy_failures() -> int:
             "Windows Go tests",
             (
                 "go test -count=1 ./...",
+                "$goTestExitCode = $LASTEXITCODE",
                 "if ($goTestExitCode -ne 0) { exit $goTestExitCode }",
             ),
         ),
@@ -504,7 +507,16 @@ def release_policy_failures() -> int:
             continue
         # Text markers in comments or unrelated steps do not execute the gate.
         active_lines = active_powershell_lines(script)
-        if any(command not in active_lines for command in commands):
+        command, capture, guard = commands
+        # The exit code must be captured immediately after the actual command;
+        # a guard before that capture only checks the initialized success value.
+        if not any(
+            line == command
+            and index + 1 < len(active_lines)
+            and active_lines[index + 1] == capture
+            and guard in active_lines[index + 2:]
+            for index, line in enumerate(active_lines)
+        ):
             failures += 1
     if pinned_windows_runner_count(ci_document) < 3:
         failures += 1
