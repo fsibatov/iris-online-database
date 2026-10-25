@@ -694,6 +694,34 @@ class WorkflowPlatformGateTests(TestCase):
                 codeql_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_codeql_go_build_must_propagate_test_and_build_failures(self):
+        """Go test/build failures must not be silently converted to green CodeQL."""
+        with TemporaryDirectory(prefix="iris-codeql-go-exit-gate-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            path = workflows / "codeql.yml"
+            original = path.read_text(encoding="utf-8")
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for variable in ("goTestExitCode", "goBuildExitCode"):
+                    required = f"if (${variable} -ne 0) {{ exit ${variable} }}"
+                    self.assertEqual(original.count(required), 1)
+                    for case, replacement in (
+                        ("removed", ""),
+                        ("decoy-output", f'Write-Output "{required}"'),
+                        ("exit-zero", f"if (${variable} -ne 0) {{ exit 0 }}"),
+                    ):
+                        with self.subTest(variable=variable, case=case):
+                            modified = original.replace(required, replacement, 1)
+                            self.assertNotEqual(modified, original)
+                            path.write_text(modified, encoding="utf-8")
+                            self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_go_build_commands_inside_here_strings_do_not_count(self):
         """PowerShell here-string content is data, not executed Go commands."""
         with TemporaryDirectory(prefix="iris-codeql-here-string-") as directory:

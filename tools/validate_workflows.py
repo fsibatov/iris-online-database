@@ -637,6 +637,10 @@ def release_policy_failures() -> int:
         and "go test -count=1 ./..." in active_go_lines
         and any(line.startswith("go build -trimpath -o ") and line.endswith(" .")
                 for line in active_go_lines)
+        # Running the commands is not enough: without both nonzero-exit
+        # guards, CodeQL can report green after a failed test or build.
+        and "if ($goTestExitCode -ne 0) { exit $goTestExitCode }" in active_go_lines
+        and "if ($goBuildExitCode -ne 0) { exit $goBuildExitCode }" in active_go_lines
     ):
         failures += 1
     # A named CodeQL job without its actual analyze action never publishes
