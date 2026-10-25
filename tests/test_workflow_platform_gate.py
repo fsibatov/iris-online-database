@@ -1157,6 +1157,45 @@ class WorkflowPlatformGateTests(TestCase):
                 ci_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_required_windows_gate_here_strings_cannot_spoof_commands(self):
+        """Mandatory CI commands and failure guards must be executable."""
+        with TemporaryDirectory(prefix="iris-ci-gate-here-string-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            path = workflows / "ci.yml"
+            original = path.read_text(encoding="utf-8")
+            required = (
+                "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\IrisTools.ps1 -Action Test",
+                "if ($gateExitCode -ne 0) { exit $gateExitCode }",
+                "go test -race -count=1 ./...",
+                "if ($raceExitCode -ne 0) { exit $raceExitCode }",
+                "go test -count=1 ./...",
+                "if ($goTestExitCode -ne 0) { exit $goTestExitCode }",
+            )
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for command in required:
+                    matches = [line for line in original.splitlines() if line.strip() == command]
+                    self.assertEqual(len(matches), 1, command)
+                    line = matches[0]
+                    indentation = line[: len(line) - len(line.lstrip())]
+                    for quote in ("'", '"'):
+                        with self.subTest(command=command, quote=quote):
+                            decoy = (
+                                indentation + "$decoy = @" + quote + "\n"
+                                + line + "\n"
+                                + indentation + quote + "@"
+                            )
+                            modified = original.replace(line, decoy, 1)
+                            self.assertNotEqual(modified, original)
+                            path.write_text(modified, encoding="utf-8")
+                            self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_pinned_go_setup_cannot_be_disabled_or_retargeted(self):
         """CodeQL Go scan must use the project's pinned Go toolchain."""
         with TemporaryDirectory(prefix="iris-codeql-go-setup-") as directory:

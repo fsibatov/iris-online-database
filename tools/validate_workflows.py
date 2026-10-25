@@ -433,10 +433,7 @@ def release_policy_failures() -> int:
             failures += 1
             continue
         # Text markers in comments or unrelated steps do not execute the gate.
-        active_lines = [
-            line.strip() for line in script.splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        ]
+        active_lines = active_powershell_lines(script)
         if any(command not in active_lines for command in commands):
             failures += 1
     if pinned_windows_runner_count(ci_document) < 3:
