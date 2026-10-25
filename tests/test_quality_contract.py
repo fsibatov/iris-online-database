@@ -170,7 +170,7 @@ class QualityContractTests(unittest.TestCase):
         self.assertNotIn("shell: bash", self.vk_workflow)
         self.assertNotIn("set -euo pipefail", self.vk_workflow)
         self.assertIn("windows_only_workflow_failures", self.workflow_validator)
-        self.assertIn('runs_on.startswith("windows-")', self.workflow_validator)
+        self.assertIn('runs_on != "windows-2025"', self.workflow_validator)
         self.assertIn("POSIX_SHELL", self.workflow_validator)
 
     def test_vk_workflow_ignores_cosmetic_variants_of_same_post(self):

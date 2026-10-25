@@ -929,6 +929,25 @@ class WorkflowPlatformGateTests(TestCase):
                         ci_path.write_text(prefix + altered, encoding="utf-8")
                         self.assertGreater(workflow.release_policy_failures(), 0)
 
+    def test_all_workflow_jobs_require_pinned_windows_2025_runner(self):
+        """VK automation must not silently drift to an unpinned/older runner."""
+        path = workflow.ROOT / ".github" / "workflows" / "update-vk-news.yml"
+        original = path.read_text(encoding="utf-8")
+        pin = "    runs-on: windows-2025\n"
+        self.assertIn(pin, original)
+        document = workflow.yaml.load(original, Loader=workflow.UniqueKeySafeLoader)
+        self.assertEqual(workflow.windows_only_workflow_failures(document, original), 0)
+        for replacement in ("windows-2022", "windows-latest", "windows-unknown"):
+            with self.subTest(runner=replacement):
+                changed = original.replace(pin, f"    runs-on: {replacement}\n", 1)
+                self.assertNotEqual(changed, original)
+                document = workflow.yaml.load(
+                    changed, Loader=workflow.UniqueKeySafeLoader
+                )
+                self.assertGreater(
+                    workflow.windows_only_workflow_failures(document, changed), 0
+                )
+
     def test_non_windows_reports_not_run_after_static_checks(self):
         output = StringIO()
         with (

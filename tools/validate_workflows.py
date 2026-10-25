@@ -137,7 +137,7 @@ def windows_only_workflow_failures(document: dict[object, object], _text: str) -
             failures += 1
             continue
         runs_on = job.get("runs-on")
-        if not isinstance(runs_on, str) or not runs_on.startswith("windows-"):
+        if runs_on != "windows-2025":
             failures += 1
         steps = job.get("steps")
         if isinstance(steps, list):
