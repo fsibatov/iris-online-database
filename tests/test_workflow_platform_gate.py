@@ -1064,6 +1064,37 @@ class WorkflowPlatformGateTests(TestCase):
                 ci_path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
+    def test_codeql_pinned_go_setup_cannot_be_disabled_or_retargeted(self):
+        """CodeQL Go scan must use the project's pinned Go toolchain."""
+        with TemporaryDirectory(prefix="iris-codeql-go-setup-") as directory:
+            root = Path(directory)
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
+                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+            path = workflows / "codeql.yml"
+            original = path.read_text(encoding="utf-8")
+            setup = (
+                "      - name: Setup pinned Go\n"
+                "        if: matrix.language == 'go'\n"
+                "        uses: actions/setup-go@"
+            )
+            self.assertIn(setup, original)
+            with patch.object(workflow, "ROOT", root):
+                self.assertEqual(workflow.release_policy_failures(), 0)
+                for case, changed in (
+                    ("removed", original.replace("        uses: actions/setup-go@", "        # uses: actions/setup-go@", 1)),
+                    ("disabled", original.replace("        if: matrix.language == 'go'", "        if: false", 1)),
+                    ("wrong-version", original.replace("          go-version-file: .go-version", "          go-version-file: other-go-version", 1)),
+                    ("fail-open", original.replace(setup, "      - name: Setup pinned Go\n        continue-on-error: true\n        if: matrix.language == 'go'\n        uses: actions/setup-go@", 1)),
+                ):
+                    with self.subTest(case=case):
+                        self.assertNotEqual(changed, original)
+                        path.write_text(changed, encoding="utf-8")
+                        self.assertGreater(workflow.release_policy_failures(), 0)
+                path.write_text(original, encoding="utf-8")
+                self.assertEqual(workflow.release_policy_failures(), 0)
+
     def test_codeql_matrix_exclude_cannot_silence_language_scans(self):
         """An exclusion can remove Go/Python jobs despite intact language labels."""
         with TemporaryDirectory(prefix="iris-codeql-matrix-exclude-") as directory:

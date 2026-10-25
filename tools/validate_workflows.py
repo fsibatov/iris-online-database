@@ -495,7 +495,22 @@ def release_policy_failures() -> int:
         and set(languages) == {"go", "python"}
     ):
         failures += 1
+    # The Go scan must use the declared toolchain, not an arbitrary runner Go.
+    # A missing, conditional or fail-open setup-go step breaks that guarantee.
     codeql_steps = analyze.get("steps") if isinstance(analyze, dict) else None
+    go_setup_steps = (
+        [step for step in codeql_steps if isinstance(step, dict)
+         and isinstance(step.get("uses"), str)
+         and re.fullmatch(r"actions/setup-go@[0-9a-f]{40}", step["uses"])]
+        if isinstance(codeql_steps, list) else []
+    )
+    if len(go_setup_steps) != 1 or not (
+        go_setup_steps[0].get("if") == "matrix.language == 'go'"
+        and "continue-on-error" not in go_setup_steps[0]
+        and isinstance(go_setup_steps[0].get("with"), dict)
+        and go_setup_steps[0]["with"].get("go-version-file") == ".go-version"
+    ):
+        failures += 1
     go_build_steps = (
         [step for step in codeql_steps if isinstance(step, dict)
          and step.get("name") == "Build Windows Go sources"]
