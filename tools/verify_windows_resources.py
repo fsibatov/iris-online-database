@@ -83,6 +83,13 @@ def directory_entries(
         if name_or_id & 0x80000000 == 0
     ):
         raise ValueError("invalid resource directory numeric ID")
+    for name_or_id, _target in entries[:named]:
+        name_offset = raw_offset + (name_or_id & 0x7FFFFFFF)
+        if name_offset < raw_offset or name_offset + 2 > section_end:
+            raise ValueError("invalid resource directory name offset")
+        name_length = struct.unpack_from("<H", data, name_offset)[0]
+        if name_offset + 2 + name_length * 2 > section_end:
+            raise ValueError("truncated resource directory name")
     if len({name_or_id for name_or_id, _target in entries}) != count:
         raise ValueError("duplicate resource directory entry")
     return entries

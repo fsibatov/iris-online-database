@@ -302,7 +302,10 @@ class ReleaseHelperTests(unittest.TestCase):
         )
         for label, named_count, keys, valid in cases:
             with self.subTest(case=label):
-                directory = bytearray(16 + len(keys) * 8)
+                directory = bytearray(0x50 if named_count else 16 + len(keys) * 8)
+                if named_count:
+                    struct.pack_into("<H", directory, 0x20, 2)
+                    directory[0x22:0x26] = "OK".encode("utf-16le")
                 struct.pack_into(
                     "<HH", directory, 12, named_count, len(keys) - named_count
                 )
@@ -323,6 +326,37 @@ class ReleaseHelperTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ValueError):
                         directory_entries(directory, 0, len(directory), 0)
+
+    def test_resource_directory_rejects_out_of_bounds_named_strings(self):
+        """Named PE resource entries must point to complete UTF-16 names in .rsrc."""
+        import struct
+
+        # The high bit selects a name offset relative to the start of .rsrc.
+        # Valid names are stored beyond the directory table, not inline.
+        cases = (
+            ("valid-named", 0x80000040, 2, True),
+            ("valid-empty", 0x80000040, 0, True),
+            ("pointer-outside", 0x80000080, 2, False),
+            ("length-outside", 0x80000040, 0x40, False),
+            ("truncated-length-word", 0x8000006F, 2, False),
+        )
+        for label, name_pointer, length, valid in cases:
+            with self.subTest(case=label):
+                raw_offset = 32
+                section_end = raw_offset + 0x70
+                data = bytearray(section_end)
+                struct.pack_into("<HH", data, raw_offset + 12, 1, 0)
+                struct.pack_into("<II", data, raw_offset + 16, name_pointer, 0x80000028)
+                struct.pack_into("<H", data, raw_offset + 0x40, length)
+                data[raw_offset + 0x42:raw_offset + 0x46] = "OK".encode("utf-16le")
+                if valid:
+                    self.assertEqual(
+                        directory_entries(data, raw_offset, section_end, 0),
+                        [(name_pointer, 0x80000028)],
+                    )
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(data, raw_offset, section_end, 0)
 
     def test_resource_directory_rejects_reserved_numeric_id_bits(self):
         """Numeric PE resource IDs are 16-bit; upper bits must be zero."""
