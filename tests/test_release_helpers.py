@@ -288,6 +288,42 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         directory_entries(directory, 0, len(directory), 0)
 
+    def test_resource_directory_validates_named_and_id_entry_layout(self):
+        """PE resource name entries must precede numeric IDs as counted in the header."""
+        import struct
+
+        cases = (
+            ("named-in-id-slot", 0, (0x80000020,), False),
+            ("id-in-named-slot", 1, (16,), False),
+            ("wrong-order", 1, (16, 0x80000020), False),
+            ("named-only", 1, (0x80000020,), True),
+            ("mixed-valid", 1, (0x80000020, 16), True),
+            ("numeric-only", 0, (16, 24), True),
+        )
+        for label, named_count, keys, valid in cases:
+            with self.subTest(case=label):
+                directory = bytearray(16 + len(keys) * 8)
+                struct.pack_into(
+                    "<HH", directory, 12, named_count, len(keys) - named_count
+                )
+                for index, key in enumerate(keys):
+                    struct.pack_into(
+                        "<II", directory, 16 + index * 8, key, 0x80000040
+                    )
+                if valid:
+                    self.assertEqual(
+                        [
+                            key
+                            for key, _ in directory_entries(
+                                directory, 0, len(directory), 0
+                            )
+                        ],
+                        list(keys),
+                    )
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
+
     def test_windows_fixed_version_resource_is_exact(self):
         import struct
 

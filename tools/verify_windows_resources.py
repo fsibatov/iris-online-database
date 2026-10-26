@@ -72,6 +72,11 @@ def directory_entries(
     entries = [
         struct.unpack_from("<II", data, base + 16 + index * 8) for index in range(count)
     ]
+    if any(
+        bool(name_or_id & 0x80000000) != (index < named)
+        for index, (name_or_id, _target) in enumerate(entries)
+    ):
+        raise ValueError("invalid resource directory name/ID layout")
     if len({name_or_id for name_or_id, _target in entries}) != count:
         raise ValueError("duplicate resource directory entry")
     return entries
