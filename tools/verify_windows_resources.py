@@ -296,6 +296,9 @@ def verify_target(path: pathlib.Path, version: str, target) -> None:
         raise SystemExit(
             f"required Windows resource types are missing ({target.goarch})"
         )
+    icon_images = resource_payloads(path, 3)
+    if not icon_images or any(not image for image in icon_images):
+        raise SystemExit(f"application icon image is missing ({target.goarch})")
     if len(resource_payloads(path, 14)) != 1:
         raise SystemExit(f"application icon group is missing ({target.goarch})")
     manifests = resource_payloads(path, 24)

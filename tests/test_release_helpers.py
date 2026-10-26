@@ -198,6 +198,42 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         verify_target(Path("fixture.exe"), "2.0.5", target)
 
+    def test_windows_release_requires_nonempty_icon_image_payloads(self):
+        """A group icon alone must not hide missing or empty RT_ICON images."""
+        target = RELEASE_TARGETS[0]
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_bytes()
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        pe = (
+            target.pe_machine,
+            {".rsrc": (0, 0, 1, 0)},
+            b"",
+            0,
+            target.pe_magic,
+            2 | (flags << 16),
+        )
+        cases = (
+            ("no-icon-image", [], False),
+            ("empty-icon-image", [b""], False),
+            ("valid-icon-image", [b"icon-bytes"], True),
+        )
+        for label, icon_images, valid in cases:
+            with self.subTest(case=label), patch(
+                "verify_windows_resources.parse_pe", return_value=pe
+            ), patch(
+                "verify_windows_resources.resource_type_ids", return_value={3, 14, 16, 24}
+            ), patch(
+                "verify_windows_resources.resource_payloads",
+                side_effect=lambda _path, kind: (
+                    icon_images if kind == 3 else
+                    [manifest] if kind == 24 else [b"fixture"]
+                ),
+            ), patch("verify_windows_resources.verify_version_resource"):
+                if valid:
+                    verify_target(Path("fixture.exe"), "2.0.5", target)
+                else:
+                    with self.assertRaises(SystemExit):
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+
     def test_pe_optional_header_must_contain_all_read_fields(self):
         """The section table must not supply missing optional-header flags."""
         import struct
