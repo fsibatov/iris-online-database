@@ -358,6 +358,25 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         directory_entries(data, raw_offset, section_end, 0)
 
+    def test_resource_directory_rejects_duplicate_named_text(self):
+        """Distinct UTF-16 offsets must not disguise duplicate resource names."""
+        import struct
+
+        for second_name, valid in (("A", False), ("B", True)):
+            with self.subTest(second_name=second_name):
+                directory = bytearray(0x70)
+                struct.pack_into("<HH", directory, 12, 2, 0)
+                struct.pack_into("<II", directory, 16, 0x80000040, 0x80000028)
+                struct.pack_into("<II", directory, 24, 0x80000050, 0x80000030)
+                for offset, name in ((0x40, "A"), (0x50, second_name)):
+                    struct.pack_into("<H", directory, offset, len(name))
+                    directory[offset + 2 : offset + 4] = name.encode("utf-16le")
+                if valid:
+                    self.assertEqual(len(directory_entries(directory, 0, len(directory), 0)), 2)
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
+
     def test_resource_directory_rejects_reserved_numeric_id_bits(self):
         """Numeric PE resource IDs are 16-bit; upper bits must be zero."""
         import struct
