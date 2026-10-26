@@ -34,7 +34,7 @@ from verify_executables import (
 )
 from verify_release_assets import expected_asset_names, verify_release_assets
 from verify_python_environment import expected_versions
-from verify_windows_resources import directory_entries, parse_pe, resource_payloads, verify_target, verify_version_resource, version_tuple
+from verify_windows_resources import directory_entries, parse_pe, resource_payloads, verify_icon_group, verify_target, verify_version_resource, version_tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -278,6 +278,18 @@ class ReleaseHelperTests(unittest.TestCase):
                 else:
                     with self.assertRaises(SystemExit):
                         verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_group_icon_entry_reserved_byte_must_be_zero(self):
+        """GRPICONDIRENTRY.bReserved must be zero, not an arbitrary byte."""
+        for reserved, valid in ((0, True), (1, False), (255, False)):
+            with self.subTest(reserved=reserved):
+                payload = bytearray(VALID_ICON_GROUP)
+                payload[9] = reserved  # Fourth byte of the 14-byte group entry.
+                if valid:
+                    verify_icon_group(bytes(payload), "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "icon group entry"):
+                        verify_icon_group(bytes(payload), "amd64")
 
     def test_windows_release_rejects_duplicate_group_icon_ids(self):
         """An icon group must not reuse one RT_ICON ID for multiple images."""

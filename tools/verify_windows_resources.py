@@ -177,6 +177,8 @@ def verify_icon_group(payload: bytes, goarch: str) -> None:
         raise SystemExit(f"application icon group is invalid ({goarch})")
     image_ids: set[int] = set()
     for offset in range(6, len(payload), 14):
+        if payload[offset + 3] != 0:
+            raise SystemExit(f"application icon group entry is invalid ({goarch})")
         image_size = struct.unpack_from("<I", payload, offset + 8)[0]
         image_id = struct.unpack_from("<H", payload, offset + 12)[0]
         if image_size == 0 or image_id == 0 or image_id in image_ids:
