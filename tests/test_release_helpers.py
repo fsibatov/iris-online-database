@@ -194,7 +194,7 @@ class ReleaseHelperTests(unittest.TestCase):
                     manifest.encode("utf-8") if kind == 24 else
                     VALID_ICON_GROUP if kind == 14 else b"fixture"
                 ],
-            ), patch("verify_windows_resources.verify_version_resource"):
+            ), patch("verify_windows_resources.resource_icon_ids", return_value={1, 2}), patch("verify_windows_resources.verify_version_resource"):
                 if should_pass:
                     verify_target(Path("fixture.exe"), "2.0.5", target)
                 else:
@@ -231,7 +231,7 @@ class ReleaseHelperTests(unittest.TestCase):
                     [manifest] if kind == 24 else
                     [VALID_ICON_GROUP] if kind == 14 else [b"fixture"]
                 ),
-            ), patch("verify_windows_resources.verify_version_resource"):
+            ), patch("verify_windows_resources.resource_icon_ids", return_value={1, 2}), patch("verify_windows_resources.verify_version_resource"):
                 if valid:
                     verify_target(Path("fixture.exe"), "2.0.5", target)
                 else:
@@ -272,12 +272,56 @@ class ReleaseHelperTests(unittest.TestCase):
                     [group] if kind == 14 else
                     [manifest] if kind == 24 else [b"fixture"]
                 ),
-            ), patch("verify_windows_resources.verify_version_resource"):
+            ), patch("verify_windows_resources.resource_icon_ids", return_value={1, 2}), patch("verify_windows_resources.verify_version_resource"):
                 if valid:
                     verify_target(Path("fixture.exe"), "2.0.5", target)
                 else:
                     with self.assertRaises(SystemExit):
                         verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_windows_release_rejects_group_icon_without_matching_rt_icon_id(self):
+        """A nonempty RT_ICON of another ID cannot satisfy GRPICONDIR.nID."""
+        target = RELEASE_TARGETS[0]
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_bytes()
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        group_entry = VALID_ICON_GROUP[6:]
+        two_image_group = (
+            struct.pack("<HHH", 0, 1, 2) + group_entry
+            + group_entry[:-2] + struct.pack("<H", 2)
+        )
+        cases = (
+            ("matching-id", 1, VALID_ICON_GROUP, True),
+            ("wrong-id", 2, VALID_ICON_GROUP, False),
+            ("missing-second-id", 1, two_image_group, False),
+        )
+        for label, available_id, group, valid in cases:
+            with self.subTest(case=label):
+                resource = bytearray(0x80)
+                struct.pack_into("<HH", resource, 12, 0, 1)
+                struct.pack_into("<II", resource, 16, 3, 0x80000020)
+                struct.pack_into("<HH", resource, 0x20 + 12, 0, 1)
+                struct.pack_into("<II", resource, 0x20 + 16, available_id, 0x80000040)
+                pe = (
+                    target.pe_machine,
+                    {".rsrc": (len(resource), 0x1000, len(resource), 0)},
+                    bytes(resource), 0, target.pe_magic, 2 | (flags << 16),
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe), patch(
+                    "verify_windows_resources.resource_type_ids",
+                    return_value={3, 14, 16, 24},
+                ), patch(
+                    "verify_windows_resources.resource_payloads",
+                    side_effect=lambda _path, kind: (
+                        [b"icon"] if kind == 3 else
+                        [group] if kind == 14 else
+                        [manifest] if kind == 24 else [b"fixture"]
+                    ),
+                ), patch("verify_windows_resources.verify_version_resource"):
+                    if valid:
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+                    else:
+                        with self.assertRaisesRegex(SystemExit, "RT_ICON"):
+                            verify_target(Path("fixture.exe"), "2.0.5", target)
 
     def test_group_icon_entry_reserved_byte_must_be_zero(self):
         """GRPICONDIRENTRY.bReserved must be zero, not an arbitrary byte."""
@@ -328,7 +372,7 @@ class ReleaseHelperTests(unittest.TestCase):
                     [group] if kind == 14 else
                     [manifest] if kind == 24 else [b"fixture"]
                 ),
-            ), patch("verify_windows_resources.verify_version_resource"):
+            ), patch("verify_windows_resources.resource_icon_ids", return_value={1, 2}), patch("verify_windows_resources.verify_version_resource"):
                 if valid:
                     verify_target(Path("fixture.exe"), "2.0.5", target)
                 else:
