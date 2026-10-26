@@ -185,6 +185,56 @@ def resource_icon_ids(path: pathlib.Path) -> set[int]:
     }
 
 
+def resource_icon_sizes(path: pathlib.Path) -> dict[int, set[int]]:
+    """Map numeric RT_ICON IDs to their payload sizes across languages."""
+    _machine, sections, data, _timestamp, _magic, _flags = parse_pe(path)
+    if ".rsrc" not in sections:
+        return {}
+    _virtual_size, virtual_address, raw_size, raw_offset = sections[".rsrc"]
+    section_end = raw_offset + raw_size
+    if section_end > len(data):
+        raise ValueError("truncated resource section")
+    icon_type = next(
+        (
+            target
+            for name_or_id, target in directory_entries(
+                data, raw_offset, section_end, 0
+            )
+            if name_or_id == 3
+        ),
+        None,
+    )
+    if icon_type is None or icon_type & 0x80000000 == 0:
+        return {}
+    sizes: dict[int, set[int]] = {}
+    for icon_id, id_target in directory_entries(
+        data, raw_offset, section_end, icon_type & 0x7FFFFFFF
+    ):
+        if icon_id & 0x80000000:
+            continue
+        if id_target & 0x80000000 == 0:
+            raise ValueError("malformed resource id directory")
+        for _language, data_target in directory_entries(
+            data, raw_offset, section_end, id_target & 0x7FFFFFFF
+        ):
+            if data_target & 0x80000000:
+                raise ValueError("unexpected nested resource directory")
+            entry = raw_offset + data_target
+            if entry < raw_offset or entry + 16 > section_end:
+                raise ValueError("invalid resource data entry")
+            rva, size, _codepage, reserved = struct.unpack_from("<IIII", data, entry)
+            start = raw_offset + (rva - virtual_address)
+            if (
+                reserved
+                or rva < virtual_address
+                or start < raw_offset
+                or start + size > section_end
+            ):
+                raise ValueError("invalid RT_ICON resource data entry")
+            sizes.setdefault(icon_id, set()).add(size)
+    return sizes
+
+
 def resource_type_ids(path: pathlib.Path) -> set[int]:
     _machine, sections, data, _timestamp, _magic, _flags = parse_pe(path)
     if ".rsrc" not in sections:
@@ -359,6 +409,17 @@ def verify_target(path: pathlib.Path, version: str, target) -> None:
         for offset in range(6, len(icon_groups[0]), 14)
     ):
         raise SystemExit(f"application icon group references missing RT_ICON ID ({target.goarch})")
+    icon_sizes = resource_icon_sizes(path)
+    if any(
+        struct.unpack_from("<I", icon_groups[0], offset + 8)[0]
+        not in icon_sizes.get(
+            struct.unpack_from("<H", icon_groups[0], offset + 12)[0], set()
+        )
+        for offset in range(6, len(icon_groups[0]), 14)
+    ):
+        raise SystemExit(
+            f"application icon group image size mismatches RT_ICON ({target.goarch})"
+        )
     manifests = resource_payloads(path, 24)
     if len(manifests) != 1:
         raise SystemExit(f"application manifest is missing ({target.goarch})")
