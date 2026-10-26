@@ -324,6 +324,30 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         directory_entries(directory, 0, len(directory), 0)
 
+    def test_resource_directory_rejects_reserved_numeric_id_bits(self):
+        """Numeric PE resource IDs are 16-bit; upper bits must be zero."""
+        import struct
+
+        cases = (
+            ("upper-bit-16", 0x00010010, False),
+            ("upper-bit-30", 0x40000010, False),
+            ("maximum-id", 0x0000FFFF, True),
+            ("ordinary-id", 16, True),
+        )
+        for label, resource_id, valid in cases:
+            with self.subTest(case=label):
+                directory = bytearray(24)
+                struct.pack_into("<HH", directory, 12, 0, 1)
+                struct.pack_into("<II", directory, 16, resource_id, 0x80000040)
+                if valid:
+                    self.assertEqual(
+                        directory_entries(directory, 0, len(directory), 0),
+                        [(resource_id, 0x80000040)],
+                    )
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
+
     def test_windows_fixed_version_resource_is_exact(self):
         import struct
 

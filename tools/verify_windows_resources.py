@@ -77,6 +77,12 @@ def directory_entries(
         for index, (name_or_id, _target) in enumerate(entries)
     ):
         raise ValueError("invalid resource directory name/ID layout")
+    if any(
+        name_or_id & 0x7FFF0000
+        for name_or_id, _target in entries
+        if name_or_id & 0x80000000 == 0
+    ):
+        raise ValueError("invalid resource directory numeric ID")
     if len({name_or_id for name_or_id, _target in entries}) != count:
         raise ValueError("duplicate resource directory entry")
     return entries
