@@ -430,6 +430,40 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         directory_entries(directory, 0, len(directory), 0)
 
+    def test_resource_directory_named_entries_must_be_sorted(self):
+        """PE named resource keys must be in ascending UTF-16 code-unit order."""
+        import struct
+
+        cases = (
+            ("named-unsorted", ("Z", "A"), False, False),
+            ("mixed-unsorted", ("Z", "A"), True, False),
+            ("named-sorted", ("A", "Z"), False, True),
+            ("mixed-sorted", ("A", "Z"), True, True),
+            ("unicode-sorted", ("\u00ff", "\u0100"), False, True),
+            ("unicode-unsorted", ("\u0100", "\u00ff"), False, False),
+            ("prefix-sorted", ("A", "AA"), False, True),
+            ("prefix-unsorted", ("AA", "A"), False, False),
+        )
+        for label, names, has_id, valid in cases:
+            with self.subTest(case=label):
+                directory = bytearray(0xA0)
+                keys = (0x80000050, 0x80000070) + ((16,) if has_id else ())
+                struct.pack_into("<HH", directory, 12, 2, int(has_id))
+                for index, key in enumerate(keys):
+                    struct.pack_into("<II", directory, 16 + index * 8, key, 0x80000040)
+                for offset, name in zip((0x50, 0x70), names):
+                    encoded = name.encode("utf-16le")
+                    struct.pack_into("<H", directory, offset, len(encoded) // 2)
+                    directory[offset + 2 : offset + 2 + len(encoded)] = encoded
+                if valid:
+                    self.assertEqual(
+                        [key for key, _ in directory_entries(directory, 0, len(directory), 0)],
+                        list(keys),
+                    )
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
+
     def test_windows_fixed_version_resource_is_exact(self):
         import struct
 

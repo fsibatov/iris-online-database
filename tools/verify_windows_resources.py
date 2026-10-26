@@ -84,6 +84,7 @@ def directory_entries(
     ):
         raise ValueError("invalid resource directory numeric ID")
     names: set[bytes] = set()
+    name_order: list[tuple[int, ...]] = []
     for name_or_id, _target in entries[:named]:
         name_offset = raw_offset + (name_or_id & 0x7FFFFFFF)
         if name_offset < raw_offset or name_offset + 2 > section_end:
@@ -96,6 +97,11 @@ def directory_entries(
         if name in names:
             raise ValueError("duplicate resource directory name")
         names.add(name)
+        name_order.append(
+            tuple(int.from_bytes(name[i : i + 2], "little") for i in range(0, len(name), 2))
+        )
+    if name_order != sorted(name_order):
+        raise ValueError("unsorted resource directory names")
     numeric_ids = [name_or_id for name_or_id, _target in entries[named:]]
     if numeric_ids != sorted(numeric_ids):
         raise ValueError("unsorted resource directory numeric IDs")
