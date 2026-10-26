@@ -144,7 +144,9 @@ def resource_payloads(path: pathlib.Path, wanted_type: int) -> list[bytes]:
             entry = raw_offset + data_target
             if entry < raw_offset or entry + 16 > section_end:
                 raise ValueError("invalid resource data entry")
-            rva, size, _codepage, _reserved = struct.unpack_from("<IIII", data, entry)
+            rva, size, _codepage, reserved = struct.unpack_from("<IIII", data, entry)
+            if reserved != 0:
+                raise ValueError("invalid resource data entry reserved field")
             start = raw_offset + (rva - virtual_address)
             end = start + size
             if rva < virtual_address or start < raw_offset or end > section_end:
