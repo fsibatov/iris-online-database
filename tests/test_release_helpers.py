@@ -279,6 +279,50 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         verify_target(Path("fixture.exe"), "2.0.5", target)
 
+    def test_windows_release_rejects_duplicate_group_icon_ids(self):
+        """An icon group must not reuse one RT_ICON ID for multiple images."""
+        target = RELEASE_TARGETS[0]
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_bytes()
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        pe = (
+            target.pe_machine,
+            {".rsrc": (0, 0, 1, 0)},
+            b"",
+            0,
+            target.pe_magic,
+            2 | (flags << 16),
+        )
+        first = VALID_ICON_GROUP[6:]
+        second = first[:-2] + struct.pack("<H", 2)
+        cases = (
+            ("distinct", struct.pack("<HHH", 0, 1, 2) + first + second, True),
+            ("duplicate", struct.pack("<HHH", 0, 1, 2) + first + first, False),
+            (
+                "duplicate-different-size",
+                struct.pack("<HHH", 0, 1, 2) + first
+                + first[:8] + struct.pack("<I", 8) + first[12:],
+                False,
+            ),
+        )
+        for label, group, valid in cases:
+            with self.subTest(case=label), patch(
+                "verify_windows_resources.parse_pe", return_value=pe
+            ), patch(
+                "verify_windows_resources.resource_type_ids", return_value={3, 14, 16, 24}
+            ), patch(
+                "verify_windows_resources.resource_payloads",
+                side_effect=lambda _path, kind: (
+                    [b"icon"] if kind == 3 else
+                    [group] if kind == 14 else
+                    [manifest] if kind == 24 else [b"fixture"]
+                ),
+            ), patch("verify_windows_resources.verify_version_resource"):
+                if valid:
+                    verify_target(Path("fixture.exe"), "2.0.5", target)
+                else:
+                    with self.assertRaises(SystemExit):
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+
     def test_pe_optional_header_must_contain_all_read_fields(self):
         """The section table must not supply missing optional-header flags."""
         import struct

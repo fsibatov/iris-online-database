@@ -173,11 +173,13 @@ def verify_icon_group(payload: bytes, goarch: str) -> None:
     reserved, kind, count = struct.unpack_from("<HHH", payload)
     if reserved != 0 or kind != 1 or count == 0 or len(payload) != 6 + 14 * count:
         raise SystemExit(f"application icon group is invalid ({goarch})")
+    image_ids: set[int] = set()
     for offset in range(6, len(payload), 14):
         image_size = struct.unpack_from("<I", payload, offset + 8)[0]
         image_id = struct.unpack_from("<H", payload, offset + 12)[0]
-        if image_size == 0 or image_id == 0:
+        if image_size == 0 or image_id == 0 or image_id in image_ids:
             raise SystemExit(f"application icon group entry is invalid ({goarch})")
+        image_ids.add(image_id)
 
 
 def decode_manifest(payload: bytes) -> str:
