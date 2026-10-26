@@ -818,6 +818,27 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaisesRegex(SystemExit, "file type"):
                         verify_version_resource([payload], "2.0.0", "amd64")
 
+    def test_windows_fixed_version_resource_requires_zero_application_subtype(self):
+        """VFT_APP has no subtype; nonzero dwFileSubtype is malformed EXE metadata."""
+        fixed = (
+            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
+            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+        )
+        markers = b"".join(
+            value.encode("utf-16le")
+            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+        )
+        for subtype, valid in ((0, True), (1, False), (2, False), (0xFFFFFFFF, False)):
+            with self.subTest(subtype=subtype):
+                values = list(fixed)
+                values[10] = subtype
+                payload = markers + struct.pack("<13I", *values)
+                if valid:
+                    verify_version_resource([payload], "2.0.0", "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "subtype"):
+                        verify_version_resource([payload], "2.0.0", "amd64")
+
     def test_release_build_is_external_and_fingerprint_gated(self):
         launcher = (ROOT / "IrisTools.ps1").read_text(encoding="utf-8")
         windows = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
