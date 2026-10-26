@@ -96,6 +96,9 @@ def directory_entries(
         if name in names:
             raise ValueError("duplicate resource directory name")
         names.add(name)
+    numeric_ids = [name_or_id for name_or_id, _target in entries[named:]]
+    if numeric_ids != sorted(numeric_ids):
+        raise ValueError("unsorted resource directory numeric IDs")
     if len({name_or_id for name_or_id, _target in entries}) != count:
         raise ValueError("duplicate resource directory entry")
     return entries

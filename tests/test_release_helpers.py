@@ -401,6 +401,35 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         directory_entries(directory, 0, len(directory), 0)
 
+    def test_resource_directory_numeric_ids_must_be_sorted(self):
+        """Windows resource ID lookup requires ascending numeric directory keys."""
+        import struct
+
+        cases = (
+            ("numeric-unsorted", False, (24, 16), False),
+            ("mixed-unsorted", True, (24, 16), False),
+            ("numeric-sorted", False, (16, 24), True),
+            ("mixed-sorted", True, (16, 24), True),
+        )
+        for label, has_name, ids, valid in cases:
+            with self.subTest(case=label):
+                directory = bytearray(0x60)
+                keys = ((0x80000040,) if has_name else ()) + ids
+                struct.pack_into("<HH", directory, 12, int(has_name), len(ids))
+                for index, key in enumerate(keys):
+                    struct.pack_into("<II", directory, 16 + index * 8, key, 0x80000050)
+                if has_name:
+                    struct.pack_into("<H", directory, 0x40, 1)
+                    directory[0x42:0x44] = "A".encode("utf-16le")
+                if valid:
+                    self.assertEqual(
+                        [key for key, _ in directory_entries(directory, 0, len(directory), 0)],
+                        list(keys),
+                    )
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
+
     def test_windows_fixed_version_resource_is_exact(self):
         import struct
 
