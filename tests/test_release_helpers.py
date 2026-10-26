@@ -776,6 +776,27 @@ class ReleaseHelperTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             verify_version_resource([bytes(broken)], "2.0.0", "amd64")
 
+    def test_windows_fixed_version_resource_rejects_invalid_structure_revision(self):
+        """VS_FIXEDFILEINFO.dwStrucVersion must be the documented 1.0 value."""
+        fixed = (
+            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
+            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+        )
+        markers = b"".join(
+            value.encode("utf-16le")
+            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+        )
+        for revision, valid in ((0x00010000, True), (0, False), (0x00020000, False)):
+            with self.subTest(revision=revision):
+                values = list(fixed)
+                values[1] = revision
+                payload = markers + struct.pack("<13I", *values)
+                if valid:
+                    verify_version_resource([payload], "2.0.0", "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "VS_FIXEDFILEINFO"):
+                        verify_version_resource([payload], "2.0.0", "amd64")
+
     def test_release_build_is_external_and_fingerprint_gated(self):
         launcher = (ROOT / "IrisTools.ps1").read_text(encoding="utf-8")
         windows = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
