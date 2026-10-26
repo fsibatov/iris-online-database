@@ -448,17 +448,17 @@ class ReleaseHelperTests(unittest.TestCase):
                         verify_target(Path("fixture.exe"), "2.0.5", target)
 
     def test_pe_optional_header_must_contain_all_read_fields(self):
-        """The section table must not supply missing optional-header flags."""
+        """The section table must not mask a truncated PE32+ optional header."""
         import struct
 
         pe_offset = 0x80
         optional = pe_offset + 24
-        for declared_size in (0, 70, 71, 72):
+        for declared_size in (0, 70, 71, 72, 111, 112):
             with (
                 self.subTest(declared_size=declared_size),
                 tempfile.TemporaryDirectory() as temp,
             ):
-                data = bytearray(256)
+                data = bytearray(320)
                 data[:2] = b"MZ"
                 struct.pack_into("<I", data, 0x3C, pe_offset)
                 data[pe_offset : pe_offset + 4] = b"PE\0\0"
@@ -469,7 +469,7 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<H", data, optional + 70, 0x8160)
                 path = Path(temp) / "test.exe"
                 path.write_bytes(data)
-                if declared_size < 72:
+                if declared_size < 112:
                     with self.assertRaises(ValueError):
                         parse_pe(path)
                 else:
@@ -480,13 +480,44 @@ class ReleaseHelperTests(unittest.TestCase):
                         (machine, magic, flags & 0xFFFF), (0x8664, 0x20B, 2)
                     )
 
+    def test_pe_optional_header_rejects_truncated_standard_fields(self):
+        """PE32 and PE32+ must include their complete fixed optional-header fields."""
+        cases = (
+            ("pe32-short-72", 0x10B, 72, False),
+            ("pe32-short-95", 0x10B, 95, False),
+            ("pe32-minimum", 0x10B, 96, True),
+            ("pe32plus-short-72", 0x20B, 72, False),
+            ("pe32plus-short-96", 0x20B, 96, False),
+            ("pe32plus-short-111", 0x20B, 111, False),
+            ("pe32plus-minimum", 0x20B, 112, True),
+        )
+        for label, magic, optional_size, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(512)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x14C if magic == 0x10B else 0x8664, 0)
+                struct.pack_into("<H", data, 0x80 + 20, optional_size)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, magic)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(parse_pe(path)[4], magic)
+                else:
+                    with self.assertRaisesRegex(ValueError, "optional header"):
+                        parse_pe(path)
+
     def test_pe_duplicate_section_names_are_rejected(self):
         """Ambiguous .rsrc sections must not select a decoy resource table."""
         import struct
 
         pe_offset = 0x80
         optional = pe_offset + 24
-        section_table = optional + 72
+        section_table = optional + 112
         cases = (
             ("duplicate-resource", (b".rsrc", b".rsrc"), False),
             ("duplicate-text", (b".text", b".text"), False),
@@ -499,7 +530,7 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<I", data, 0x3C, pe_offset)
                 data[pe_offset : pe_offset + 4] = b"PE\0\0"
                 struct.pack_into("<HH", data, pe_offset + 4, 0x8664, 2)
-                struct.pack_into("<H", data, pe_offset + 20, 72)
+                struct.pack_into("<H", data, pe_offset + 20, 112)
                 struct.pack_into("<H", data, optional, 0x20B)
                 struct.pack_into("<H", data, optional + 68, 2)
                 struct.pack_into("<H", data, optional + 70, 0x8160)
