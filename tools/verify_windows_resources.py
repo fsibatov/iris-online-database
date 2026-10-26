@@ -166,6 +166,20 @@ def resource_type_ids(path: pathlib.Path) -> set[int]:
     }
 
 
+def verify_icon_group(payload: bytes, goarch: str) -> None:
+    """Validate the GRPICONDIR header and complete, nonempty image references."""
+    if len(payload) < 6:
+        raise SystemExit(f"application icon group is invalid ({goarch})")
+    reserved, kind, count = struct.unpack_from("<HHH", payload)
+    if reserved != 0 or kind != 1 or count == 0 or len(payload) != 6 + 14 * count:
+        raise SystemExit(f"application icon group is invalid ({goarch})")
+    for offset in range(6, len(payload), 14):
+        image_size = struct.unpack_from("<I", payload, offset + 8)[0]
+        image_id = struct.unpack_from("<H", payload, offset + 12)[0]
+        if image_size == 0 or image_id == 0:
+            raise SystemExit(f"application icon group entry is invalid ({goarch})")
+
+
 def decode_manifest(payload: bytes) -> str:
     for encoding in ("utf-8-sig", "utf-16"):
         try:
@@ -299,8 +313,10 @@ def verify_target(path: pathlib.Path, version: str, target) -> None:
     icon_images = resource_payloads(path, 3)
     if not icon_images or any(not image for image in icon_images):
         raise SystemExit(f"application icon image is missing ({target.goarch})")
-    if len(resource_payloads(path, 14)) != 1:
+    icon_groups = resource_payloads(path, 14)
+    if len(icon_groups) != 1:
         raise SystemExit(f"application icon group is missing ({target.goarch})")
+    verify_icon_group(icon_groups[0], target.goarch)
     manifests = resource_payloads(path, 24)
     if len(manifests) != 1:
         raise SystemExit(f"application manifest is missing ({target.goarch})")

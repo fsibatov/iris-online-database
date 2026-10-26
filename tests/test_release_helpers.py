@@ -6,6 +6,7 @@ import json
 import os
 import re
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,7 @@ from verify_windows_resources import directory_entries, parse_pe, verify_target,
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
+VALID_ICON_GROUP = struct.pack("<HHHBBBBHHIH", 0, 1, 1, 16, 16, 0, 0, 1, 32, 4, 1)
 
 
 class ReleaseHelperTests(unittest.TestCase):
@@ -189,7 +191,8 @@ class ReleaseHelperTests(unittest.TestCase):
             ), patch(
                 "verify_windows_resources.resource_payloads",
                 side_effect=lambda _path, kind: [
-                    manifest.encode("utf-8") if kind == 24 else b"fixture"
+                    manifest.encode("utf-8") if kind == 24 else
+                    VALID_ICON_GROUP if kind == 14 else b"fixture"
                 ],
             ), patch("verify_windows_resources.verify_version_resource"):
                 if should_pass:
@@ -225,6 +228,48 @@ class ReleaseHelperTests(unittest.TestCase):
                 "verify_windows_resources.resource_payloads",
                 side_effect=lambda _path, kind: (
                     icon_images if kind == 3 else
+                    [manifest] if kind == 24 else
+                    [VALID_ICON_GROUP] if kind == 14 else [b"fixture"]
+                ),
+            ), patch("verify_windows_resources.verify_version_resource"):
+                if valid:
+                    verify_target(Path("fixture.exe"), "2.0.5", target)
+                else:
+                    with self.assertRaises(SystemExit):
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_windows_release_rejects_invalid_icon_group_directory(self):
+        """RT_GROUP_ICON must contain a valid, nonempty icon directory."""
+        target = RELEASE_TARGETS[0]
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_bytes()
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        pe = (
+            target.pe_machine,
+            {".rsrc": (0, 0, 1, 0)},
+            b"",
+            0,
+            target.pe_magic,
+            2 | (flags << 16),
+        )
+        cases = (
+            ("valid", VALID_ICON_GROUP, True),
+            ("empty", b"", False),
+            ("wrong-type", b"\x00\x00\x02\x00" + VALID_ICON_GROUP[4:], False),
+            ("zero-count", b"\x00\x00\x01\x00\x00\x00", False),
+            ("truncated-entry", VALID_ICON_GROUP[:-1], False),
+            ("zero-icon-id", VALID_ICON_GROUP[:-2] + b"\x00\x00", False),
+            ("zero-icon-size", VALID_ICON_GROUP[:14] + b"\x00\x00\x00\x00" + VALID_ICON_GROUP[18:], False),
+        )
+        for label, group, valid in cases:
+            with self.subTest(case=label), patch(
+                "verify_windows_resources.parse_pe", return_value=pe
+            ), patch(
+                "verify_windows_resources.resource_type_ids", return_value={3, 14, 16, 24}
+            ), patch(
+                "verify_windows_resources.resource_payloads",
+                side_effect=lambda _path, kind: (
+                    [b"icon"] if kind == 3 else
+                    [group] if kind == 14 else
                     [manifest] if kind == 24 else [b"fixture"]
                 ),
             ), patch("verify_windows_resources.verify_version_resource"):
