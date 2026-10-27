@@ -676,6 +676,44 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "overlap"):
                         parse_pe(path)
 
+    def test_pe_section_virtual_ranges_must_not_overlap(self):
+        """Two PE sections cannot map distinct raw bytes onto the same image RVA."""
+        cases = (
+            ("overlapping", 0x1000, 0x1200, 0x400, False),
+            ("identical", 0x1000, 0x1000, 0x400, False),
+            ("touching", 0x1000, 0x1400, 0x400, True),
+            ("disjoint", 0x1000, 0x2000, 0x400, True),
+        )
+        for label, first_rva, second_rva, virtual_size, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(0x800)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x8664, 2)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                section_table = optional + 112
+                for index, (name, rva, raw_offset) in enumerate(
+                    ((b".text", first_rva, 0x200), (b".rsrc", second_rva, 0x400))
+                ):
+                    section = section_table + index * 40
+                    data[section : section + len(name)] = name
+                    struct.pack_into(
+                        "<IIII", data, section + 8,
+                        virtual_size, rva, 0x200, raw_offset,
+                    )
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(set(parse_pe(path)[1]), {".text", ".rsrc"})
+                else:
+                    with self.assertRaisesRegex(ValueError, "overlapping PE section virtual ranges"):
+                        parse_pe(path)
+
     def test_resource_directory_rejects_duplicate_entry_keys(self):
         """A later resource type/ID must not be hidden by a first match."""
         import struct

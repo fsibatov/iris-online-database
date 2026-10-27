@@ -66,6 +66,14 @@ def parse_pe(
     for previous, current in zip(raw_ranges, raw_ranges[1:]):
         if current[0] < previous[1]:
             raise ValueError("overlapping PE section raw data")
+    virtual_ranges = sorted(
+        (virtual_address, virtual_address + virtual_size)
+        for virtual_size, virtual_address, _raw_size, _raw_offset in result.values()
+        if virtual_size
+    )
+    for previous, current in zip(virtual_ranges, virtual_ranges[1:]):
+        if current[0] < previous[1]:
+            raise ValueError("overlapping PE section virtual ranges")
     return (
         machine,
         result,
