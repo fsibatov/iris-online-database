@@ -49,6 +49,8 @@ def parse_pe(
         virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
             "<IIII", data, off + 8
         )
+        if raw_size and raw_offset + raw_size > len(data):
+            raise ValueError("PE section raw data extends beyond file")
         if name in result:
             raise ValueError("duplicate PE section name")
         result[name] = (virtual_size, virtual_address, raw_size, raw_offset)
