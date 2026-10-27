@@ -537,7 +537,7 @@ class ReleaseHelperTests(unittest.TestCase):
                 for index, name in enumerate(names):
                     start = section_table + index * 40
                     data[start : start + len(name)] = name
-                    struct.pack_into("<IIII", data, start + 8, 16, index * 4096, 16, 256 + index * 16)
+                    struct.pack_into("<IIII", data, start + 8, 16, index * 4096, 16, 384 + index * 16)
                 path = Path(temp) / "fixture.exe"
                 path.write_bytes(data)
                 if valid:
@@ -575,6 +575,40 @@ class ReleaseHelperTests(unittest.TestCase):
                     self.assertIn(".text", parse_pe(path)[1])
                 else:
                     with self.assertRaisesRegex(ValueError, "section raw data"):
+                        parse_pe(path)
+
+    def test_pe_section_raw_data_must_not_alias_headers(self):
+        """Nonempty section payloads must not overwrite PE headers or section table."""
+        import struct
+
+        cases = (
+            ("optional-header", 0x100, 16, False),
+            ("section-table", 0x118, 16, False),
+            ("touching-table-end", 0x130, 16, True),
+            ("ordinary-section", 0x200, 16, True),
+            ("uninitialized-section", 0x100, 0, True),
+        )
+        for label, raw_offset, raw_size, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(1024)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x8664, 1)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                section = optional + 112
+                data[section:section + 5] = b".text"
+                struct.pack_into("<IIII", data, section + 8, 16, 0x1000, raw_size, raw_offset)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertIn(".text", parse_pe(path)[1])
+                else:
+                    with self.assertRaisesRegex(ValueError, "section raw data overlaps PE headers"):
                         parse_pe(path)
 
     def test_pe_section_raw_ranges_must_not_overlap(self):
