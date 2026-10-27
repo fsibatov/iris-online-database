@@ -575,6 +575,38 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         parse_pe(path)
 
+    def test_pe_section_name_requires_zero_padding(self):
+        """An embedded NUL must not hide extra bytes in a PE section name."""
+        cases = (
+            ("resource-hidden-suffix", b".rsrc\0XY", False),
+            ("text-hidden-suffix", b".text\0AB", False),
+            ("resource-padded", b".rsrc\0\0\0", True),
+            ("eight-byte-name", b"ABCDEFGH", True),
+        )
+        for label, raw_name, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(512)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x8664, 1)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                section = optional + 112
+                self.assertEqual(len(raw_name), 8)
+                data[section:section + 8] = raw_name
+                struct.pack_into("<IIII", data, section + 8, 16, 0x1000, 16, 0x200 - 16)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(len(parse_pe(path)[1]), 1)
+                else:
+                    with self.assertRaisesRegex(ValueError, "section name padding"):
+                        parse_pe(path)
+
     def test_pe_section_raw_data_must_fit_in_file(self):
         """Nonempty PE sections must not claim raw bytes beyond the executable."""
         cases = (

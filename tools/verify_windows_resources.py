@@ -47,7 +47,10 @@ def parse_pe(
         off = section_off + index * 40
         if off + 40 > len(data):
             raise ValueError("truncated section table")
-        name = data[off : off + 8].split(b"\0", 1)[0].decode("ascii", "replace")
+        raw_name = data[off : off + 8]
+        if b"\0" in raw_name and raw_name.split(b"\0", 1)[1].strip(b"\0"):
+            raise ValueError("invalid PE section name padding")
+        name = raw_name.split(b"\0", 1)[0].decode("ascii", "replace")
         virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
             "<IIII", data, off + 8
         )
