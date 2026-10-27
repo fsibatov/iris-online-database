@@ -54,6 +54,14 @@ def parse_pe(
         if name in result:
             raise ValueError("duplicate PE section name")
         result[name] = (virtual_size, virtual_address, raw_size, raw_offset)
+    raw_ranges = sorted(
+        (raw_offset, raw_offset + raw_size)
+        for _virtual_size, _virtual_address, raw_size, raw_offset in result.values()
+        if raw_size
+    )
+    for previous, current in zip(raw_ranges, raw_ranges[1:]):
+        if current[0] < previous[1]:
+            raise ValueError("overlapping PE section raw data")
     return (
         machine,
         result,

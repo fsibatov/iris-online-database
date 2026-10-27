@@ -577,6 +577,42 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "section raw data"):
                         parse_pe(path)
 
+    def test_pe_section_raw_ranges_must_not_overlap(self):
+        """A PE section must not alias another section's raw file bytes."""
+        cases = (
+            ("overlapping", 0x200, 0x220, 0x40, False),
+            ("identical", 0x200, 0x200, 0x40, False),
+            ("touching", 0x200, 0x240, 0x40, True),
+            ("disjoint", 0x200, 0x280, 0x40, True),
+            ("zero-size", 0x200, 0x200, 0, True),
+        )
+        for label, first_offset, second_offset, second_size, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(1024)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x8664, 2)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                section_table = optional + 112
+                for index, (name, offset, size) in enumerate(
+                    ((b".text", first_offset, 0x40), (b".rsrc", second_offset, second_size))
+                ):
+                    section = section_table + index * 40
+                    data[section : section + len(name)] = name
+                    struct.pack_into("<IIII", data, section + 8, size, 0x1000 + index * 0x1000, size, offset)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(set(parse_pe(path)[1]), {".text", ".rsrc"})
+                else:
+                    with self.assertRaisesRegex(ValueError, "overlap"):
+                        parse_pe(path)
+
     def test_resource_directory_rejects_duplicate_entry_keys(self):
         """A later resource type/ID must not be hidden by a first match."""
         import struct
