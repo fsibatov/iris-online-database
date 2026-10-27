@@ -1353,6 +1353,76 @@ class ReleaseHelperTests(unittest.TestCase):
             with self.assertRaises(FingerprintError):
                 assert_release_tree(root, "main")
 
+    def test_release_fingerprint_rejects_hidden_git_index_flags(self):
+        """Assume-unchanged/skip-worktree must not mask a modified release tree."""
+        with tempfile.TemporaryDirectory(prefix="iris-index-flags-") as temporary:
+            root = Path(temporary)
+            subprocess.run(
+                ["git", "init", "--initial-branch=main", str(root)],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            for key, value in (
+                ("user.name", "Iris test"),
+                ("user.email", "test@example.invalid"),
+            ):
+                subprocess.run(
+                    ["git", "-C", str(root), "config", key, value],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+            tracked = root / "tracked.txt"
+            tracked.write_text("original\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(root), "add", "tracked.txt"],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-m", "fixture"],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(assert_release_tree(root, "main")[1], "main")
+            for flag in ("--assume-unchanged", "--skip-worktree"):
+                with self.subTest(flag=flag):
+                    subprocess.run(
+                        [
+                            "git",
+                            "-C",
+                            str(root),
+                            "update-index",
+                            "--no-assume-unchanged",
+                            "--no-skip-worktree",
+                            "tracked.txt",
+                        ],
+                        check=True,
+                        capture_output=True,
+                        timeout=30,
+                    )
+                    tracked.write_text("original\n", encoding="utf-8")
+                    subprocess.run(
+                        ["git", "-C", str(root), "update-index", flag, "tracked.txt"],
+                        check=True,
+                        capture_output=True,
+                        timeout=30,
+                    )
+                    tracked.write_text("tampered release bytes\n", encoding="utf-8")
+                    status = subprocess.run(
+                        ["git", "-C", str(root), "status", "--porcelain=v1"],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    ).stdout
+                    self.assertEqual(status, "")
+                    with self.assertRaises(FingerprintError):
+                        assert_release_tree(root, "main")
+
     def test_release_fingerprint_rejects_changed_toolchain(self):
         """Build cannot reuse a gate fingerprint after Go/security tool drift."""
         with tempfile.TemporaryDirectory(
