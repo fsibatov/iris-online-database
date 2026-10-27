@@ -1899,6 +1899,32 @@ class ReleaseHelperTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 verify_release_assets(directory, "2.0.0")
 
+    def test_release_assets_reject_blank_checksum_records(self):
+        """Empty checksum records must not disappear during manifest validation."""
+        import hashlib
+
+        with tempfile.TemporaryDirectory(
+            prefix="iris-release-blank-checksums-"
+        ) as temporary:
+            directory = Path(temporary)
+            lines = []
+            for index, name in enumerate(expected_asset_names("2.0.0")[:-1], 1):
+                payload = b"MZ" + bytes([index])
+                (directory / name).write_bytes(payload)
+                lines.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+            manifest = directory / "SHA256SUMS.txt"
+            manifest.write_text("\n".join(lines) + "\n", encoding="ascii")
+            verify_release_assets(directory, "2.0.0")
+            for label, invalid in (
+                ("leading-blank", "\n" + "\n".join(lines) + "\n"),
+                ("middle-blank", lines[0] + "\n\n" + "\n".join(lines[1:]) + "\n"),
+                ("trailing-blank", "\n".join(lines) + "\n\n"),
+            ):
+                with self.subTest(case=label):
+                    manifest.write_text(invalid, encoding="ascii")
+                    with self.assertRaisesRegex(SystemExit, "exactly three entries"):
+                        verify_release_assets(directory, "2.0.0")
+
     def test_release_assets_reject_symlinked_entries(self):
         import hashlib
 

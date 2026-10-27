@@ -52,7 +52,7 @@ def verify_release_assets(directory: Path, version: str) -> None:
         text = raw.decode("ascii")
     except UnicodeDecodeError as error:
         raise SystemExit("SHA256SUMS.txt must be ASCII") from error
-    lines = [line for line in text.splitlines() if line]
+    lines = text.splitlines()
     if len(lines) != len(executable_names):
         raise SystemExit("SHA256SUMS.txt must contain exactly three entries")
 
