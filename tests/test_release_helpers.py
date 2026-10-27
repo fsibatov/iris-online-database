@@ -1925,6 +1925,37 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaisesRegex(SystemExit, "exactly three entries"):
                         verify_release_assets(directory, "2.0.0")
 
+    def test_release_assets_reject_nonstandard_checksum_separators(self):
+        """Only LF/CRLF may delimit checksum records in a release manifest."""
+        import hashlib
+
+        with tempfile.TemporaryDirectory(
+            prefix="iris-release-checksum-separators-"
+        ) as temporary:
+            directory = Path(temporary)
+            lines = []
+            for index, name in enumerate(expected_asset_names("2.0.0")[:-1], 1):
+                payload = b"MZ" + bytes([index])
+                (directory / name).write_bytes(payload)
+                lines.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+            manifest = directory / "SHA256SUMS.txt"
+            for label, valid in (
+                ("LF", "\n".join(lines) + "\n"),
+                ("CRLF", "\r\n".join(lines) + "\r\n"),
+            ):
+                with self.subTest(valid=label):
+                    manifest.write_bytes(valid.encode("ascii"))
+                    verify_release_assets(directory, "2.0.0")
+            for label, separator in (
+                ("CR-only", "\r"),
+                ("vertical-tab", "\v"),
+                ("form-feed", "\f"),
+            ):
+                with self.subTest(invalid=label):
+                    manifest.write_bytes((separator.join(lines) + "\n").encode("ascii"))
+                    with self.assertRaises(SystemExit):
+                        verify_release_assets(directory, "2.0.0")
+
     def test_release_assets_reject_symlinked_entries(self):
         import hashlib
 
