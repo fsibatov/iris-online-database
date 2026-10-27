@@ -511,6 +511,35 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "optional header"):
                         parse_pe(path)
 
+    def test_pe_optional_header_magic_must_be_supported(self):
+        """Only PE32/PE32+ can be decoded as Windows release resources."""
+        cases = (
+            ("pe32", 0x10B, True),
+            ("pe32plus", 0x20B, True),
+            ("zero", 0x0000, False),
+            ("rom-image", 0x107, False),
+            ("unknown", 0x999, False),
+        )
+        for label, magic, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(512)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x14C if magic == 0x10B else 0x8664, 0)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, magic)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(parse_pe(path)[4], magic)
+                else:
+                    with self.assertRaisesRegex(ValueError, "optional header magic"):
+                        parse_pe(path)
+
     def test_pe_duplicate_section_names_are_rejected(self):
         """Ambiguous .rsrc sections must not select a decoy resource table."""
         import struct

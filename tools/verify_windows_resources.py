@@ -34,7 +34,9 @@ def parse_pe(
     if optional_size < 72 or optional + optional_size > len(data):
         raise ValueError("truncated optional header")
     magic = struct.unpack_from("<H", data, optional)[0]
-    minimum_size = {0x10B: 96, 0x20B: 112}.get(magic, 72)
+    minimum_size = {0x10B: 96, 0x20B: 112}.get(magic)
+    if minimum_size is None:
+        raise ValueError("unsupported PE optional header magic")
     if optional_size < minimum_size:
         raise ValueError("truncated PE optional header")
     subsystem = struct.unpack_from("<H", data, optional + 68)[0]
