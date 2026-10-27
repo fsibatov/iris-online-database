@@ -714,6 +714,42 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "overlapping PE section virtual ranges"):
                         parse_pe(path)
 
+    def test_pe_section_virtual_ranges_must_fit_32_bit_rva_space(self):
+        """Section image ranges cannot extend beyond the 32-bit RVA address space."""
+        cases = (
+            ("text-overflow", 0xFFFFF000, 0x2000, 0x2000, 0x40, False),
+            ("resource-overflow", 0x1000, 0x40, 0xFFFFFFFE, 0x40, False),
+            ("high-boundary", 0xFFFFF000, 0x1000, 0x2000, 0x40, True),
+            ("ordinary-disjoint", 0x1000, 0x40, 0x2000, 0x40, True),
+        )
+        for label, text_rva, text_size, resource_rva, resource_size, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(0x800)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x8664, 2)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                section_table = optional + 112
+                for index, (name, rva, size, raw_offset) in enumerate((
+                    (b".text", text_rva, text_size, 0x200),
+                    (b".rsrc", resource_rva, resource_size, 0x400),
+                )):
+                    section = section_table + index * 40
+                    data[section:section + len(name)] = name
+                    struct.pack_into("<IIII", data, section + 8, size, rva, 0x40, raw_offset)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(set(parse_pe(path)[1]), {".text", ".rsrc"})
+                else:
+                    with self.assertRaisesRegex(ValueError, "PE section virtual range exceeds 32-bit RVA space"):
+                        parse_pe(path)
+
     def test_resource_directory_rejects_duplicate_entry_keys(self):
         """A later resource type/ID must not be hidden by a first match."""
         import struct

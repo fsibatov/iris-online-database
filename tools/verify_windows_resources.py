@@ -55,6 +55,8 @@ def parse_pe(
             raise ValueError("PE section raw data overlaps PE headers")
         if raw_size and raw_offset + raw_size > len(data):
             raise ValueError("PE section raw data extends beyond file")
+        if virtual_size and virtual_address + virtual_size > 0x100000000:
+            raise ValueError("PE section virtual range exceeds 32-bit RVA space")
         if name in result:
             raise ValueError("duplicate PE section name")
         result[name] = (virtual_size, virtual_address, raw_size, raw_offset)
