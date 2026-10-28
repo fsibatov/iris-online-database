@@ -948,6 +948,39 @@ class ReleaseHelperTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, "virtual size"):
                             resource_payloads(Path("fixture.exe"), 3)
 
+    def test_resource_directory_metadata_must_fit_virtual_section_size(self):
+        """Raw .rsrc padding cannot hold directory tables or data-entry metadata."""
+        cases = (
+            ("valid-data-entry", 0xA0, 0x40, 0x90, True),
+            ("data-entry-in-raw-padding", 0x84, 0x40, 0x90, False),
+            ("valid-language-directory", 0xB0, 0x90, 0x60, True),
+            ("language-directory-in-raw-padding", 0x84, 0x90, 0x60, False),
+        )
+        for label, virtual_size, language_offset, entry_offset, valid in cases:
+            with self.subTest(case=label):
+                resource = bytearray(0x100)
+                for directory_offset, name_or_id, target in (
+                    (0, 3, 0x80000020),
+                    (0x20, 1, 0x80000000 | language_offset),
+                    (language_offset, 0x409, entry_offset),
+                ):
+                    struct.pack_into("<HH", resource, directory_offset + 12, 0, 1)
+                    struct.pack_into(
+                        "<II", resource, directory_offset + 16, name_or_id, target
+                    )
+                struct.pack_into("<IIII", resource, entry_offset, 0x1080, 4, 0, 0)
+                resource[0x80:0x84] = b"ICON"
+                pe = (
+                    0x8664, {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
+                    bytes(resource), 0, 0x20B, 2,
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe):
+                    if valid:
+                        self.assertEqual(resource_payloads(Path("fixture.exe"), 3), [b"ICON"])
+                    else:
+                        with self.assertRaisesRegex(ValueError, "resource.*(directory|entry)"):
+                            resource_payloads(Path("fixture.exe"), 3)
+
     def test_resource_directory_rejects_reserved_numeric_id_bits(self):
         """Numeric PE resource IDs are 16-bit; upper bits must be zero."""
         import struct
