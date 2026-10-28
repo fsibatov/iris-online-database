@@ -34,7 +34,7 @@ from verify_executables import (
 )
 from verify_release_assets import expected_asset_names, verify_release_assets
 from verify_python_environment import expected_versions
-from verify_windows_resources import directory_entries, parse_pe, resource_icon_ids, resource_icon_sizes, resource_payloads, verify_icon_group, verify_target, verify_version_resource, version_tuple
+from verify_windows_resources import directory_entries, parse_pe, resource_icon_ids, resource_icon_sizes, resource_payloads, resource_type_ids, verify_icon_group, verify_target, verify_version_resource, version_tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -892,6 +892,35 @@ class ReleaseHelperTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ValueError):
                         directory_entries(directory, 0, len(directory), 0)
+
+    def test_resource_type_directory_cannot_use_raw_padding(self):
+        """Root resource type IDs must fit the mapped .rsrc virtual extent."""
+        cases = (
+            ("empty-virtual-section", 0, False),
+            ("header-only", 0x10, False),
+            ("truncated-type-entry", 0x17, False),
+            ("complete-type-entry", 0x18, True),
+            ("full-directory", 0x100, True),
+        )
+        for label, virtual_size, valid in cases:
+            with self.subTest(case=label):
+                resource = bytearray(0x100)
+                struct.pack_into("<HH", resource, 12, 0, 1)
+                struct.pack_into("<II", resource, 16, 3, 0x80000020)
+                pe = (
+                    0x8664,
+                    {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
+                    bytes(resource),
+                    0,
+                    0x20B,
+                    2,
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe):
+                    if valid:
+                        self.assertEqual(resource_type_ids(Path("fixture.exe")), {3})
+                    else:
+                        with self.assertRaises(ValueError):
+                            resource_type_ids(Path("fixture.exe"))
 
     def test_resource_data_entry_reserved_field_must_be_zero(self):
         """Nonzero IMAGE_RESOURCE_DATA_ENTRY.Reserved must fail PE verification."""

@@ -275,8 +275,8 @@ def resource_type_ids(path: pathlib.Path) -> set[int]:
     _machine, sections, data, _timestamp, _magic, _flags = parse_pe(path)
     if ".rsrc" not in sections:
         return set()
-    _virtual_size, _virtual_address, raw_size, raw_offset = sections[".rsrc"]
-    section_end = raw_offset + raw_size
+    virtual_size, _virtual_address, raw_size, raw_offset = sections[".rsrc"]
+    section_end = min(raw_offset + raw_size, raw_offset + virtual_size)
     return {
         name_or_id
         for name_or_id, _target in directory_entries(data, raw_offset, section_end, 0)
