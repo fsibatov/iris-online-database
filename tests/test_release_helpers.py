@@ -1455,6 +1455,36 @@ class ReleaseHelperTests(unittest.TestCase):
                             with self.assertRaises(SystemExit):
                                 verify_executable(binary, "2.0.5", "amd64", "go")
 
+    def test_release_executable_rejects_terminal_developer_home_paths(self):
+        """Private home roots are leaks even when no child separator follows."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("windows-null", b"C:\\Users\\developer\x00", False),
+            ("windows-forward-null", b"D:/Users/developer\x00", False),
+            ("unix-home-null", b"/home/developer\x00", False),
+            ("workspace-eof", b"/workspace/developer", False),
+            ("tmp-iris-null", b"/tmp/iris-build\x00", False),
+            ("clean", b"compiled-release-without-private-paths", True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-terminal-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(label=label):
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload)
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
     def test_release_metadata_diagnostic_identifies_cgo_without_raw_payload(self):
         valid = "\n".join(
             f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
