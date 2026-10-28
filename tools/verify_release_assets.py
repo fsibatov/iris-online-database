@@ -69,6 +69,9 @@ def verify_release_assets(directory: Path, version: str) -> None:
     if set(manifest) != set(executable_names):
         raise SystemExit("SHA256SUMS.txt asset names do not match release policy")
 
+    if list(manifest) != executable_names:
+        raise SystemExit("SHA256SUMS.txt entries are not in canonical order")
+
     for name in executable_names:
         actual_digest = hashlib.sha256((directory / name).read_bytes()).hexdigest()
         if manifest[name] != actual_digest:

@@ -2099,6 +2099,29 @@ class ReleaseHelperTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 verify_release_assets(directory, "2.0.0")
 
+    def test_release_assets_require_canonical_checksum_order(self):
+        """Release manifest must match the fixed x64/x86/arm64 build order."""
+        import hashlib
+
+        with tempfile.TemporaryDirectory(prefix="iris-release-order-") as temporary:
+            directory = Path(temporary)
+            lines = []
+            for index, name in enumerate(expected_asset_names("2.0.0")[:-1], 1):
+                payload = b"MZ" + bytes([index])
+                (directory / name).write_bytes(payload)
+                lines.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+            manifest = directory / "SHA256SUMS.txt"
+            manifest.write_text("\n".join(lines) + "\n", encoding="ascii")
+            verify_release_assets(directory, "2.0.0")
+            for label, permuted in (
+                ("reverse", list(reversed(lines))),
+                ("swap", [lines[1], lines[0], lines[2]]),
+            ):
+                with self.subTest(order=label):
+                    manifest.write_text("\n".join(permuted) + "\n", encoding="ascii")
+                    with self.assertRaisesRegex(SystemExit, "canonical order"):
+                        verify_release_assets(directory, "2.0.0")
+
     def test_release_assets_reject_unexpected_directory_entries(self):
         # A release staging directory must contain only the four approved files.
         import hashlib
