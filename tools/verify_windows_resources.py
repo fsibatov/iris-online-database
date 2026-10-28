@@ -95,6 +95,8 @@ def directory_entries(
     base = raw_offset + relative
     if base < raw_offset or base + 16 > section_end:
         raise ValueError("invalid resource directory offset")
+    if struct.unpack_from("<I", data, base + 4)[0] != 0:
+        raise ValueError("resource directory timestamp prevents deterministic release output")
     named, ids = struct.unpack_from("<HH", data, base + 12)
     count = named + ids
     if base + 16 + count * 8 > section_end:

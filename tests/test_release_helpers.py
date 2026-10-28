@@ -782,6 +782,29 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "PE section virtual range exceeds 32-bit RVA space"):
                         parse_pe(path)
 
+    def test_resource_directory_timestamps_must_be_zero(self):
+        """Nonzero PE resource directory timestamps bypass deterministic release checks."""
+        for label, relative, timestamp, valid in (
+            ("root-zero", 0, 0, True),
+            ("root-one", 0, 1, False),
+            ("root-max", 0, 0xFFFFFFFF, False),
+            ("nested-zero", 0x20, 0, True),
+            ("nested-one", 0x20, 1, False),
+        ):
+            with self.subTest(case=label):
+                directory = bytearray(0x60)
+                struct.pack_into("<I", directory, relative + 4, timestamp)
+                struct.pack_into("<HH", directory, relative + 12, 0, 1)
+                struct.pack_into("<II", directory, relative + 16, 16, 0x80000040)
+                if valid:
+                    self.assertEqual(
+                        directory_entries(directory, 0, len(directory), relative),
+                        [(16, 0x80000040)],
+                    )
+                else:
+                    with self.assertRaisesRegex(ValueError, "timestamp"):
+                        directory_entries(directory, 0, len(directory), relative)
+
     def test_resource_directory_rejects_duplicate_entry_keys(self):
         """A later resource type/ID must not be hidden by a first match."""
         import struct
