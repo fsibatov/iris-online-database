@@ -103,7 +103,7 @@ def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
     lowered = binary.lower()
     absolute_path_patterns = (
         rb"(?:^|[\x00\r\n ])/(?:home|workspace)/[^/\x00\r\n ]+/",
-        rb"[a-z]:\\users\\[^\\\x00\r\n ]+\\",
+        rb"[a-z]:[\\/]+users[\\/]+[^\\/\x00\r\n ]+[\\/]+",
         rb"(?:^|[\x00\r\n ])/tmp/iris[^/\x00\r\n ]*/",
     )
     if any(re.search(pattern, lowered) for pattern in absolute_path_patterns):
