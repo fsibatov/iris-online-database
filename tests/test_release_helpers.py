@@ -921,6 +921,33 @@ class ReleaseHelperTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, "reserved"):
                             resource_payloads(Path("fixture.exe"), 3)
 
+    def test_resource_payload_must_fit_declared_virtual_section_size(self):
+        """Raw-file padding must not disguise resources beyond mapped .rsrc bytes."""
+        for virtual_size, valid in ((0x84, True), (0x83, False), (0x80, False)):
+            with self.subTest(virtual_size=virtual_size):
+                resource = bytearray(0x100)
+                for directory_offset, name_or_id, target in (
+                    (0x00, 3, 0x80000020),
+                    (0x20, 1, 0x80000040),
+                    (0x40, 0x409, 0x60),
+                ):
+                    struct.pack_into("<HH", resource, directory_offset + 12, 0, 1)
+                    struct.pack_into(
+                        "<II", resource, directory_offset + 16, name_or_id, target
+                    )
+                struct.pack_into("<IIII", resource, 0x60, 0x1080, 4, 0, 0)
+                resource[0x80:0x84] = b"ICON"
+                pe = (
+                    0x8664, {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
+                    bytes(resource), 0, 0x20B, 2,
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe):
+                    if valid:
+                        self.assertEqual(resource_payloads(Path("fixture.exe"), 3), [b"ICON"])
+                    else:
+                        with self.assertRaisesRegex(ValueError, "virtual size"):
+                            resource_payloads(Path("fixture.exe"), 3)
+
     def test_resource_directory_rejects_reserved_numeric_id_bits(self):
         """Numeric PE resource IDs are 16-bit; upper bits must be zero."""
         import struct

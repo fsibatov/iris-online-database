@@ -179,7 +179,9 @@ def resource_payloads(path: pathlib.Path, wanted_type: int) -> list[bytes]:
                 raise ValueError("invalid resource data entry reserved field")
             start = raw_offset + (rva - virtual_address)
             end = start + size
-            if rva < virtual_address or start < raw_offset or end > section_end:
+            if rva < virtual_address or rva + size > virtual_address + _virtual_size:
+                raise ValueError("resource payload exceeds section virtual size")
+            if start < raw_offset or end > section_end:
                 raise ValueError("invalid resource payload RVA")
             payloads.append(data[start:end])
     return payloads
