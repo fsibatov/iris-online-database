@@ -1455,6 +1455,35 @@ class ReleaseHelperTests(unittest.TestCase):
                             with self.assertRaises(SystemExit):
                                 verify_executable(binary, "2.0.5", "amd64", "go")
 
+    def test_release_executable_rejects_macos_developer_home_paths(self):
+        """A macOS cross-build must not embed private developer home paths."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("macos-source", b"/" + b"Users/alice/iris/build.go", False),
+            ("macos-terminal", b"/" + b"Users/alice\x00", False),
+            ("macos-case", b"/" + b"USERS/builder/iris\x00", False),
+            ("relative-path", b"docs/Users/alice/iris", True),
+            ("users-root", b"/" + b"Users\x00", True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-macos-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(label=label):
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload)
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
     def test_release_executable_rejects_terminal_developer_home_paths(self):
         """Private home roots are leaks even when no child separator follows."""
         pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
