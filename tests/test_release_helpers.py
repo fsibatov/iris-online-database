@@ -1505,6 +1505,31 @@ class ReleaseHelperTests(unittest.TestCase):
             with self.subTest(case=label):
                 self.assertIn(category, missing_metadata_categories(valid + "\n" + extra))
 
+    def test_release_metadata_rejects_replaced_wails_dependency(self):
+        """A pinned dep line cannot conceal a Go module replacement."""
+        valid = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        self.assertEqual(missing_metadata_categories(valid), [])
+        for label, replacement in (
+            ("local-replacement", "\t=>\t../wails-fork"),
+            ("older-module", "\t=>\tgithub.com/wailsapp/wails/v2\tv2.13.0"),
+            ("same-version-fork", "\t=>\texample.invalid/fork/wails/v2\tv2.14.0"),
+        ):
+            with self.subTest(case=label):
+                replaced = valid.replace(
+                    "\tdep\tgithub.com/wailsapp/wails/v2\tv2.14.0",
+                    "\tdep\tgithub.com/wailsapp/wails/v2\tv2.14.0\n" + replacement,
+                )
+                self.assertIn("WAILS_VERSION", missing_metadata_categories(replaced))
+        # Replacement of an unrelated module must not be rejected.
+        unrelated = (
+            "\tdep\texample.invalid/other\tv1.0.0\n"
+            "\t=>\texample.invalid/other-fork\tv1.0.1\n"
+        )
+        self.assertEqual(missing_metadata_categories(unrelated + valid), [])
+
     def test_release_metadata_diagnostic_identifies_cgo_without_raw_payload(self):
         valid = "\n".join(
             f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
