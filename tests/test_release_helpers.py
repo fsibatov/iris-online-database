@@ -386,6 +386,53 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaisesRegex(SystemExit, "icon.*size"):
                         verify_target(Path("fixture.exe"), "2.0.5", target)
 
+    def test_windows_release_rejects_conflicting_rt_icon_language_sizes(self):
+        """Every language variant of an icon ID must match GRPICONDIRENTRY."""
+        target = RELEASE_TARGETS[0]
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_bytes()
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        for label, second_size, valid in (
+            ("same-size", 4, True),
+            ("different-size-5", 5, False),
+            ("different-size-6", 6, False),
+        ):
+            with self.subTest(case=label):
+                resource = bytearray(0xC0)
+                for offset, count in ((0, 1), (0x20, 1), (0x40, 2)):
+                    struct.pack_into("<HH", resource, offset + 12, 0, count)
+                struct.pack_into("<II", resource, 16, 3, 0x80000020)
+                struct.pack_into("<II", resource, 0x20 + 16, 1, 0x80000040)
+                struct.pack_into("<II", resource, 0x40 + 16, 1033, 0x70)
+                struct.pack_into("<II", resource, 0x40 + 24, 1049, 0x80)
+                struct.pack_into("<IIII", resource, 0x70, 0x10A0, 4, 0, 0)
+                struct.pack_into("<IIII", resource, 0x80, 0x10A8, second_size, 0, 0)
+                resource[0xA0:0xA4] = b"ICON"
+                resource[0xA8:0xAE] = b"ICONS!"
+                pe = (
+                    target.pe_machine,
+                    {".rsrc": (len(resource), 0x1000, len(resource), 0)},
+                    bytes(resource), 0, target.pe_magic, 2 | (flags << 16),
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe), patch(
+                    "verify_windows_resources.resource_type_ids",
+                    return_value={3, 14, 16, 24},
+                ), patch(
+                    "verify_windows_resources.resource_payloads",
+                    side_effect=lambda _path, kind: (
+                        resource_payloads(_path, 3) if kind == 3 else
+                        [VALID_ICON_GROUP] if kind == 14 else
+                        [manifest] if kind == 24 else [b"fixture"]
+                    ),
+                ), patch("verify_windows_resources.verify_version_resource"):
+                    self.assertEqual(
+                        resource_icon_sizes(Path("fixture.exe")), {1: {4, second_size}}
+                    )
+                    if valid:
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+                    else:
+                        with self.assertRaisesRegex(SystemExit, "icon.*size"):
+                            verify_target(Path("fixture.exe"), "2.0.5", target)
+
     def test_group_icon_entry_reserved_byte_must_be_zero(self):
         """GRPICONDIRENTRY.bReserved must be zero, not an arbitrary byte."""
         for reserved, valid in ((0, True), (1, False), (255, False)):

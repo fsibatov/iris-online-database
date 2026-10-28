@@ -457,10 +457,8 @@ def verify_target(path: pathlib.Path, version: str, target) -> None:
         raise SystemExit(f"application icon group references missing RT_ICON ID ({target.goarch})")
     icon_sizes = resource_icon_sizes(path)
     if any(
-        struct.unpack_from("<I", icon_groups[0], offset + 8)[0]
-        not in icon_sizes.get(
-            struct.unpack_from("<H", icon_groups[0], offset + 12)[0], set()
-        )
+        icon_sizes.get(struct.unpack_from("<H", icon_groups[0], offset + 12)[0])
+        != {struct.unpack_from("<I", icon_groups[0], offset + 8)[0]}
         for offset in range(6, len(icon_groups[0]), 14)
     ):
         raise SystemExit(
