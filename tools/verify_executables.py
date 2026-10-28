@@ -44,20 +44,30 @@ def missing_metadata_categories(metadata: str, goarch: str = "amd64") -> list[st
     for category, marker in expected_metadata_markers(goarch):
         if category == "WAILS_VERSION":
             expected = ["dep", *marker.split("\t")]
-            present = any(
-                record[:3] == expected
+            candidates = [
+                record for record in records
+                if len(record) >= 2 and record[:2] == expected[:2]
+            ]
+            present = len(candidates) == 1 and (
+                candidates[0][:3] == expected
                 and (
-                    len(record) == 3
+                    len(candidates[0]) == 3
                     or (
-                        len(record) == 4
-                        and re.fullmatch(r"h1:[A-Za-z0-9+/=]+", record[3])
+                        len(candidates[0]) == 4
+                        and re.fullmatch(r"h1:[A-Za-z0-9+/=]+", candidates[0][3])
                         is not None
                     )
                 )
-                for record in records
             )
         else:
-            present = ["build", marker] in records
+            key = marker.split("=", 1)[0] + "="
+            candidates = [
+                record for record in records
+                if len(record) >= 2
+                and record[0] == "build"
+                and record[1].startswith(key)
+            ]
+            present = candidates == [["build", marker]]
         if not present:
             missing.append(category)
     return missing

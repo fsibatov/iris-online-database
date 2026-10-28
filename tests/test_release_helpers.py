@@ -1485,6 +1485,26 @@ class ReleaseHelperTests(unittest.TestCase):
                             with self.assertRaisesRegex(SystemExit, "developer path"):
                                 verify_executable(binary, "2.0.5", "amd64", "go")
 
+    def test_release_metadata_rejects_conflicting_or_duplicate_records(self):
+        """A valid marker must not mask contradictory Go build metadata."""
+        valid = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        self.assertEqual(missing_metadata_categories(valid), [])
+        conflicts = (
+            ("wrong-os", "\tbuild\tGOOS=linux", "TARGET_OS"),
+            ("wrong-arch", "\tbuild\tGOARCH=arm64", "TARGET_ARCH"),
+            ("enabled-cgo", "\tbuild\tCGO_ENABLED=1", "CGO_DISABLED"),
+            ("no-trimpath", "\tbuild\t-trimpath=false", "TRIMPATH"),
+            ("different-tags", "\tbuild\t-tags=desktop", "PRODUCTION_TAGS"),
+            ("old-wails", "\tdep\tgithub.com/wailsapp/wails/v2\tv2.13.0", "WAILS_VERSION"),
+            ("duplicate-os", "\tbuild\tGOOS=windows", "TARGET_OS"),
+        )
+        for label, extra, category in conflicts:
+            with self.subTest(case=label):
+                self.assertIn(category, missing_metadata_categories(valid + "\n" + extra))
+
     def test_release_metadata_diagnostic_identifies_cgo_without_raw_payload(self):
         valid = "\n".join(
             f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
