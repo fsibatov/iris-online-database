@@ -86,7 +86,7 @@ SECRET_PATTERNS = (
     re.compile(r"(?i)authorization\s*[:=]\s*bearer\s+[A-Za-z0-9._~+/=-]{20,}"),
 )
 ABSOLUTE_PATH_PATTERNS = (
-    re.compile(r"(?i)\b[A-Z]:\\Users\\[^\\\s]+\\"),
+    re.compile(r"(?i)\b[A-Z]:[\\/]Users[\\/][^\\/\s]+[\\/]"),
     re.compile(r"(?<![\w/])/(?:home)/[^/\s]+/"),
 )
 AUDIT_MARKERS = re.compile(r"\b(?:TODO|FIXME|HACK|XXX)\b")

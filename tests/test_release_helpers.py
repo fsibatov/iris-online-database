@@ -1467,7 +1467,7 @@ class ReleaseHelperTests(unittest.TestCase):
         )
         cases = (
             ("windows-null", b"C:\\Users\\developer\x00", False),
-            ("windows-forward-null", b"D:/Users/developer\x00", False),
+            ("windows-forward-null", b"D:/" + b"Users/developer\x00", False),
             ("unix-home-null", b"/home/developer\x00", False),
             ("workspace-eof", b"/workspace/developer", False),
             ("tmp-iris-null", b"/tmp/iris-build\x00", False),
@@ -2534,6 +2534,29 @@ class ReleaseHelperTests(unittest.TestCase):
             self.assertNotIn(fake_token, output)
             self.assertNotIn("private-user", output)
             self.assertNotIn("artifact.exe", output)
+
+    def test_repository_audit_rejects_forward_slash_windows_user_paths(self):
+        """Developer home paths must not leak through slash-normalized Windows paths."""
+        cases = (
+            ("C", "alice", "source/project.go"),
+            ("D", "builder", "release/bin"),
+        )
+        for drive, username, suffix in cases:
+            with self.subTest(drive=drive):
+                sensitive_path = drive + ":/" + "Users/" + username + "/" + suffix
+                with tempfile.TemporaryDirectory(prefix="iris-path-audit-") as temporary:
+                    root = Path(temporary)
+                    (root / "fixture.txt").write_text(sensitive_path, encoding="utf-8")
+                    result = self.run_audit(root)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("[SEC002]", result.stdout)
+                    self.assertNotIn(sensitive_path, result.stdout)
+        with tempfile.TemporaryDirectory(prefix="iris-path-control-") as temporary:
+            root = Path(temporary)
+            (root / "fixture.txt").write_text(
+                "docs/Users/alice/notes\n", encoding="utf-8"
+            )
+            self.assertEqual(self.run_audit(root).returncode, 0)
 
     def test_repository_audit_scans_its_own_source_for_sensitive_content(self):
         fake_token = "ghp_" + "A" * 36
