@@ -34,7 +34,7 @@ from verify_executables import (
 )
 from verify_release_assets import expected_asset_names, verify_release_assets
 from verify_python_environment import expected_versions
-from verify_windows_resources import directory_entries, parse_pe, resource_payloads, verify_icon_group, verify_target, verify_version_resource, version_tuple
+from verify_windows_resources import directory_entries, parse_pe, resource_icon_ids, resource_icon_sizes, resource_payloads, verify_icon_group, verify_target, verify_version_resource, version_tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -980,6 +980,43 @@ class ReleaseHelperTests(unittest.TestCase):
                     else:
                         with self.assertRaisesRegex(ValueError, "resource.*(directory|entry)"):
                             resource_payloads(Path("fixture.exe"), 3)
+
+    def test_rt_icon_helpers_reject_unmapped_resource_metadata_and_payloads(self):
+        """RT_ICON IDs and sizes must not be inferred from raw .rsrc padding."""
+        resource = bytearray(0x100)
+        for directory_offset, name_or_id, target in (
+            (0, 3, 0x80000020),
+            (0x20, 1, 0x80000040),
+            (0x40, 0x409, 0x60),
+        ):
+            struct.pack_into("<HH", resource, directory_offset + 12, 0, 1)
+            struct.pack_into("<II", resource, directory_offset + 16, name_or_id, target)
+        struct.pack_into("<IIII", resource, 0x60, 0x1080, 4, 0, 0)
+        resource[0x80:0x84] = b"ICON"
+        cases = (
+            ("valid", 0x84, True, True),
+            ("id-directory-in-padding", 0x20, False, False),
+            ("language-directory-in-padding", 0x40, True, False),
+            ("data-entry-in-padding", 0x6F, True, False),
+            ("icon-payload-in-padding", 0x83, True, False),
+        )
+        for label, virtual_size, ids_valid, sizes_valid in cases:
+            with self.subTest(case=label):
+                pe = (
+                    0x8664, {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
+                    bytes(resource), 0, 0x20B, 2,
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe):
+                    if ids_valid:
+                        self.assertEqual(resource_icon_ids(Path("fixture.exe")), {1})
+                    else:
+                        with self.assertRaises(ValueError):
+                            resource_icon_ids(Path("fixture.exe"))
+                    if sizes_valid:
+                        self.assertEqual(resource_icon_sizes(Path("fixture.exe")), {1: {4}})
+                    else:
+                        with self.assertRaises(ValueError):
+                            resource_icon_sizes(Path("fixture.exe"))
 
     def test_resource_directory_rejects_reserved_numeric_id_bits(self):
         """Numeric PE resource IDs are 16-bit; upper bits must be zero."""
