@@ -116,7 +116,7 @@ def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
         raise SystemExit(f"development marker found in release executable ({goarch})")
     lowered = binary.lower()
     absolute_path_patterns = (
-        rb"(?:^|[\x00\r\n ])/(?:home|workspace|users)/[^/\x00\r\n ]+(?:/|[\x00\r\n ]|$)",
+        rb"(?:^|[\x00\r\n ])/(?:home|workspace|users|root)/[^/\x00\r\n ]+(?:/|[\x00\r\n ]|$)",
         rb"[a-z]:[\\/]+users[\\/]+[^\\/\x00\r\n ]+(?:[\\/]|[\x00\r\n ]|$)",
         rb"(?:^|[\x00\r\n ])/tmp/iris[^/\x00\r\n ]*(?:/|[\x00\r\n ]|$)",
     )
