@@ -1650,6 +1650,39 @@ class ReleaseHelperTests(unittest.TestCase):
                             with self.assertRaisesRegex(SystemExit, "developer path"):
                                 verify_executable(binary, "2.0.5", "amd64", "go")
 
+    def test_release_executable_rejects_unc_developer_user_paths(self):
+        """UNC user homes are private even without a drive letter."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("unc-user-share", r"\\builder\Users\alice\project", False),
+            ("unc-admin-share", r"\\builder\C$\Users\alice\project", False),
+            ("unc-slash", "//builder/share/Users/alice/project", False),
+            ("unc-wide", r"\\builder\share\Users\alice\project", False),
+            ("unc-clean", r"\\builder\share\assets\icon.ico", True),
+            ("relative-control", r"docs\Users\alice\project", True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-unc-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(case=label):
+                    encoded = payload.encode(
+                        "utf-16le" if label == "unc-wide" else "utf-8"
+                    )
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + encoded + b"\x00")
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
     def test_release_executable_rejects_linux_root_home_paths(self):
         """Linux root-owned build paths must not leak into Windows releases."""
         pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
