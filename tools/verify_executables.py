@@ -116,9 +116,9 @@ def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
         raise SystemExit(f"development marker found in release executable ({goarch})")
     lowered = binary.lower()
     absolute_path_patterns = (
-        rb"(?:^|[\x00\r\n\t \"'=])/(?:home|workspace|users|root)/[^/\x00\r\n\t \"'=]+(?:/|[\x00\r\n\t \"'=]|$)",
+        rb"(?:^|[\x00\r\n\t \"'=]|file://)/(?:home|workspace|users|root)/[^/\x00\r\n\t \"'=]+(?:/|[\x00\r\n\t \"'=]|$)",
         rb"[a-z]:[\\/]+users[\\/]+[^\\/\x00\r\n\t \"'=]+(?:[\\/]|[\x00\r\n\t \"'=]|$)",
-        rb"(?:^|[\x00\r\n\t \"'=])/tmp/iris[^/\x00\r\n\t \"'=]*(?:/|[\x00\r\n\t \"'=]|$)",
+        rb"(?:^|[\x00\r\n\t \"'=]|file://)/tmp/iris[^/\x00\r\n\t \"'=]*(?:/|[\x00\r\n\t \"'=]|$)",
     )
     # Windows resources can store paths as UTF-16LE rather than UTF-8/ASCII.
     # Check both byte alignments because a PE string may start at an odd offset.
