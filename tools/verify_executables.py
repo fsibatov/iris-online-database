@@ -120,7 +120,17 @@ def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
         rb"[a-z]:[\\/]+users[\\/]+[^\\/\x00\r\n\t \"'=]+(?:[\\/]|[\x00\r\n\t \"'=]|$)",
         rb"(?:^|[\x00\r\n\t \"'=])/tmp/iris[^/\x00\r\n\t \"'=]*(?:/|[\x00\r\n\t \"'=]|$)",
     )
-    if any(re.search(pattern, lowered) for pattern in absolute_path_patterns):
+    # Windows resources can store paths as UTF-16LE rather than UTF-8/ASCII.
+    # Check both byte alignments because a PE string may start at an odd offset.
+    wide_patterns = tuple(pattern.decode("ascii") for pattern in absolute_path_patterns)
+    wide_texts = (
+        binary.decode("utf-16le", errors="ignore").lower(),
+        binary[1:].decode("utf-16le", errors="ignore").lower(),
+    )
+    if (
+        any(re.search(pattern, lowered) for pattern in absolute_path_patterns)
+        or any(re.search(pattern, text) for text in wide_texts for pattern in wide_patterns)
+    ):
         raise SystemExit(
             f"absolute developer path found in release executable ({goarch})"
         )

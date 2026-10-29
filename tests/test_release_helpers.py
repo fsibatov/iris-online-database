@@ -1587,6 +1587,40 @@ class ReleaseHelperTests(unittest.TestCase):
                             with self.assertRaisesRegex(SystemExit, "developer path"):
                                 verify_executable(binary, "2.0.5", "amd64", "go")
 
+    def test_release_executable_rejects_utf16le_developer_paths(self):
+        """Windows UTF-16LE resources must not conceal private build paths."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("windows-user", "C:" + r"\Users\alice\project", False),
+            ("unix-home", "/" + "home/alice/project", False),
+            ("temporary-build", "/" + "tmp/iris-build/obj", False),
+            ("system-path", r"C:\Windows\System32", True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-wide-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(case=label):
+                    binary.write_bytes(
+                        b"IrisOnlineRelease/2.0.5/\x00\x00\x00"
+                        + payload.encode("utf-16le")
+                        + b"\x00\x00"
+                    )
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=metadata
+                    ):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
     def test_release_executable_rejects_linux_root_home_paths(self):
         """Linux root-owned build paths must not leak into Windows releases."""
         pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
