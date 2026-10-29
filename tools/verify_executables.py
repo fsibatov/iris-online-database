@@ -120,6 +120,9 @@ def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
         rb"[a-z]:[\\/]+users[\\/]+[^\\/\x00\r\n\t \"'=]+(?:[\\/]|[\x00\r\n\t \"'=]|$)",
         rb"(?:^|[\x00\r\n\t \"'=]|file://)/tmp/iris[^/\x00\r\n\t \"'=]*(?:/|[\x00\r\n\t \"'=]|$)",
         rb"(?:\\\\|//)[a-z0-9_.-]+[\\/](?:[a-z0-9_$.-]+[\\/])?users[\\/][^\\/\x00\r\n\t \"'=]+(?:[\\/]|[\x00\r\n\t \"'=]|$)",
+        # Legacy Windows profiles can still appear through junctions or UNC shares.
+        rb"""[a-z]:[\\/]+documents and settings[\\/]+[^\\/\x00\r\n\t"\'=]+(?:[\\/]|[\x00\r\n\t "\'=]|$)""",
+        rb"""(?:\\\\|//)[a-z0-9_.-]+[\\/](?:[a-z0-9_$.-]+[\\/])?documents and settings[\\/]+[^\\/\x00\r\n\t"\'=]+(?:[\\/]|[\x00\r\n\t "\'=]|$)""",
     )
     # Windows resources can store paths as UTF-16LE rather than UTF-8/ASCII.
     # Check both byte alignments because a PE string may start at an odd offset.

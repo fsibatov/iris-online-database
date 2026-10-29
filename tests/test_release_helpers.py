@@ -1683,6 +1683,39 @@ class ReleaseHelperTests(unittest.TestCase):
                             with self.assertRaisesRegex(SystemExit, "developer path"):
                                 verify_executable(binary, "2.0.5", "amd64", "go")
 
+    def test_release_executable_rejects_legacy_windows_profile_paths(self):
+        """Windows 7-era Documents and Settings homes must not leak in EXEs."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("drive-legacy", r"C:\Documents and Settings\alice\iris\main.go", False),
+            ("drive-spaced-user", r"D:\Documents and Settings\Alice Smith\src", False),
+            ("unc-legacy", r"\\builder\C$\Documents and Settings\alice\src", False),
+            ("wide-legacy", r"C:\Documents and Settings\alice\src", False),
+            ("system-directory", r"C:\Windows\System32\kernel32.dll", True),
+            ("relative-legacy", r"docs\Documents and Settings\alice\readme", True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-legacy-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(case=label):
+                    encoded = payload.encode(
+                        "utf-16le" if label == "wide-legacy" else "utf-8"
+                    )
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + encoded + b"\x00")
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
     def test_release_executable_rejects_linux_root_home_paths(self):
         """Linux root-owned build paths must not leak into Windows releases."""
         pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
