@@ -343,7 +343,8 @@ def verify_manifest(manifest: str, goarch: str) -> None:
     long_paths = settings[0].findall(f"{windows_2016}longPathAware")
     if (
         len(dpi) != 1
-        or (dpi[0].text or "").split(",")[0].strip().lower() != "permonitorv2"
+        or [part.strip().lower() for part in (dpi[0].text or "").split(",")]
+        != ["permonitorv2", "permonitor"]
         or len(long_paths) != 1
         or (long_paths[0].text or "").strip().lower() != "true"
     ):

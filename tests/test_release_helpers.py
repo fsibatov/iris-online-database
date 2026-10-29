@@ -34,7 +34,7 @@ from verify_executables import (
 )
 from verify_release_assets import expected_asset_names, verify_release_assets
 from verify_python_environment import expected_versions
-from verify_windows_resources import directory_entries, parse_pe, resource_icon_ids, resource_icon_sizes, resource_payloads, resource_type_ids, verify_icon_group, verify_target, verify_version_resource, version_tuple
+from verify_windows_resources import directory_entries, parse_pe, resource_icon_ids, resource_icon_sizes, resource_payloads, resource_type_ids, verify_icon_group, verify_manifest, verify_target, verify_version_resource, version_tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -205,6 +205,24 @@ class ReleaseHelperTests(unittest.TestCase):
                 else:
                     with self.assertRaises(SystemExit):
                         verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_release_manifest_requires_valid_dpi_fallback(self):
+        """A valid primary DPI mode must not mask an invalid legacy fallback."""
+        valid = (ROOT / "build" / "windows" / "wails.exe.manifest").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("permonitorv2,permonitor", valid)
+        verify_manifest(valid, "amd64")
+        for fallback in (
+            "permonitorv2,system",
+            "permonitorv2,unknown",
+            "permonitorv2,permonitor,system",
+        ):
+            with self.subTest(fallback=fallback):
+                with self.assertRaises(SystemExit):
+                    verify_manifest(
+                        valid.replace("permonitorv2,permonitor", fallback), "amd64"
+                    )
 
     def test_windows_release_requires_nonempty_icon_image_payloads(self):
         """A group icon alone must not hide missing or empty RT_ICON images."""
