@@ -1347,6 +1347,34 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaisesRegex(SystemExit, "DEBUG|PRERELEASE"):
                         verify_version_resource([payload], "2.0.0", "amd64")
 
+    def test_windows_fixed_version_resource_rejects_private_and_unknown_flags(self):
+        """Public release metadata must not claim PRIVATEBUILD/SPECIALBUILD or unknown flags."""
+        fixed = (
+            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
+            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+        )
+        markers = b"".join(
+            value.encode("utf-16le")
+            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+        )
+        for label, flags, valid in (
+            ("stable", 0, True),
+            ("patched", 0x04, True),
+            ("private-build", 0x08, False),
+            ("info-inferred", 0x10, False),
+            ("special-build", 0x20, False),
+            ("unknown-bit", 0x40, False),
+        ):
+            with self.subTest(case=label):
+                values = list(fixed)
+                values[7] = flags
+                payload = markers + struct.pack("<13I", *values)
+                if valid:
+                    verify_version_resource([payload], "2.0.0", "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "non-release"):
+                        verify_version_resource([payload], "2.0.0", "amd64")
+
     def test_release_build_is_external_and_fingerprint_gated(self):
         launcher = (ROOT / "IrisTools.ps1").read_text(encoding="utf-8")
         windows = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(

@@ -399,6 +399,8 @@ def verify_version_resource(payloads: list[bytes], version: str, goarch: str) ->
         raise SystemExit(f"Windows version resource application subtype is invalid ({goarch})")
     if fields[7] & 0x00000003:
         raise SystemExit(f"Windows version resource declares DEBUG or PRERELEASE ({goarch})")
+    if fields[7] & ~0x00000007:
+        raise SystemExit(f"Windows version resource declares non-release flags ({goarch})")
     expected = version_tuple(version)
     expected_ms = (expected[0] << 16) | expected[1]
     expected_ls = (expected[2] << 16) | expected[3]
