@@ -393,6 +393,8 @@ def verify_version_resource(payloads: list[bytes], version: str, goarch: str) ->
     fields = struct.unpack_from("<13I", payload, offsets[0])
     if fields[1] != 0x00010000:
         raise SystemExit(f"VS_FIXEDFILEINFO structure revision is invalid ({goarch})")
+    if fields[6] != 0x0000003F:
+        raise SystemExit(f"Windows version resource flag mask is invalid ({goarch})")
     if fields[9] != 1:
         raise SystemExit(f"Windows version resource file type is not VFT_APP ({goarch})")
     if fields[10] != 0:

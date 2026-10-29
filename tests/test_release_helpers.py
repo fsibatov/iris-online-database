@@ -1347,6 +1347,33 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaisesRegex(SystemExit, "DEBUG|PRERELEASE"):
                         verify_version_resource([payload], "2.0.0", "amd64")
 
+    def test_windows_fixed_version_resource_requires_standard_flag_mask(self):
+        """VS_FIXEDFILEINFO must declare the canonical Windows file flag mask."""
+        fixed = (
+            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
+            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+        )
+        markers = b"".join(
+            value.encode("utf-16le")
+            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+        )
+        for mask, valid in (
+            (0x3F, True),
+            (0, False),
+            (0x03, False),
+            (0x3E, False),
+            (0x7F, False),
+        ):
+            with self.subTest(mask=mask):
+                values = list(fixed)
+                values[6] = mask
+                payload = markers + struct.pack("<13I", *values)
+                if valid:
+                    verify_version_resource([payload], "2.0.0", "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "flag mask"):
+                        verify_version_resource([payload], "2.0.0", "amd64")
+
     def test_windows_fixed_version_resource_rejects_private_and_unknown_flags(self):
         """Public release metadata must not claim PRIVATEBUILD/SPECIALBUILD or unknown flags."""
         fixed = (
