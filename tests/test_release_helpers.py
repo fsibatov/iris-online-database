@@ -1616,6 +1616,35 @@ class ReleaseHelperTests(unittest.TestCase):
                             with self.assertRaisesRegex(SystemExit, "developer path"):
                                 verify_executable(binary, "2.0.5", "amd64", "go")
 
+    def test_release_executable_rejects_delimited_developer_paths(self):
+        """Quoted, tab-separated, and key/value paths must fail privacy QA."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("tab-unix", b"build\t/home/alice/iris/main.go", False),
+            ("quoted-unix", b'path="/root/builder/iris/main.go"', False),
+            ("key-value-tmp", b"source=/tmp/iris-build/src.go", False),
+            ("tab-windows-terminal", b"C:\\Users\\alice\t", False),
+            ("relative-control", b'path="docs/home/alice/iris"', True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-delimited-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(label=label):
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload)
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
     def test_release_metadata_rejects_conflicting_or_duplicate_records(self):
         """A valid marker must not mask contradictory Go build metadata."""
         valid = "\n".join(
