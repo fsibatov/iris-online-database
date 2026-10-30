@@ -154,3 +154,20 @@ class DataCompletenessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class DropReferenceDiagnosticsTests(unittest.TestCase):
+    def test_unresolved_direct_drop_group_references_are_reported_per_server(self):
+        # Real packaged projection: the client tables must be checked before
+        # treating absent groups as zero-chance or removing any source rule.
+        result = MODULE.audit()
+        references = result["unresolvedDirectDropGroupsByServer"]
+        self.assertEqual(
+            {server: sorted({row["groupId"] for row in rows}) for server, rows in references.items()},
+            {"kiss": [1002903, 1003110],
+             "original": [1002903, 1003110, 180020801, 180020802, 180020803]},
+        )
+        self.assertEqual({server: len(rows) for server, rows in references.items()},
+                         {"kiss": 2, "original": 18})
+        self.assertTrue(all(row["monsterId"] > 0 and row["sourceLine"] > 0
+                            for rows in references.values() for row in rows))
+        self.assertEqual(result["fatal"], [])
