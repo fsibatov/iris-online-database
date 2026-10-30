@@ -89,6 +89,21 @@ def main() -> int:
                           'category': 'Оружие/щит', 'typeLine': '[Оружие] Меч',
                           'quality': 'Эпическое', 'qualityId': 7},
                  'bonuses': [], 'drops': []}
+    # Primary Iris Resourses.rar, both server variants: monster 104,
+    # item_dropn.txt line 568, group 10431 weight 42 (0.0042%);
+    # item_droplist.txt group 10431, item 131651 weight 833 (0.0833%).
+    # Exact per-attempt chance: 0.0000034986%, not 0.0000035%.
+    tiny_monster = {'monster': {'id': 104, 'name': 'Маленький червь', 'category': 'Монстр',
+                                 'typeName': 'Обычный', 'level': 43, 'aggressive': False},
+                    'slots': [{'sourceLine': 568, 'choices': [
+                        {'title': 'Группа 10431', 'groupId': 10431, 'baseSelectionChance': 0.0042,
+                         'items': [{'itemId': 131651, 'item': 'Чёрные перчатки ренегата',
+                                    'baseSelectionChance': 0.0833,
+                                    'baseAttemptChance': 0.0000034986, 'quantity': 1}]}]}]}
+    tiny_item = {'item': {'id': 131651, 'name': 'Чёрные перчатки ренегата',
+                           'category': 'Экипировка', 'typeLine': 'Перчатки',
+                           'quality': 'Обычное', 'qualityId': 1},
+                 'bonuses': [], 'drops': []}
     profile = {'schemaVersion': 1, 'migrated': True,
                'settings': {'server': 'kiss', 'theme': 'dark', 'view': 'list'},
                'itemFilters': {}, 'monsterFilters': {}, 'favorites': [], 'history': [], 'recentlyViewed': []}
@@ -97,7 +112,8 @@ def main() -> int:
                  '/api/items/1002': item, '/api/monsters/10042': real_monster,
                  '/api/items/809022': real_item, '/api/monsters/8': duplicate_monster,
                  '/api/items/180201': duplicate_item, '/api/monsters/135': rare_monster,
-                 '/api/items/2406': rare_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
+                 '/api/items/2406': rare_item, '/api/monsters/104': tiny_monster,
+                 '/api/items/131651': tiny_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
     for item_id in (1001, 1003):
         responses[f'/api/items/{item_id}'] = {**item, 'item': {**item['item'], 'id': item_id, 'name': f'Предмет {item_id - 1000}'}}
     with sync_playwright() as p:
@@ -212,6 +228,18 @@ def main() -> int:
             page.locator('.detail-page[data-route="monster/135"]').wait_for(timeout=8000)
             assert page.locator('[data-drop-group="0"]').get_attribute('open') is not None
             assert page.locator('[data-drop-group-host="0"] a[href="#item/2406"]').get_attribute('aria-current') == 'true'
+            page.evaluate("window.location.hash = '#monster/104'")
+            page.locator('.detail-page[data-route="monster/104"]').wait_for(timeout=8000)
+            page.locator('.lazy-monster-drops > summary').click()
+            page.locator('[data-drop-group="0"] summary').click()
+            tiny_chance = page.locator('[data-drop-group-host="0"] a[href="#item/131651"] small').inner_text()
+            assert '0,0000034986%' in tiny_chance, f'primary-source tiny chance truncated: {tiny_chance}'
+            page.locator('[data-drop-group-host="0"] a[href="#item/131651"]').click()
+            page.locator('.detail-page[data-route="item/131651"]').wait_for(timeout=8000)
+            page.locator('.detail-page [data-route-back]').click()
+            page.locator('.detail-page[data-route="monster/104"]').wait_for(timeout=8000)
+            assert page.locator('[data-drop-group="0"]').get_attribute('open') is not None
+            assert page.locator('[data-drop-group-host="0"] a[href="#item/131651"]').get_attribute('aria-current') == 'true'
             assert not errors, f'frontend JavaScript exceptions: {errors}'
         finally:
             browser.close()

@@ -75,6 +75,27 @@ class SourceDuplicateDropTests(unittest.TestCase):
                 self.assertAlmostEqual(item["chance"], 0.0625)
                 self.assertAlmostEqual(group["chance"] * item["chance"] / 100, 0.000125)
 
+    def test_primary_tiny_drop_chance_preserves_ten_decimal_places(self):
+        # Iris Resourses.rar: both 1/{kiss,or}/item_dropn.txt line 568
+        # monster 104, group 10431 raw weight 42 (0.0042%).
+        # item_droplist.txt line 7421, item 131651 raw weight 833
+        # (0.0833%), quantity 1. Product: 0.0000034986% per attempt.
+        with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
+            data = json.load(source)
+        for server_name in ("kiss", "original"):
+            with self.subTest(server=server_name):
+                server = data["servers"][server_name]
+                slot = next(slot for slot in server["directSlots"]["104"]
+                            if slot["sourceLine"] == 568)
+                choice = next(choice for choice in slot["choices"]
+                              if choice["groupId"] == 10431)
+                row = next(row for row in server["dropLists"]["10431"]
+                           if row["itemId"] == 131651)
+                self.assertEqual(row["quantity"], 1)
+                self.assertAlmostEqual(choice["chance"], 0.0042)
+                self.assertAlmostEqual(row["chance"], 0.0833)
+                self.assertAlmostEqual(choice["chance"] * row["chance"] / 100, 0.0000034986)
+
     def test_kiss_projection_preserves_both_source_choices(self):
         with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
             data = json.load(source)

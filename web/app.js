@@ -319,7 +319,7 @@
     const number = Number(value || 0);
     if (!Number.isFinite(number) || number <= 0) return '—';
     const digits = number < 0.0001
-      ? Math.min(12, Math.max(8, Math.ceil(-Math.log10(number)) + 1))
+      ? Math.min(12, Math.max(10, Math.ceil(-Math.log10(number)) + 1))
       : number < 0.001 ? 6 : 4;
     const text = number.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '').replace('.', ',');
     return `${text}%`;
