@@ -2179,7 +2179,8 @@
       const position = index + 1;
       const model = state.monsterDrops;
       const selected = Number(item.itemId) === model.activeItemId
-        && (!model.activeItemPosition || model.activeGroupIndex !== groupIndex || model.activeItemPosition === position);
+        && (model.activeGroupIndex < 0 || model.activeGroupIndex === groupIndex)
+        && (!model.activeItemPosition || model.activeItemPosition === position);
       return `<a href="#item/${item.itemId}" data-drop-item-position="${position}"${selected ? ' class="is-active-drop" aria-current="true"' : ''}><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`;
     }).join('');
     const remaining = items.length - group.shown;

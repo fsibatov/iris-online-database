@@ -104,6 +104,23 @@ def main() -> int:
                            'category': 'Экипировка', 'typeLine': 'Перчатки',
                            'quality': 'Обычное', 'qualityId': 1},
                  'bonuses': [], 'drops': []}
+    # Primary Iris Resourses.rar, Kiss monster 10026: source lines 1327/1328,
+    # the same item 868026 occurs in group 1002607 in two distinct slots.
+    # Selecting one source must not mark the other source as the active row.
+    cross_slot_monster = {'monster': {'id': 10026, 'name': 'Монстр 10026',
+                                      'category': 'Босс', 'typeName': 'Монстр',
+                                      'level': 70, 'aggressive': True},
+                          'slots': [{'sourceLine': line, 'choices': [
+                              {'title': 'Группа 1002607', 'groupId': 1002607,
+                               'baseSelectionChance': 80,
+                               'items': [{'itemId': 868026, 'item': 'Серебряный глаз',
+                                          'baseSelectionChance': 100,
+                                          'baseAttemptChance': 80, 'quantity': 1}]}]}
+                              for line in (1327, 1328)]}
+    cross_slot_item = {'item': {'id': 868026, 'name': 'Серебряный глаз',
+                                 'category': 'Расходники', 'typeLine': 'Материал',
+                                 'quality': 'Обычное', 'qualityId': 2},
+                       'bonuses': [], 'drops': []}
     profile = {'schemaVersion': 1, 'migrated': True,
                'settings': {'server': 'kiss', 'theme': 'dark', 'view': 'list'},
                'itemFilters': {}, 'monsterFilters': {}, 'favorites': [], 'history': [], 'recentlyViewed': []}
@@ -113,7 +130,8 @@ def main() -> int:
                  '/api/items/809022': real_item, '/api/monsters/8': duplicate_monster,
                  '/api/items/180201': duplicate_item, '/api/monsters/135': rare_monster,
                  '/api/items/2406': rare_item, '/api/monsters/104': tiny_monster,
-                 '/api/items/131651': tiny_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
+                 '/api/items/131651': tiny_item, '/api/monsters/10026': cross_slot_monster,
+                 '/api/items/868026': cross_slot_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
     for item_id in (1001, 1003):
         responses[f'/api/items/{item_id}'] = {**item, 'item': {**item['item'], 'id': item_id, 'name': f'Предмет {item_id - 1000}'}}
     with sync_playwright() as p:
@@ -165,7 +183,7 @@ def main() -> int:
             assert selected.evaluate('(node) => getComputedStyle(node).boxShadow') != 'none', 'active item has no visible accent'
             saved_scroll, current_scroll = page.evaluate('''() => [history.state.monsterDropView.scrollY, window.scrollY]''')
             assert abs(saved_scroll - current_scroll) < 24, f'drop scroll position not restored: {saved_scroll} -> {current_scroll}'
-            assert page.locator('[data-drop-group-host="1"] a[href="#item/1002"]').get_attribute('aria-current') == 'true', 'same item in another group not highlighted'
+            assert page.locator('[data-drop-group-host="1"] a[href="#item/1002"]').get_attribute('aria-current') is None, 'unselected source group incorrectly highlighted'
             assert page.locator('[data-drop-group-host="0"] a[href="#item/1003"]').get_attribute('aria-current') is None, 'unselected row highlighted'
             page.locator('[data-drop-group-host="0"] a[href="#item/1003"]').click()
             page.locator('.detail-page[data-route="item/1003"]').wait_for(timeout=8000)
@@ -240,6 +258,19 @@ def main() -> int:
             page.locator('.detail-page[data-route="monster/104"]').wait_for(timeout=8000)
             assert page.locator('[data-drop-group="0"]').get_attribute('open') is not None
             assert page.locator('[data-drop-group-host="0"] a[href="#item/131651"]').get_attribute('aria-current') == 'true'
+            page.evaluate("window.location.hash = '#monster/10026'")
+            page.locator('.detail-page[data-route="monster/10026"]').wait_for(timeout=8000)
+            page.locator('.lazy-monster-drops > summary').click()
+            page.locator('[data-drop-group="0"] summary').click()
+            page.locator('[data-drop-group="1"] summary').click()
+            page.locator('[data-drop-group-host="1"] a[href="#item/868026"]').click()
+            page.locator('.detail-page[data-route="item/868026"]').wait_for(timeout=8000)
+            page.locator('.detail-page [data-route-back]').click()
+            page.locator('.detail-page[data-route="monster/10026"]').wait_for(timeout=8000)
+            assert page.locator('[data-drop-group="0"]').get_attribute('open') is not None
+            assert page.locator('[data-drop-group="1"]').get_attribute('open') is not None
+            assert page.locator('[data-drop-group-host="1"] a[aria-current="true"]').count() == 1, 'chosen primary source not highlighted'
+            assert page.locator('[data-drop-group-host="0"] a[aria-current="true"]').count() == 0, 'unselected primary source highlighted'
             assert not errors, f'frontend JavaScript exceptions: {errors}'
         finally:
             browser.close()

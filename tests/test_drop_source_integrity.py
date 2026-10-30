@@ -37,6 +37,25 @@ class SourceDuplicateDropTests(unittest.TestCase):
         self.assertTrue(any(item["id"] == 809022 for item in data["items"]))
         self.assertTrue(any(monster["id"] == 10042 for monster in data["monsters"]))
 
+    def test_primary_same_item_across_distinct_monster_slots(self):
+        # Iris Resourses.rar, monster 10026, group 1002607, item 868026.
+        # Kiss item_dropn.txt lines 1327/1328; Original lines 1334/1335.
+        # Each slot is an independent source, not the active selection of both.
+        with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
+            data = json.load(source)
+        for server_name, source_lines in (("kiss", (1327, 1328)),
+                                          ("original", (1334, 1335))):
+            with self.subTest(server=server_name):
+                server = data["servers"][server_name]
+                slots = server["directSlots"]["10026"]
+                selected = [slot for slot in slots if slot["sourceLine"] in source_lines]
+                self.assertEqual([slot["sourceLine"] for slot in selected], list(source_lines))
+                for slot in selected:
+                    self.assertEqual(slot["choices"][0]["groupId"], 1002607)
+                self.assertEqual(server["dropLists"]["1002607"],
+                                 [{"itemId": 868026, "chance": 100.0, "quantity": 1}])
+        self.assertTrue(any(item["id"] == 868026 for item in data["items"]))
+
     def test_primary_duplicate_item_positions_remain_distinct(self):
         # Iris Resourses.rar: 1/{kiss,or}/item_dropn.txt line 42,
         # item_droplist.txt group 813 contains item 180201 at rows 5 and 6.
