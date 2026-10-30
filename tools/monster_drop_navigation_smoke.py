@@ -366,6 +366,14 @@ def main() -> int:
             page.locator('.detail-page [data-route-back]').click()
             page.locator('.detail-page[data-route="monster/10052"]').wait_for(timeout=8000)
             assert page.locator('.drop-preview-list a[href="#item/144001001"]').get_attribute('aria-current') == 'true'
+            # Preview selection identifies an item, not a specific source group.
+            # Primary monster 10052 lists this item in groups 1005201 and 1005221;
+            # neither group should claim an active source until one is chosen.
+            page.locator('.lazy-monster-drops > summary').click()
+            page.locator('[data-drop-group="0"] summary').click()
+            page.locator('[data-drop-group="2"] summary').click()
+            assert page.locator('[data-drop-group="0"] a[aria-current="true"]').count() == 0, 'preview falsely selected first source group'
+            assert page.locator('[data-drop-group="2"] a[aria-current="true"]').count() == 0, 'preview falsely selected second source group'
             page.evaluate("window.location.hash = '#monster/10029'")
             page.locator('.detail-page[data-route="monster/10029"]').wait_for(timeout=8000)
             page.locator('.lazy-monster-drops summary').click()
