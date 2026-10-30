@@ -1965,7 +1965,17 @@
     const content = `<span class="source-icon">${icon}</span><span><strong>${escapeHTML(sourceName(drop))}</strong>${details ? `<small>${escapeHTML(details)}</small>` : ''}</span>${chance}`;
     if (isWorld) return `<div class="source-row world-source-compact">${content}</div>`;
     if (isChest && Number(drop.containerId) > 0) return `<a class="source-row" href="#item/${Number(drop.containerId)}">${content}</a>`;
-    return drop.monsterId ? `<a class="source-row" href="#monster/${drop.monsterId}">${content}</a>` : `<div class="source-row">${content}</div>`;
+    if (drop.monsterId) {
+      const monsterId = Number(drop.monsterId);
+      const itemId = Number(drop.itemId);
+      const sourceLine = Number(drop.sourceLine);
+      const choicePosition = Number(drop.choicePosition);
+      const exactSource = drop.source === 'Выпадение монстра'
+        && [monsterId, itemId, sourceLine, choicePosition].every(value => Number.isSafeInteger(value) && value > 0);
+      const sourceQuery = exactSource ? `?item=${itemId}&line=${sourceLine}&choice=${choicePosition}` : '';
+      return `<a class="source-row" href="#monster/${monsterId}${sourceQuery}">${content}</a>`;
+    }
+    return `<div class="source-row">${content}</div>`;
   }
 
   function questRewardScopeNote(drops) {
@@ -2016,6 +2026,37 @@
     restoreMonsterDropView(monster.id);
   }
 
+  function focusMonsterDropSource(itemId, sourceLine, choicePosition) {
+    const model = state.monsterDrops;
+    if (!model || ![itemId, sourceLine, choicePosition].every(value => Number.isSafeInteger(value) && value > 0)) return;
+    let groupIndex = 0;
+    let targetIndex = -1;
+    let itemPosition = -1;
+    for (const slot of model.slots) {
+      for (let index = 0; index < (slot.choices || []).length; index++, groupIndex++) {
+        if (Number(slot.sourceLine) !== sourceLine || index + 1 !== choicePosition) continue;
+        const position = (slot.choices[index].items || []).findIndex(item => Number(item.itemId) === itemId);
+        if (position >= 0) { targetIndex = groupIndex; itemPosition = position; }
+      }
+    }
+    if (targetIndex < 0) return;
+    const accordion = main.querySelector('.lazy-monster-drops');
+    if (!accordion) return;
+    model.activeItemId = itemId;
+    accordion.open = true;
+    renderMonsterDropShell();
+    const group = model.groups[targetIndex];
+    const details = main.querySelector(`[data-drop-group="${targetIndex}"]`);
+    if (!group || !details) return;
+    group.shown = Math.min(group.choice.items.length, Math.max(DROP_BATCH, itemPosition + 1));
+    details.open = true;
+    renderMonsterDropGroup(targetIndex, false, true);
+    requestAnimationFrame(() => {
+      if (state.monsterDrops !== model || !state.route.startsWith('monster/')) return;
+      main.querySelector(`[data-drop-group-host="${targetIndex}"] a[href="#item/${itemId}"]`)?.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
   function rememberMonsterDropSelection(link) {
     const page = main.querySelector('.detail-page[data-route^="monster/"]');
     if (!page || !page.contains(link) || !link.closest('.drop-items, .drop-preview-list')) return;
@@ -2062,7 +2103,7 @@
       renderMonsterDropGroup(index, false, true);
     });
     requestAnimationFrame(() => {
-      if (state.route === view.route && state.server === view.server)
+      if (state.route.split('?')[0] === view.route && state.server === view.server)
         window.scrollTo({ top: Math.max(0, Number(view.scrollY) || 0), behavior: 'instant' });
     });
   }
@@ -2256,6 +2297,12 @@
         const data = await api(`/api/monsters/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
         if (controller.signal.aborted || requestId !== state.requestId) return;
         monsterDetail(data);
+        const sourceItemId = Number(params.get('item'));
+        const sourceLine = Number(params.get('line'));
+        const choicePosition = Number(params.get('choice'));
+        const savedView = window.history.state?.monsterDropView;
+        if (savedView?.route !== `monster/${Number(id)}` || savedView.server !== state.server)
+          focusMonsterDropSource(sourceItemId, sourceLine, choicePosition);
       } else if (path.startsWith('title/')) {
         const index = path.slice(6);
         const data = await api(`/api/titles/${encodeURIComponent(index)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });

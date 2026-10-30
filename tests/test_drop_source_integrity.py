@@ -27,6 +27,16 @@ class SourceDuplicateDropTests(unittest.TestCase):
              {"groupId": 6000501, "chance": 50.0}],
         )
 
+    def test_source_item_is_resolvable_in_both_repeated_choices(self):
+        with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
+            data = json.load(source)
+        server = data["servers"]["kiss"]
+        row = next(slot for slot in server["directSlots"]["10042"] if slot["sourceLine"] == 2483)
+        self.assertEqual([choice["groupId"] for choice in row["choices"]], [6000501, 6000501])
+        self.assertEqual(server["dropLists"]["6000501"][0]["itemId"], 809022)
+        self.assertTrue(any(item["id"] == 809022 for item in data["items"]))
+        self.assertTrue(any(monster["id"] == 10042 for monster in data["monsters"]))
+
     def test_kiss_projection_preserves_both_source_choices(self):
         with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
             data = json.load(source)

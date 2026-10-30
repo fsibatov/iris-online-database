@@ -31,12 +31,31 @@ def main() -> int:
     item = {'item': {'id': 1002, 'name': 'Предмет 2', 'category': 'Тест',
                      'typeLine': 'Предмет', 'quality': 'Обычное', 'qualityId': 1},
             'bonuses': [], 'drops': []}
+    # Primary Iris Resourses.rar: Kiss monster 10042, line 2483, repeated
+    # group 6000501 (100% then 50%), item 809022.
+    real_monster = {'monster': {'id': 10042, 'name': 'Шару Гаррулл', 'category': 'Босс',
+                                'typeName': 'Нежить', 'level': 89, 'aggressive': True, 'hp': 24166667},
+                    'slots': [{'sourceLine': 2483, 'choices': [
+                        {'title': 'Группа 6000501', 'groupId': 6000501, 'baseSelectionChance': 100,
+                         'items': [{'itemId': 809022, 'item': 'Эскудо', 'baseSelectionChance': 100,
+                                    'baseAttemptChance': 100, 'quantity': 1}]},
+                        {'title': 'Группа 6000501', 'groupId': 6000501, 'baseSelectionChance': 0,
+                         'items': [{'itemId': 809022, 'item': 'Эскудо', 'baseSelectionChance': 100,
+                                    'baseAttemptChance': 0, 'quantity': 1}]}]}]}
+    real_item = {'item': {'id': 809022, 'name': 'Эскудо', 'category': 'Ценности',
+                          'typeLine': '[Ценности] Валюта', 'quality': 'Редкое', 'qualityId': 4},
+                 'bonuses': [], 'drops': [
+                     {'itemId': 809022, 'monsterId': 10042, 'monster': 'Шару Гаррулл',
+                      'source': 'Выпадение монстра', 'sourceLine': 2483, 'slotNumber': 1,
+                      'choicePosition': 2, 'groupId': 6000501, 'groupChanceKnown': True,
+                      'groupBaseChance': 0, 'itemBaseChance': 100, 'baseAttemptChance': 0}]}
     profile = {'schemaVersion': 1, 'migrated': True,
                'settings': {'server': 'kiss', 'theme': 'dark', 'view': 'list'},
                'itemFilters': {}, 'monsterFilters': {}, 'favorites': [], 'history': [], 'recentlyViewed': []}
     meta = {'servers': [{'key': 'kiss', 'name': 'Iris Kiss Kiss'}], 'effectSpecs': {}}
     responses = {'/api/user-data': profile, '/api/meta': meta, '/api/monsters/42': monster,
-                 '/api/items/1002': item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
+                 '/api/items/1002': item, '/api/monsters/10042': real_monster,
+                 '/api/items/809022': real_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
     for item_id in (1001, 1003):
         responses[f'/api/items/{item_id}'] = {**item, 'item': {**item['item'], 'id': item_id, 'name': f'Предмет {item_id - 1000}'}}
     with sync_playwright() as p:
@@ -105,6 +124,21 @@ def main() -> int:
             assert page.locator('.drop-preview-list a[href="#item/1001"]').get_attribute('aria-current') == 'true', 'preview selection not highlighted'
             page.evaluate("document.documentElement.dataset.theme = 'light'")
             assert page.locator('.drop-preview-list a[href="#item/1001"]').evaluate('(node) => getComputedStyle(node).boxShadow') != 'none', 'active preview not visible in light theme'
+            # Item source must navigate to its exact source slot and choice, not
+            # merely to the monster header. This is an actual primary-source ID.
+            page.evaluate("window.location.hash = '#item/809022'")
+            page.locator('.detail-page[data-route="item/809022"]').wait_for(timeout=8000)
+            page.locator('[data-open-details="item-sources"]').click()
+            page.locator('.source-list a[href^="#monster/10042"]').click()
+            page.locator('.detail-page[data-route="monster/10042"]').wait_for(timeout=8000)
+            assert page.locator('[data-drop-group="1"]').get_attribute('open') is not None, 'exact primary-source choice not expanded'
+            assert page.locator('[data-drop-group-host="1"] a[href="#item/809022"]').get_attribute('aria-current') == 'true', 'source item not selected'
+            page.locator('[data-drop-group-host="1"] a[href="#item/809022"]').click()
+            page.locator('.detail-page[data-route="item/809022"]').wait_for(timeout=8000)
+            page.locator('.detail-page [data-route-back]').click()
+            page.locator('.detail-page[data-route="monster/10042"]').wait_for(timeout=8000)
+            assert page.locator('[data-drop-group="1"]').get_attribute('open') is not None, 'source group collapsed after return'
+            assert page.locator('[data-drop-group-host="1"] a[href="#item/809022"]').get_attribute('aria-current') == 'true', 'source item highlight lost after return'
             assert not errors, f'frontend JavaScript exceptions: {errors}'
         finally:
             browser.close()
