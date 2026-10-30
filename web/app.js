@@ -1952,6 +1952,7 @@
     const baseDetails = isWorld ? [worldContext] : isChest ? [chestSourceDetails(drop)] : isQuest ? [drop.context] : [drop.slotTitle];
     if (isQuest && Number(drop.questId) > 0) baseDetails.push(`ID задания: ${formatNumber(drop.questId)}`);
     if (isQuestReward && Number(drop.quantity) > 1) baseDetails.push(`Количество: ×${formatNumber(drop.quantity)}`);
+    if (!isQuest && !isChest && Number(drop.quantity) > 1) baseDetails.push(`Количество: ×${formatNumber(drop.quantity)}`);
     if (!isQuest && !isChest && drop.groupChanceKnown) {
       baseDetails.push(`Шанс группы: ${formatChance(drop.groupBaseChance ?? drop.groupChance)}`);
       baseDetails.push(`Если группа выбрана: ${formatChance(drop.itemBaseChance ?? drop.itemChance)}`);

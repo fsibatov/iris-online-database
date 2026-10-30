@@ -121,6 +121,31 @@ def main() -> int:
                                  'category': 'Расходники', 'typeLine': 'Материал',
                                  'quality': 'Обычное', 'qualityId': 2},
                        'bonuses': [], 'drops': []}
+    # Primary Iris Resourses.rar, both servers: monster 148, source line 775,
+    # group 14801, item 835243 twice: position 2 gives x1 (line 10894),
+    # position 3 gives x5 (line 10895). Quantity must remain visible on
+    # each item's source row, not only on the monster drop group page.
+    quantity_monster = {'monster': {'id': 148, 'name': 'Монстр 148', 'category': 'Монстр',
+                                    'typeName': 'Обычный', 'level': 65},
+                        'slots': [{'sourceLine': 775, 'choices': [
+                            {'title': 'Группа 14801', 'groupId': 14801,
+                             'baseSelectionChance': 100, 'items': [
+                                 {'itemId': 835108, 'item': 'Предмет 835108', 'position': 1,
+                                  'baseSelectionChance': 2, 'baseAttemptChance': 2, 'quantity': 1},
+                                 {'itemId': 835243, 'item': 'Предмет 835243', 'position': 2,
+                                  'baseSelectionChance': 1, 'baseAttemptChance': 1, 'quantity': 1},
+                                 {'itemId': 835243, 'item': 'Предмет 835243', 'position': 3,
+                                  'baseSelectionChance': 0.1, 'baseAttemptChance': 0.1, 'quantity': 5}]}]}]}
+    quantity_item = {'item': {'id': 835243, 'name': 'Предмет 835243', 'category': 'Тест',
+                              'typeLine': 'Предмет', 'quality': 'Обычное', 'qualityId': 1},
+                     'bonuses': [], 'drops': [
+                         {'itemId': 835243, 'monsterId': 148, 'monster': 'Монстр 148',
+                          'source': 'Выпадение монстра', 'sourceLine': 775,
+                          'choicePosition': 1, 'itemPosition': position, 'groupId': 14801,
+                          'slotTitle': 'Попытка выпадения №1', 'groupChanceKnown': True,
+                          'groupBaseChance': 100, 'itemBaseChance': chance,
+                          'baseAttemptChance': chance, 'quantity': quantity}
+                         for position, chance, quantity in ((2, 1, 1), (3, 0.1, 5))]}
     profile = {'schemaVersion': 1, 'migrated': True,
                'settings': {'server': 'kiss', 'theme': 'dark', 'view': 'list'},
                'itemFilters': {}, 'monsterFilters': {}, 'favorites': [], 'history': [], 'recentlyViewed': []}
@@ -131,7 +156,8 @@ def main() -> int:
                  '/api/items/180201': duplicate_item, '/api/monsters/135': rare_monster,
                  '/api/items/2406': rare_item, '/api/monsters/104': tiny_monster,
                  '/api/items/131651': tiny_item, '/api/monsters/10026': cross_slot_monster,
-                 '/api/items/868026': cross_slot_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
+                 '/api/items/868026': cross_slot_item, '/api/monsters/148': quantity_monster,
+                 '/api/items/835243': quantity_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
     for item_id in (1001, 1003):
         responses[f'/api/items/{item_id}'] = {**item, 'item': {**item['item'], 'id': item_id, 'name': f'Предмет {item_id - 1000}'}}
     with sync_playwright() as p:
@@ -271,6 +297,25 @@ def main() -> int:
             assert page.locator('[data-drop-group="1"]').get_attribute('open') is not None
             assert page.locator('[data-drop-group-host="1"] a[aria-current="true"]').count() == 1, 'chosen primary source not highlighted'
             assert page.locator('[data-drop-group-host="0"] a[aria-current="true"]').count() == 0, 'unselected primary source highlighted'
+            page.evaluate("window.location.hash = '#item/835243'")
+            page.locator('.detail-page[data-route="item/835243"]').wait_for(timeout=8000)
+            page.locator('[data-open-details="item-sources"]').click()
+            quantity_sources = page.locator('.source-list a[href^="#monster/148?"]')
+            assert quantity_sources.count() == 2, 'source quantity variants collapsed'
+            assert 'Количество: ×5' not in quantity_sources.nth(0).inner_text(), 'single quantity mislabelled'
+            assert 'Количество: ×5' in quantity_sources.nth(1).inner_text(), 'five-unit primary source quantity omitted'
+            assert quantity_sources.nth(1).get_attribute('href').endswith('&position=3'), 'quantity source position lost'
+            quantity_sources.nth(1).click()
+            page.locator('.detail-page[data-route="monster/148"]').wait_for(timeout=8000)
+            assert page.locator('[data-drop-group="0"]').get_attribute('open') is not None, 'quantity source group not expanded'
+            selected = page.locator('[data-drop-group-host="0"] a[aria-current="true"]')
+            assert selected.count() == 1 and selected.get_attribute('data-drop-item-position') == '3', 'wrong quantity source selected'
+            assert '×5' in selected.inner_text(), 'quantity missing on monster group row'
+            selected.click()
+            page.locator('.detail-page[data-route="item/835243"]').wait_for(timeout=8000)
+            page.locator('.detail-page [data-route-back]').click()
+            page.locator('.detail-page[data-route="monster/148"]').wait_for(timeout=8000)
+            assert page.locator('[data-drop-group-host="0"] a[data-drop-item-position="3"]').get_attribute('aria-current') == 'true', 'quantity branch lost on return'
             assert not errors, f'frontend JavaScript exceptions: {errors}'
         finally:
             browser.close()

@@ -115,6 +115,22 @@ class SourceDuplicateDropTests(unittest.TestCase):
                 self.assertAlmostEqual(row["chance"], 0.0833)
                 self.assertAlmostEqual(choice["chance"] * row["chance"] / 100, 0.0000034986)
 
+    def test_primary_same_item_distinct_quantities_in_both_servers(self):
+        # Iris Resourses.rar: monster 148, direct line 775, group 14801,
+        # item 835243 at source list lines 10894/10895 (quantity 1 / 5).
+        with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
+            data = json.load(source)
+        for server_name in ("kiss", "original"):
+            with self.subTest(server=server_name):
+                server = data["servers"][server_name]
+                direct = next(slot for slot in server["directSlots"]["148"]
+                              if slot["sourceLine"] == 775)
+                self.assertEqual(direct["choices"][0]["groupId"], 14801)
+                variants = [(index + 1, row["itemId"], row["quantity"], row["chance"])
+                            for index, row in enumerate(server["dropLists"]["14801"])
+                            if row["itemId"] == 835243]
+                self.assertEqual(variants, [(2, 835243, 1, 1.0), (3, 835243, 5, 0.1)])
+
     def test_kiss_projection_preserves_both_source_choices(self):
         with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
             data = json.load(source)
