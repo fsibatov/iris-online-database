@@ -49,13 +49,40 @@ def main() -> int:
                       'source': 'Выпадение монстра', 'sourceLine': 2483, 'slotNumber': 1,
                       'choicePosition': 2, 'groupId': 6000501, 'groupChanceKnown': True,
                       'groupBaseChance': 0, 'itemBaseChance': 100, 'baseAttemptChance': 0}]}
+    # Primary Kiss tables: monster 8 (Укусеница), line 42, choice 3,
+    # group 813 contains item 180201 twice, at positions 5 and 6.
+    duplicate_monster = {'monster': {'id': 8, 'name': 'Укусеница', 'category': 'Монстр',
+                                     'typeName': 'Обычный', 'level': 1, 'aggressive': False},
+                         'slots': [{'sourceLine': 42, 'choices': [
+                             {'title': 'Группа 811', 'baseSelectionChance': 20, 'items': []},
+                             {'title': 'Группа 812', 'baseSelectionChance': 20, 'items': []},
+                             {'title': 'Группа 813', 'baseSelectionChance': 20, 'items': [
+                                 {'itemId': 160201, 'item': 'Предмет A', 'position': 1, 'baseAttemptChance': 0.075},
+                                 {'itemId': 160202, 'item': 'Предмет B', 'position': 2, 'baseAttemptChance': 0.075},
+                                 {'itemId': 170201, 'item': 'Предмет C', 'position': 3, 'baseAttemptChance': 0.075},
+                                 {'itemId': 170202, 'item': 'Предмет D', 'position': 4, 'baseAttemptChance': 0.075},
+                                 {'itemId': 180201, 'item': 'Перчатки путешественника', 'position': 5, 'baseAttemptChance': 0.075},
+                                 {'itemId': 180201, 'item': 'Перчатки путешественника', 'position': 6, 'baseAttemptChance': 0.075},
+                                 {'itemId': 190201, 'item': 'Предмет E', 'position': 7, 'baseAttemptChance': 0.075},
+                                 {'itemId': 190202, 'item': 'Предмет F', 'position': 8, 'baseAttemptChance': 0.075},
+                             ]}]}]}
+    duplicate_item = {'item': {'id': 180201, 'name': 'Перчатки путешественника',
+                               'category': 'Экипировка', 'typeLine': 'Перчатки',
+                               'quality': 'Обычное', 'qualityId': 1},
+                      'bonuses': [], 'drops': [
+                          {'itemId': 180201, 'monsterId': 8, 'monster': 'Укусеница',
+                           'source': 'Выпадение монстра', 'sourceLine': 42, 'choicePosition': 3,
+                           'itemPosition': pos, 'groupId': 813, 'groupChanceKnown': True,
+                           'groupBaseChance': 20, 'itemBaseChance': 0.375,
+                           'baseAttemptChance': 0.075} for pos in (5, 6)]}
     profile = {'schemaVersion': 1, 'migrated': True,
                'settings': {'server': 'kiss', 'theme': 'dark', 'view': 'list'},
                'itemFilters': {}, 'monsterFilters': {}, 'favorites': [], 'history': [], 'recentlyViewed': []}
     meta = {'servers': [{'key': 'kiss', 'name': 'Iris Kiss Kiss'}], 'effectSpecs': {}}
     responses = {'/api/user-data': profile, '/api/meta': meta, '/api/monsters/42': monster,
                  '/api/items/1002': item, '/api/monsters/10042': real_monster,
-                 '/api/items/809022': real_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
+                 '/api/items/809022': real_item, '/api/monsters/8': duplicate_monster,
+                 '/api/items/180201': duplicate_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
     for item_id in (1001, 1003):
         responses[f'/api/items/{item_id}'] = {**item, 'item': {**item['item'], 'id': item_id, 'name': f'Предмет {item_id - 1000}'}}
     with sync_playwright() as p:
@@ -139,6 +166,25 @@ def main() -> int:
             page.locator('.detail-page[data-route="monster/10042"]').wait_for(timeout=8000)
             assert page.locator('[data-drop-group="1"]').get_attribute('open') is not None, 'source group collapsed after return'
             assert page.locator('[data-drop-group-host="1"] a[href="#item/809022"]').get_attribute('aria-current') == 'true', 'source item highlight lost after return'
+            # Duplicate item rows must navigate to their exact primary-source
+            # position, not silently select the first identical item ID.
+            page.evaluate("window.location.hash = '#item/180201'")
+            page.locator('.detail-page[data-route="item/180201"]').wait_for(timeout=8000)
+            page.locator('[data-open-details="item-sources"]').click()
+            links = page.locator('.source-list a[href^="#monster/8?"]')
+            assert links.count() == 2, 'primary-source duplicate rows collapsed'
+            assert links.nth(1).get_attribute('href') == '#monster/8?item=180201&line=42&choice=3&position=6', 'duplicate row source position lost'
+            links.nth(1).click()
+            page.locator('.detail-page[data-route="monster/8"]').wait_for(timeout=8000)
+            selected = page.locator('[data-drop-group-host="2"] a[aria-current="true"]')
+            assert selected.count() == 1, 'duplicate item rows both highlighted'
+            assert selected.get_attribute('data-drop-item-position') == '6', 'wrong duplicate item row selected'
+            selected.click()
+            page.locator('.detail-page[data-route="item/180201"]').wait_for(timeout=8000)
+            page.locator('.detail-page [data-route-back]').click()
+            page.locator('.detail-page[data-route="monster/8"]').wait_for(timeout=8000)
+            selected = page.locator('[data-drop-group-host="2"] a[aria-current="true"]')
+            assert selected.count() == 1 and selected.get_attribute('data-drop-item-position') == '6', 'duplicate selection not restored'
             assert not errors, f'frontend JavaScript exceptions: {errors}'
         finally:
             browser.close()

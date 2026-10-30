@@ -37,6 +37,23 @@ class SourceDuplicateDropTests(unittest.TestCase):
         self.assertTrue(any(item["id"] == 809022 for item in data["items"]))
         self.assertTrue(any(monster["id"] == 10042 for monster in data["monsters"]))
 
+    def test_primary_duplicate_item_positions_remain_distinct(self):
+        # Iris Resourses.rar: 1/{kiss,or}/item_dropn.txt line 42,
+        # item_droplist.txt group 813 contains item 180201 at rows 5 and 6.
+        with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
+            data = json.load(source)
+        for server_name in ("kiss", "original"):
+            with self.subTest(server=server_name):
+                server = data["servers"][server_name]
+                slot = next(slot for slot in server["directSlots"]["8"] if slot["sourceLine"] == 42)
+                self.assertEqual(slot["choices"][2]["groupId"], 813)
+                rows = server["dropLists"]["813"]
+                self.assertEqual([index + 1 for index, row in enumerate(rows)
+                                  if row["itemId"] == 180201], [5, 6])
+                self.assertEqual(rows[4], rows[5])
+        self.assertTrue(any(item["id"] == 180201 for item in data["items"]))
+        self.assertTrue(any(monster["id"] == 8 for monster in data["monsters"]))
+
     def test_kiss_projection_preserves_both_source_choices(self):
         with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
             data = json.load(source)
