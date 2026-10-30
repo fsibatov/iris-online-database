@@ -152,9 +152,6 @@ class DataCompletenessTests(unittest.TestCase):
         self.assertIn("'Ранг от'", script)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class DropReferenceDiagnosticsTests(unittest.TestCase):
     def test_unresolved_direct_drop_group_references_are_reported_per_server(self):
         # Real packaged projection: the client tables must be checked before
@@ -171,3 +168,17 @@ class DropReferenceDiagnosticsTests(unittest.TestCase):
         self.assertTrue(all(row["monsterId"] > 0 and row["sourceLine"] > 0
                             for rows in references.values() for row in rows))
         self.assertEqual(result["fatal"], [])
+
+
+class DropMonsterLinkageDiagnosticsTests(unittest.TestCase):
+    def test_direct_drop_monsters_without_catalog_records_are_reported(self):
+        result = MODULE.audit()
+        self.assertEqual(
+            result["unresolvedDirectDropMonstersByServer"],
+            {"kiss": [], "original": [23007, 23008]},
+        )
+        self.assertEqual(result["fatal"], [])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -313,6 +313,13 @@ def audit() -> dict:
             unresolved,
             key=lambda row: (row["monsterId"], row["sourceLine"], row["groupId"]),
         )
+    unresolved_direct_drop_monsters = {
+        server_key: sorted(
+            (int(monster_id) for monster_id in server.get("directSlots", {})
+             if monster_id not in monster_ids)
+        )
+        for server_key, server in sorted(game["servers"].items())
+    }
     monster_supplement_ids_missing = sorted(
         set(monster_details.get("monsters", {})) - monster_ids, key=int
     )
@@ -864,6 +871,7 @@ def audit() -> dict:
         "items": len(game["items"]),
         "monsters": len(game["monsters"]),
         "unresolvedDirectDropGroupsByServer": unresolved_direct_drop_groups,
+        "unresolvedDirectDropMonstersByServer": unresolved_direct_drop_monsters,
         "setsInEmbedded": len(embedded_sets),
         "setsWithPublishedMembers": len(embedded_member_set_ids),
         "setsWithEffectDefinitions": len(sets["sets"]),
