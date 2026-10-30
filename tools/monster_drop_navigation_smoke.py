@@ -146,6 +146,28 @@ def main() -> int:
                           'groupBaseChance': 100, 'itemBaseChance': chance,
                           'baseAttemptChance': chance, 'quantity': quantity}
                          for position, chance, quantity in ((2, 1, 1), (3, 0.1, 5))]}
+    # Primary RAR, Kiss monster 10052 line 1939 / Original line 1946:
+    # item 144001001 in mutually exclusive groups 1005201 and 1005221.
+    # 60% × 4.3% + 15% × 4.3% = 3.225% for this single drop roll.
+    multi_group_monster = {'monster': {'id': 10052, 'name': 'Монстр 10052',
+                                        'category': 'Босс', 'typeName': 'Монстр', 'level': 90},
+                           'slots': [{'sourceLine': 1939, 'choices': [
+                               {'title': 'Группа 1005201', 'groupId': 1005201,
+                                'baseSelectionChance': 60,
+                                'items': [{'itemId': 144001001, 'item': 'Предмет 144001001',
+                                           'baseSelectionChance': 4.3,
+                                           'baseAttemptChance': 2.58, 'quantity': 1}]},
+                               {'title': 'Группа 1005211', 'groupId': 1005211,
+                                'baseSelectionChance': 25, 'items': []},
+                               {'title': 'Группа 1005221', 'groupId': 1005221,
+                                'baseSelectionChance': 15,
+                                'items': [{'itemId': 144001001, 'item': 'Предмет 144001001',
+                                           'baseSelectionChance': 4.3,
+                                           'baseAttemptChance': 0.645, 'quantity': 1}]}]}]}
+    multi_group_item = {'item': {'id': 144001001, 'name': 'Предмет 144001001',
+                                 'category': 'Тест', 'typeLine': 'Предмет',
+                                 'quality': 'Обычное', 'qualityId': 1},
+                        'bonuses': [], 'drops': []}
     profile = {'schemaVersion': 1, 'migrated': True,
                'settings': {'server': 'kiss', 'theme': 'dark', 'view': 'list'},
                'itemFilters': {}, 'monsterFilters': {}, 'favorites': [], 'history': [], 'recentlyViewed': []}
@@ -157,7 +179,8 @@ def main() -> int:
                  '/api/items/2406': rare_item, '/api/monsters/104': tiny_monster,
                  '/api/items/131651': tiny_item, '/api/monsters/10026': cross_slot_monster,
                  '/api/items/868026': cross_slot_item, '/api/monsters/148': quantity_monster,
-                 '/api/items/835243': quantity_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
+                 '/api/items/835243': quantity_item, '/api/monsters/10052': multi_group_monster,
+                 '/api/items/144001001': multi_group_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
     for item_id in (1001, 1003):
         responses[f'/api/items/{item_id}'] = {**item, 'item': {**item['item'], 'id': item_id, 'name': f'Предмет {item_id - 1000}'}}
     with sync_playwright() as p:
@@ -292,6 +315,7 @@ def main() -> int:
             assert page.locator('[data-drop-group-host="0"] a[href="#item/131651"]').get_attribute('aria-current') == 'true'
             page.evaluate("window.location.hash = '#monster/10026'")
             page.locator('.detail-page[data-route="monster/10026"]').wait_for(timeout=8000)
+            assert '80%' in page.locator('.drop-preview-list a[href="#item/868026"]').inner_text(), 'independent slots were summed'
             page.locator('.lazy-monster-drops > summary').click()
             page.locator('[data-drop-group="0"] summary').click()
             page.locator('[data-drop-group="1"] summary').click()
@@ -313,6 +337,7 @@ def main() -> int:
             assert quantity_sources.nth(1).get_attribute('href').endswith('&position=3'), 'quantity source position lost'
             quantity_sources.nth(1).click()
             page.locator('.detail-page[data-route="monster/148"]').wait_for(timeout=8000)
+            assert '1,1%' in page.locator('.drop-preview-list a[href="#item/835243"]').inner_text(), 'same-group duplicate rows were not summed'
             assert page.locator('[data-drop-group="0"]').get_attribute('open') is not None, 'quantity source group not expanded'
             selected = page.locator('[data-drop-group-host="0"] a[aria-current="true"]')
             assert selected.count() == 1 and selected.get_attribute('data-drop-item-position') == '3', 'wrong quantity source selected'
@@ -322,6 +347,17 @@ def main() -> int:
             page.locator('.detail-page [data-route-back]').click()
             page.locator('.detail-page[data-route="monster/148"]').wait_for(timeout=8000)
             assert page.locator('[data-drop-group-host="0"] a[data-drop-item-position="3"]').get_attribute('aria-current') == 'true', 'quantity branch lost on return'
+            page.evaluate("window.location.hash = '#monster/10052'")
+            page.locator('.detail-page[data-route="monster/10052"]').wait_for(timeout=8000)
+            preview = page.locator('.drop-preview-list a[href="#item/144001001"]')
+            assert preview.count() == 1, 'primary item duplicated in preview'
+            assert '3,225%' in preview.inner_text(), (
+                f'primary same-item group probabilities not summed: {preview.inner_text()}')
+            preview.click()
+            page.locator('.detail-page[data-route="item/144001001"]').wait_for(timeout=8000)
+            page.locator('.detail-page [data-route-back]').click()
+            page.locator('.detail-page[data-route="monster/10052"]').wait_for(timeout=8000)
+            assert page.locator('.drop-preview-list a[href="#item/144001001"]').get_attribute('aria-current') == 'true'
             assert not errors, f'frontend JavaScript exceptions: {errors}'
         finally:
             browser.close()

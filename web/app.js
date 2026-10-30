@@ -2131,11 +2131,22 @@
 
   function topMonsterDrops(slots, limit) {
     const byItem = new Map();
-    slots.forEach(slot => (slot.choices || []).forEach(choice => (choice.items || []).forEach(item => {
-      const chance = Number(item.baseAttemptChance) || 0;
-      const previous = byItem.get(item.itemId);
-      if (!previous || chance > previous.chance) byItem.set(item.itemId, { ...item, chance });
-    })));
+    slots.forEach(slot => {
+      // Choices and item rows within one slot are mutually exclusive.
+      // Independent slots are separate rolls: do not sum across slots.
+      const perSlot = new Map();
+      (slot.choices || []).forEach(choice => (choice.items || []).forEach(item => {
+        const chance = Number(item.baseAttemptChance) || 0;
+        const previous = perSlot.get(item.itemId);
+        if (previous) previous.chance += chance;
+        else perSlot.set(item.itemId, { ...item, chance });
+      }));
+      perSlot.forEach((item, itemId) => {
+        item.chance = Math.min(100, item.chance);
+        const previous = byItem.get(itemId);
+        if (!previous || item.chance > previous.chance) byItem.set(itemId, item);
+      });
+    });
     return [...byItem.values()].sort((a, b) => b.chance - a.chance).slice(0, limit);
   }
 

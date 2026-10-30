@@ -115,6 +115,29 @@ class SourceDuplicateDropTests(unittest.TestCase):
                 self.assertAlmostEqual(row["chance"], 0.0833)
                 self.assertAlmostEqual(choice["chance"] * row["chance"] / 100, 0.0000034986)
 
+    def test_primary_same_item_in_two_mutually_exclusive_groups(self):
+        # Primary Iris Resourses.rar, Kiss item_dropn.txt line 1939,
+        # Original line 1946: monster 10052, groups 1005201 (60%),
+        # 1005211 (25%), 1005221 (15%). Both first/third lists contain
+        # item 144001001 at raw 43000/10000 = 4.3% each.
+        # The item chance for this one roll is 2.58% + 0.645% = 3.225%,
+        # not the largest single group contribution of 2.58%.
+        with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
+            data = json.load(source)
+        for server_name, line in (("kiss", 1939), ("original", 1946)):
+            with self.subTest(server=server_name):
+                server = data["servers"][server_name]
+                slot = next(row for row in server["directSlots"]["10052"]
+                            if row["sourceLine"] == line)
+                self.assertEqual([(choice["groupId"], choice["chance"])
+                                  for choice in slot["choices"]],
+                                 [(1005201, 60.0), (1005211, 25.0), (1005221, 15.0)])
+                self.assertEqual(
+                    [next(row["chance"] for row in server["dropLists"][str(group)]
+                          if row["itemId"] == 144001001)
+                     for group in (1005201, 1005221)], [4.3, 4.3])
+                self.assertAlmostEqual(60 * 4.3 / 100 + 15 * 4.3 / 100, 3.225)
+
     def test_primary_same_item_distinct_quantities_in_both_servers(self):
         # Iris Resourses.rar: monster 148, direct line 775, group 14801,
         # item 835243 at source list lines 10894/10895 (quantity 1 / 5).
