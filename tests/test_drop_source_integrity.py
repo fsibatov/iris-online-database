@@ -131,6 +131,27 @@ class SourceDuplicateDropTests(unittest.TestCase):
                             if row["itemId"] == 835243]
                 self.assertEqual(variants, [(2, 835243, 1, 1.0), (3, 835243, 5, 0.1)])
 
+    def test_primary_full_weight_precedes_unreachable_group_in_both_servers(self):
+        # Primary Iris Resourses.rar: 1/{kiss,or}/item_dropn.txt line 1287,
+        # monster 15019 (Гарри), group 1501902 weight 1,000,000 then
+        # group 1501912 weight 20,000. The second group is present but has
+        # a known 0% effective selection probability on the cumulative roll.
+        # 1/kiss/item_droplist.txt line 22799, Original line 22797:
+        # item 81108 remains listed with raw weight 71,428 and quantity 1.
+        with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
+            data = json.load(source)
+        for server_name in ("kiss", "original"):
+            with self.subTest(server=server_name):
+                server = data["servers"][server_name]
+                slot = next(row for row in server["directSlots"]["15019"]
+                            if row["sourceLine"] == 1287)
+                self.assertEqual([(choice["groupId"], choice["chance"])
+                                  for choice in slot["choices"]],
+                                 [(1501902, 100.0), (1501912, 2.0)])
+                self.assertEqual(max(0, min(100, 102.0) - min(100, 100.0)), 0)
+                self.assertEqual(server["dropLists"]["1501912"][0],
+                                 {"itemId": 81108, "chance": 7.1428, "quantity": 1})
+
     def test_kiss_projection_preserves_both_source_choices(self):
         with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
             data = json.load(source)

@@ -231,9 +231,15 @@ def main() -> int:
             page.evaluate("window.location.hash = '#item/809022'")
             page.locator('.detail-page[data-route="item/809022"]').wait_for(timeout=8000)
             page.locator('[data-open-details="item-sources"]').click()
+            # Primary RAR: line 2483 selects group 6000501 at 100% then 50%.
+            # The second choice has a known 0% effective chance, not unknown odds.
+            zero_source = page.locator('.source-list a[href^="#monster/10042"]')
+            assert zero_source.locator('.source-chance strong').inner_text() == '0%', 'known-zero source chance rendered as missing'
             page.locator('.source-list a[href^="#monster/10042"]').click()
             page.locator('.detail-page[data-route="monster/10042"]').wait_for(timeout=8000)
             assert page.locator('[data-drop-group="1"]').get_attribute('open') is not None, 'exact primary-source choice not expanded'
+            assert 'Шанс группы: 0%' in page.locator('[data-drop-group="1"] summary small').inner_text(), 'known-zero group chance rendered as missing'
+            assert 'за одну основную попытку: 0%' in page.locator('[data-drop-group-host="1"] a small').inner_text(), 'known-zero item chance rendered as missing'
             assert page.locator('[data-drop-group-host="1"] a[href="#item/809022"]').get_attribute('aria-current') == 'true', 'source item not selected'
             page.locator('[data-drop-group-host="1"] a[href="#item/809022"]').click()
             page.locator('.detail-page[data-route="item/809022"]').wait_for(timeout=8000)

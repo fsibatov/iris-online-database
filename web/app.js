@@ -325,6 +325,12 @@
     return `${text}%`;
   }
 
+  // A verified zero probability is not the same as missing chance data.
+  function formatKnownChance(value) {
+    return value !== null && value !== undefined && value !== '' && Number(value) === 0
+      ? '0%' : formatChance(value);
+  }
+
   function formatChanceOdds(value) {
     const chance = Number(value || 0);
     if (!Number.isFinite(chance) || chance <= 0 || chance >= 0.001) return '';
@@ -1954,15 +1960,15 @@
     if (isQuestReward && Number(drop.quantity) > 1) baseDetails.push(`Количество: ×${formatNumber(drop.quantity)}`);
     if (!isQuest && !isChest && Number(drop.quantity) > 1) baseDetails.push(`Количество: ×${formatNumber(drop.quantity)}`);
     if (!isQuest && !isChest && drop.groupChanceKnown) {
-      baseDetails.push(`Шанс группы: ${formatChance(drop.groupBaseChance ?? drop.groupChance)}`);
-      baseDetails.push(`Если группа выбрана: ${formatChance(drop.itemBaseChance ?? drop.itemChance)}`);
+      baseDetails.push(`Шанс группы: ${formatKnownChance(drop.groupBaseChance ?? drop.groupChance)}`);
+      baseDetails.push(`Если группа выбрана: ${formatKnownChance(drop.itemBaseChance ?? drop.itemChance)}`);
     }
     const sourceLabel = sourceName(drop).trim().toLocaleLowerCase('ru-RU');
     const details = [...new Set(baseDetails.filter(Boolean).map(value => String(value).trim()).filter(value => value && value.toLocaleLowerCase('ru-RU') !== sourceLabel))].join(' · ');
     const chanceLabel = isChest ? 'Шанс при открытии' : isQuest ? 'Шанс при выполнении условий' : 'За одну основную попытку';
     const chanceKnown = !isQuestReward && (!isChest || drop.chanceKnown === true);
     const icon = icons[isWorld ? 'home' : isQuest ? 'info' : isChest ? 'item' : 'monster'];
-    const chance = chanceKnown ? `<span class="source-chance"><small>${chanceLabel}</small><strong>${formatChance(baseAttemptChance(drop))}</strong></span>` : '';
+    const chance = chanceKnown ? `<span class="source-chance"><small>${chanceLabel}</small><strong>${formatKnownChance(baseAttemptChance(drop))}</strong></span>` : '';
     const content = `<span class="source-icon">${icon}</span><span><strong>${escapeHTML(sourceName(drop))}</strong>${details ? `<small>${escapeHTML(details)}</small>` : ''}</span>${chance}`;
     if (isWorld) return `<div class="source-row world-source-compact">${content}</div>`;
     if (isChest && Number(drop.containerId) > 0) return `<a class="source-row" href="#item/${Number(drop.containerId)}">${content}</a>`;
@@ -2018,7 +2024,7 @@
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
       </header>
       ${gameProperties(presentation, 'Характеристики монстра')}
-      ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Предметы с наибольшим шансом</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}" aria-label="${escapeHTML(drop.item)} — ${formatChance(drop.chance)}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small aria-hidden="true">— ${formatChance(drop.chance)}</small></a>`).join('')}</div></section>` : ''}
+      ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Предметы с наибольшим шансом</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}" aria-label="${escapeHTML(drop.item)} — ${formatKnownChance(drop.chance)}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small aria-hidden="true">— ${formatKnownChance(drop.chance)}</small></a>`).join('')}</div></section>` : ''}
       <section class="detail-accordions">
         ${slots.length ? accordion('Обычная добыча', formatCount(slots.length, 'вариант', 'варианта', 'вариантов'), `<div data-monster-drops-host><p class="empty-copy">Список загрузится после открытия раздела.</p></div>`, false, 'monster-drops lazy-monster-drops') : ''}
         ${description ? accordion('Описание', '', `<p class="reading-text">${multilineHTML(description)}</p>`, false) : ''}
@@ -2150,7 +2156,7 @@
         const groupIndex = model.groups.length;
         model.groups.push({ choice, shown: 0, rendered: false });
         const count = (choice.items || []).length;
-        return `<details class="drop-choice" data-drop-group="${groupIndex}"><summary><span><strong>${escapeHTML(choice.title || 'Группа предметов')}</strong><small>Шанс группы: ${formatChance(choice.baseSelectionChance)} · ${formatCount(count, 'предмет', 'предмета', 'предметов')}</small></span>${icons.chevron}</summary><div class="drop-items" data-drop-group-host="${groupIndex}"><p class="empty-copy">Откройте группу, чтобы показать предметы.</p></div></details>`;
+        return `<details class="drop-choice" data-drop-group="${groupIndex}"><summary><span><strong>${escapeHTML(choice.title || 'Группа предметов')}</strong><small>Шанс группы: ${formatKnownChance(choice.baseSelectionChance)} · ${formatCount(count, 'предмет', 'предмета', 'предметов')}</small></span>${icons.chevron}</summary><div class="drop-items" data-drop-group-host="${groupIndex}"><p class="empty-copy">Откройте группу, чтобы показать предметы.</p></div></details>`;
       }).join('');
       const extraAttempts = [
         slot.addAttempt1Count ? `${formatCount(slot.addAttempt1Count, 'дополнительная попытка', 'дополнительные попытки', 'дополнительных попыток')} при ${formatChance(slot.addAttempt1Rate)}` : '',
@@ -2182,7 +2188,7 @@
       const selected = Number(item.itemId) === model.activeItemId
         && (model.activeGroupIndex < 0 || model.activeGroupIndex === groupIndex)
         && (!model.activeItemPosition || model.activeItemPosition === position);
-      return `<a href="#item/${item.itemId}" data-drop-item-position="${position}"${selected ? ' class="is-active-drop" aria-current="true"' : ''}><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`;
+      return `<a href="#item/${item.itemId}" data-drop-item-position="${position}"${selected ? ' class="is-active-drop" aria-current="true"' : ''}><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatKnownChance(item.baseSelectionChance)} · за одну основную попытку: ${formatKnownChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`;
     }).join('');
     const remaining = items.length - group.shown;
     host.innerHTML = `${rows}<div class="lazy-list-status" aria-live="polite">Показано ${formatNumber(group.shown)} из ${formatNumber(items.length)}</div>${remaining > 0 ? `<div class="lazy-list-actions"><button class="secondary-button" type="button" data-drop-more="${groupIndex}">Показать ещё ${formatNumber(Math.min(DROP_BATCH, remaining))}</button><button class="text-button" type="button" data-drop-all="${groupIndex}">Показать всё</button></div>` : ''}`;
