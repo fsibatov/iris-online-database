@@ -2167,7 +2167,7 @@
         const groupIndex = model.groups.length;
         model.groups.push({ choice, shown: 0, rendered: false });
         const count = (choice.items || []).length;
-        return `<details class="drop-choice" data-drop-group="${groupIndex}"><summary><span><strong>${escapeHTML(choice.title || 'Группа предметов')}</strong><small>Шанс группы: ${formatKnownChance(choice.baseSelectionChance)} · ${formatCount(count, 'предмет', 'предмета', 'предметов')}</small></span>${icons.chevron}</summary><div class="drop-items" data-drop-group-host="${groupIndex}"><p class="empty-copy">Откройте группу, чтобы показать предметы.</p></div></details>`;
+        return `<details class="drop-choice" data-drop-group="${groupIndex}"><summary><span><strong>${escapeHTML(choice.title || 'Группа предметов')}</strong><small>Шанс группы: ${formatKnownChance(choice.baseSelectionChance)} · ${count ? formatCount(count, 'предмет', 'предмета', 'предметов') : 'Состав не указан'}</small></span>${icons.chevron}</summary><div class="drop-items" data-drop-group-host="${groupIndex}"><p class="empty-copy">Откройте группу, чтобы показать предметы.</p></div></details>`;
       }).join('');
       const extraAttempts = [
         slot.addAttempt1Count ? `${formatCount(slot.addAttempt1Count, 'дополнительная попытка', 'дополнительные попытки', 'дополнительных попыток')} при ${formatChance(slot.addAttempt1Rate)}` : '',
@@ -2190,7 +2190,7 @@
     else group.shown = Math.min(items.length, group.shown + DROP_BATCH);
     group.rendered = true;
     if (!items.length) {
-      host.innerHTML = '<p class="empty-copy">Состав группы не найден.</p>';
+      host.innerHTML = '<p class="empty-copy">Состав группы отсутствует в исходных данных.</p>';
       return;
     }
     const rows = items.slice(0, group.shown).map((item, index) => {

@@ -164,6 +164,14 @@ def main() -> int:
                                 'items': [{'itemId': 144001001, 'item': 'Предмет 144001001',
                                            'baseSelectionChance': 4.3,
                                            'baseAttemptChance': 0.645, 'quantity': 1}]}]}]}
+    # Primary Iris Resourses.rar: Kiss monster 10029 line 1922, Original
+    # line 1929, group 1002903 has a 20% selection weight but no drop-list
+    # definition. Its composition is UNKNOWN, not a verified empty list.
+    unresolved_monster = {'monster': {'id': 10029, 'name': 'Монстр 10029',
+                                       'category': 'Монстр', 'typeName': 'Обычный', 'level': 50},
+                          'slots': [{'sourceLine': 1922, 'choices': [
+                              {'title': 'Группа 1002903', 'groupId': 1002903,
+                               'baseSelectionChance': 20, 'items': []}]}]}
     multi_group_item = {'item': {'id': 144001001, 'name': 'Предмет 144001001',
                                  'category': 'Тест', 'typeLine': 'Предмет',
                                  'quality': 'Обычное', 'qualityId': 1},
@@ -180,7 +188,7 @@ def main() -> int:
                  '/api/items/131651': tiny_item, '/api/monsters/10026': cross_slot_monster,
                  '/api/items/868026': cross_slot_item, '/api/monsters/148': quantity_monster,
                  '/api/items/835243': quantity_item, '/api/monsters/10052': multi_group_monster,
-                 '/api/items/144001001': multi_group_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
+                 '/api/items/144001001': multi_group_item, '/api/monsters/10029': unresolved_monster, '/api/update-check': {'checked': True, 'updateAvailable': False}}
     for item_id in (1001, 1003):
         responses[f'/api/items/{item_id}'] = {**item, 'item': {**item['item'], 'id': item_id, 'name': f'Предмет {item_id - 1000}'}}
     with sync_playwright() as p:
@@ -358,6 +366,16 @@ def main() -> int:
             page.locator('.detail-page [data-route-back]').click()
             page.locator('.detail-page[data-route="monster/10052"]').wait_for(timeout=8000)
             assert page.locator('.drop-preview-list a[href="#item/144001001"]').get_attribute('aria-current') == 'true'
+            page.evaluate("window.location.hash = '#monster/10029'")
+            page.locator('.detail-page[data-route="monster/10029"]').wait_for(timeout=8000)
+            page.locator('.lazy-monster-drops summary').click()
+            group = page.locator('[data-drop-group="0"]')
+            assert 'Состав не указан' in group.locator('summary small').inner_text(), (
+                'unknown primary group composition incorrectly reported as zero items')
+            group.locator('summary').click()
+            group.get_by_text('Состав группы отсутствует в исходных данных.').wait_for(timeout=5000)
+            assert 'Состав группы отсутствует в исходных данных.' in group.inner_text(), (
+                'unknown primary drop list incorrectly presented as a known empty list')
             assert not errors, f'frontend JavaScript exceptions: {errors}'
         finally:
             browser.close()

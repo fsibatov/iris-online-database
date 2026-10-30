@@ -175,6 +175,19 @@ class SourceDuplicateDropTests(unittest.TestCase):
                 self.assertEqual(server["dropLists"]["1501912"][0],
                                  {"itemId": 81108, "chance": 7.1428, "quantity": 1})
 
+    def test_primary_unresolved_drop_list_is_unknown_not_empty(self):
+        # Primary Iris Resourses.rar: monster 10029, group 1002903
+        # has a 20% group weight but no item_droplist.txt group definition.
+        with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
+            data = json.load(source)
+        for server_name, line in (("kiss", 1922), ("original", 1929)):
+            with self.subTest(server=server_name):
+                server = data["servers"][server_name]
+                slot = next(row for row in server["directSlots"]["10029"]
+                            if row["sourceLine"] == line)
+                self.assertEqual(slot["choices"], [{"groupId": 1002903, "chance": 20.0}])
+                self.assertNotIn("1002903", server["dropLists"])
+
     def test_kiss_projection_preserves_both_source_choices(self):
         with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
             data = json.load(source)
