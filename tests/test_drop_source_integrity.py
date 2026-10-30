@@ -1,0 +1,45 @@
+"""Guard the Kiss direct-drop duplicate recorded in the primary source.
+
+Provenance: Library /Iris Resourses.rar, SHA-256
+2df78a9b5d4cf659462c8c08a42b2e0e6c5463209079c046576cf5e3aa3c3565;
+1/kiss/item_dropn.txt, line 2483, SHA-256
+c880b3613ea810c84bdb06f281172a18932d9c9309c191290d5e639f7b292931.
+The original source archive is not redistributed in this repository.
+"""
+
+import gzip
+import json
+import unittest
+from pathlib import Path
+
+from update_drop_slots import parse_pairs
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class SourceDuplicateDropTests(unittest.TestCase):
+    def test_parser_preserves_repeated_group_in_original_order(self):
+        columns = "monster\t10042\t0\t0\t0\t0\t6000501\t1000000\t6000501\t500000".split("\t")
+        self.assertEqual(
+            parse_pairs(columns, 6),
+            [{"groupId": 6000501, "chance": 100.0},
+             {"groupId": 6000501, "chance": 50.0}],
+        )
+
+    def test_kiss_projection_preserves_both_source_choices(self):
+        with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
+            data = json.load(source)
+        kiss_slots = data["servers"]["kiss"]["directSlots"]["10042"]
+        row = next(slot for slot in kiss_slots if slot["sourceLine"] == 2483)
+        self.assertEqual(
+            row["choices"],
+            [{"groupId": 6000501, "chance": 100.0},
+             {"groupId": 6000501, "chance": 50.0}],
+        )
+        original = data["servers"]["original"]["directSlots"]
+        self.assertNotIn(2483, [slot["sourceLine"] for slot in original.get("10042", [])])
+
+
+if __name__ == "__main__":
+    unittest.main()

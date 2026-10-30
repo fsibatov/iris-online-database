@@ -26,8 +26,8 @@ def main() -> int:
     monster = {'monster': {'id': 42, 'name': 'Тестовый монстр', 'category': 'Монстр',
                            'typeName': 'Босс', 'level': 70, 'aggressive': False, 'hp': 1500},
                'slots': [{'choices': [{'title': 'Группа 1', 'baseSelectionChance': 100, 'items': items},
-                                      {'title': 'Группа 2', 'baseSelectionChance': 25,
-                                       'items': [{'itemId': 1002, 'item': 'Предмет 2', 'baseAttemptChance': 12}]}]}]}
+                                      {'title': 'Группа 1', 'baseSelectionChance': 0,
+                                       'items': [{'itemId': 1002, 'item': 'Предмет 2', 'baseAttemptChance': 0}]}]}]}
     item = {'item': {'id': 1002, 'name': 'Предмет 2', 'category': 'Тест',
                      'typeLine': 'Предмет', 'quality': 'Обычное', 'qualityId': 1},
             'bonuses': [], 'drops': []}
@@ -68,6 +68,9 @@ def main() -> int:
             page.locator('[data-open-details="monster-drops"]').click()
             page.locator('[data-drop-group="0"] summary').click()
             page.locator('[data-drop-group="1"] summary').click()
+            # Distinct source positions must remain distinct even when group IDs repeat.
+            assert page.locator('[data-drop-group]').count() == 2, 'duplicate source group collapsed'
+            assert page.locator('[data-drop-group="0"] summary strong').inner_text() == page.locator('[data-drop-group="1"] summary strong').inner_text()
             page.locator('[data-drop-more="0"]').click()
             assert page.locator('[data-drop-group-host="0"] a').count() == 36, 'expanded before click'
             page.locator('[data-drop-group-host="0"] a[href="#item/1002"]').click()
