@@ -54,6 +54,27 @@ class SourceDuplicateDropTests(unittest.TestCase):
         self.assertTrue(any(item["id"] == 180201 for item in data["items"]))
         self.assertTrue(any(monster["id"] == 8 for monster in data["monsters"]))
 
+    def test_primary_source_tiny_chance_is_not_rounded_to_four_decimals(self):
+        # Primary RAR, 1/{kiss,or}/item_dropn.txt line 714:
+        # monster 135, group 13531, raw group weight 2000 (0.2%).
+        # item_droplist.txt line 9843: item 2406, raw weight 625 (0.0625%).
+        # Product per main attempt is exactly 0.000125%, not 0.0001%.
+        with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
+            data = json.load(source)
+        for server_name in ("kiss", "original"):
+            with self.subTest(server=server_name):
+                server = data["servers"][server_name]
+                slot = next(slot for slot in server["directSlots"]["135"]
+                            if slot["sourceLine"] == 714)
+                group = next(choice for choice in slot["choices"]
+                             if choice["groupId"] == 13531)
+                item = next(row for row in server["dropLists"]["13531"]
+                            if row["itemId"] == 2406)
+                self.assertEqual(item["quantity"], 1)
+                self.assertAlmostEqual(group["chance"], 0.2)
+                self.assertAlmostEqual(item["chance"], 0.0625)
+                self.assertAlmostEqual(group["chance"] * item["chance"] / 100, 0.000125)
+
     def test_kiss_projection_preserves_both_source_choices(self):
         with gzip.open(ROOT / "assets/game_data.json.gz", "rt", encoding="utf-8") as source:
             data = json.load(source)

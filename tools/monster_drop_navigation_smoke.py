@@ -75,6 +75,20 @@ def main() -> int:
                            'itemPosition': pos, 'groupId': 813, 'groupChanceKnown': True,
                            'groupBaseChance': 20, 'itemBaseChance': 0.375,
                            'baseAttemptChance': 0.075} for pos in (5, 6)]}
+    # Real primary-source probability, both Kiss and Original: monster 135,
+    # item_dropn.txt line 714, group 13531; item_droplist.txt line 9843,
+    # item 2406 (raw weights 2000 and 625 => 0.000125% per attempt).
+    rare_monster = {'monster': {'id': 135, 'name': 'Флерания', 'category': 'Особый',
+                                'typeName': 'Растение', 'level': 65, 'aggressive': True},
+                    'slots': [{'sourceLine': 714, 'choices': [
+                        {'title': 'Группа 13531', 'groupId': 13531, 'baseSelectionChance': 0.2,
+                         'items': [{'itemId': 2406, 'item': 'Спата золотого бойца',
+                                    'baseSelectionChance': 0.0625,
+                                    'baseAttemptChance': 0.000125, 'quantity': 1}]}]}]}
+    rare_item = {'item': {'id': 2406, 'name': 'Спата золотого бойца',
+                          'category': 'Оружие/щит', 'typeLine': '[Оружие] Меч',
+                          'quality': 'Эпическое', 'qualityId': 7},
+                 'bonuses': [], 'drops': []}
     profile = {'schemaVersion': 1, 'migrated': True,
                'settings': {'server': 'kiss', 'theme': 'dark', 'view': 'list'},
                'itemFilters': {}, 'monsterFilters': {}, 'favorites': [], 'history': [], 'recentlyViewed': []}
@@ -82,7 +96,8 @@ def main() -> int:
     responses = {'/api/user-data': profile, '/api/meta': meta, '/api/monsters/42': monster,
                  '/api/items/1002': item, '/api/monsters/10042': real_monster,
                  '/api/items/809022': real_item, '/api/monsters/8': duplicate_monster,
-                 '/api/items/180201': duplicate_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
+                 '/api/items/180201': duplicate_item, '/api/monsters/135': rare_monster,
+                 '/api/items/2406': rare_item, '/api/update-check': {'checked': True, 'updateAvailable': False}}
     for item_id in (1001, 1003):
         responses[f'/api/items/{item_id}'] = {**item, 'item': {**item['item'], 'id': item_id, 'name': f'Предмет {item_id - 1000}'}}
     with sync_playwright() as p:
@@ -185,6 +200,18 @@ def main() -> int:
             page.locator('.detail-page[data-route="monster/8"]').wait_for(timeout=8000)
             selected = page.locator('[data-drop-group-host="2"] a[aria-current="true"]')
             assert selected.count() == 1 and selected.get_attribute('data-drop-item-position') == '6', 'duplicate selection not restored'
+            page.evaluate("window.location.hash = '#monster/135'")
+            page.locator('.detail-page[data-route="monster/135"]').wait_for(timeout=8000)
+            page.locator('.lazy-monster-drops > summary').click()
+            page.locator('[data-drop-group="0"] summary').click()
+            chance_text = page.locator('[data-drop-group-host="0"] a[href="#item/2406"] small').inner_text()
+            assert '0,000125%' in chance_text, f'primary-source rare chance rounded inaccurately: {chance_text}'
+            page.locator('[data-drop-group-host="0"] a[href="#item/2406"]').click()
+            page.locator('.detail-page[data-route="item/2406"]').wait_for(timeout=8000)
+            page.locator('.detail-page [data-route-back]').click()
+            page.locator('.detail-page[data-route="monster/135"]').wait_for(timeout=8000)
+            assert page.locator('[data-drop-group="0"]').get_attribute('open') is not None
+            assert page.locator('[data-drop-group-host="0"] a[href="#item/2406"]').get_attribute('aria-current') == 'true'
             assert not errors, f'frontend JavaScript exceptions: {errors}'
         finally:
             browser.close()
