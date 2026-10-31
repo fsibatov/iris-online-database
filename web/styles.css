@@ -698,6 +698,14 @@ html[data-theme="light"] .control-select { color-scheme: light; }
 .source-list { display: grid; border: 1px solid var(--border); border-radius: var(--radius); overflow: clip; }
 .source-row { min-width: 0; min-height: 64px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; background: var(--surface); }
 a.source-row:hover { background: var(--surface-2); }
+/* Source selection follows the source detail's history entry, not global navigation. */
+a.source-row.is-selected-source {
+  background: var(--accent-soft);
+  box-shadow: inset 4px 0 0 var(--accent), inset 0 0 0 1px var(--accent);
+  color: var(--text);
+}
+a.source-row.is-selected-source:hover { background: var(--surface-hover); }
+a.source-row.is-selected-source .source-icon { background: var(--surface-3); }
 .source-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; background: var(--accent-soft); color: var(--accent); }
 .source-icon svg { width: 18px; height: 18px; }
 .source-row > span:nth-child(2) { min-width: 0; }

@@ -244,6 +244,37 @@ ITEM_CATALOG = {
 }
 
 
+# The same monster can occur in multiple distinct source rows; the selected
+# source must be restored by its exact location, even past the first batch.
+SOURCE_ITEM = {
+    "item": {
+        "id": 2010,
+        "name": "Тестовый предмет со множеством источников",
+        "category": "Оружие",
+        "typeLine": "Посох",
+        "quality": "Редкое",
+        "qualityId": 4,
+        "sellType": 0,
+    },
+    "bonuses": [],
+    "drops": [
+        {
+            "source": "Выпадение монстра",
+            "monsterId": 42,
+            "monster": "Тестовый хранитель",
+            "monsterLevel": 70,
+            "itemId": 2010,
+            "sourceLine": index + 1,
+            "choicePosition": 1,
+            "itemPosition": 1,
+            "slotTitle": f"Источник {index + 1}",
+            "itemBaseChance": 3,
+        }
+        for index in range(23)
+    ],
+}
+
+
 class FixtureState:
     def __init__(self) -> None:
         self.profile = profile()
@@ -334,6 +365,9 @@ class FixtureHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/items/2002":
             self.send_json(RUNE_ITEM)
+            return
+        if parsed.path == "/api/items/2010":
+            self.send_json(SOURCE_ITEM)
             return
         if parsed.path == "/api/items/2003":
             self.send_json(ENHANCED_ITEM)
@@ -548,6 +582,80 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 page.locator(".catalog-page .result-row.is-selected-item").count() == 1,
                 "multiple catalog rows highlighted",
             )
+
+            # Returning from the exact monster source must restore the selected
+            # source row and its open section, not just the monster's drops.
+            page.evaluate("location.hash = 'item/2010'")
+            page.wait_for_selector('.detail-page[data-route="item/2010"]')
+            page.locator('[data-open-details="item-sources"]').click()
+            source_links = page.locator(
+                '.item-sources [data-source-section="0"] a.source-row'
+            )
+            require(source_links.count() == 20, "source batch fixture is incorrect")
+            source_links.nth(0).click()
+            page.wait_for_selector('.detail-page[data-route="monster/42"]')
+            page.locator(".detail-page [data-route-back]").click()
+            page.wait_for_selector('.detail-page[data-route="item/2010"]')
+            require(
+                page.locator(".item-sources").get_attribute("open") is not None,
+                "item source accordion collapsed on return",
+            )
+            require(
+                page.locator(".item-sources .is-selected-source").count() == 1,
+                "selected monster source row was lost on return",
+            )
+            require(
+                source_links.nth(0).get_attribute("aria-current") == "true",
+                "selected source row has no accessible indication",
+            )
+            require(
+                "inset"
+                in source_links.nth(0).evaluate(
+                    "node => getComputedStyle(node).boxShadow"
+                ),
+                "selected source row has no visible accent",
+            )
+            first_href = source_links.nth(0).get_attribute("href")
+            source_links.nth(1).click()
+            page.wait_for_selector('.detail-page[data-route="monster/42"]')
+            page.locator(".detail-page [data-route-back]").click()
+            page.wait_for_selector('.detail-page[data-route="item/2010"]')
+            require(
+                page.locator(".item-sources .is-selected-source").count() == 1,
+                "multiple sources selected after changing monster row",
+            )
+            require(
+                source_links.nth(0).get_attribute("href") == first_href
+                and source_links.nth(0).get_attribute("aria-current") is None
+                and source_links.nth(1).get_attribute("aria-current") == "true",
+                "selection did not move to the exact subsequent monster row",
+            )
+
+            page.locator('[data-source-more="0"]').click()
+            require(source_links.count() == 23, "source load-more fixture failed")
+            last_href = source_links.nth(22).get_attribute("href")
+            source_links.nth(22).click()
+            page.wait_for_selector('.detail-page[data-route="monster/42"]')
+            page.locator(".detail-page [data-route-back]").click()
+            page.wait_for_selector('.detail-page[data-route="item/2010"]')
+            require(
+                page.locator(".item-sources").get_attribute("open") is not None,
+                "deep source accordion collapsed on return",
+            )
+            require(
+                source_links.count() == 23
+                and page.locator(".item-sources .is-selected-source").count() == 1
+                and source_links.nth(22).get_attribute("href") == last_href
+                and source_links.nth(22).get_attribute("aria-current") == "true",
+                "selected monster source beyond the first 20 rows was not restored",
+            )
+            page.evaluate("location.hash = 'item/2002'")
+            page.wait_for_selector('.detail-page[data-route="item/2002"]')
+            require(
+                page.locator(".is-selected-source").count() == 0,
+                "monster source selection leaked to an unrelated item",
+            )
+
             page.evaluate("location.hash = 'monster/42'")
             page.wait_for_selector('.detail-page[data-route="monster/42"]')
             page.locator('[data-open-details="monster-drops"]').click()

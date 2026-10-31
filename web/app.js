@@ -210,7 +210,7 @@
     const current = window.history.state;
     const base = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
     // Drop selection belongs to the monster history entry, not its destination.
-    const { monsterDropView, catalogItemSelection, ...otherState } = base;
+    const { monsterDropView, catalogItemSelection, sourceSelection, ...otherState } = base;
     return { ...otherState, [ROUTE_HISTORY_STATE_KEY]: { index, route } };
   }
 
@@ -973,6 +973,61 @@
     }, '', location.href);
   }
 
+  function sourceSelectionForRoute() {
+    const selection = window.history.state?.sourceSelection;
+    return selection?.route === decodeRouteHash() && selection.server === state.server ? selection : null;
+  }
+
+  function rememberSourceSelection(link) {
+    if (!link.matches('.source-list a.source-row[href^="#monster/"]')) return;
+    const page = link.closest('.detail-page[data-route]');
+    if (!page || !main.contains(page) || page.dataset.route !== decodeRouteHash()) return;
+    const list = link.closest('.source-list');
+    const section = link.closest('[data-source-section]');
+    const sectionIndex = section ? Number(section.dataset.sourceSection) : -1;
+    const rowIndex = [...list.children].indexOf(link);
+    if (rowIndex < 0 || !Number.isSafeInteger(sectionIndex)) return;
+    const current = window.history.state;
+    const base = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
+    window.history.replaceState({
+      ...base,
+      sourceSelection: {
+        route: decodeRouteHash(), server: state.server,
+        href: link.getAttribute('href'), sectionIndex, rowIndex,
+        expanded: Boolean(link.closest('details')?.open), scrollY: window.scrollY,
+        shownCounts: state.sourceSections.map(section => section.shown),
+      },
+    }, '', location.href);
+  }
+
+  function restoreSourceSectionPagination() {
+    const selection = sourceSelectionForRoute();
+    if (!selection || !Number.isSafeInteger(selection.sectionIndex) || !Number.isSafeInteger(selection.rowIndex)) return;
+    state.sourceSections.forEach((section, index) => {
+      const count = selection.shownCounts?.[index];
+      if (Number.isSafeInteger(count) && count > SOURCE_BATCH)
+        section.shown = Math.min(section.rows.length, count);
+    });
+    if (selection.sectionIndex < 0 || selection.rowIndex < 0) return;
+    const section = state.sourceSections[selection.sectionIndex];
+    if (!section || selection.rowIndex >= section.rows.length) return;
+    section.shown = Math.min(section.rows.length, Math.max(SOURCE_BATCH, selection.rowIndex + 1));
+  }
+
+  function restoreSourceSelectionView() {
+    const selection = sourceSelectionForRoute();
+    if (!selection) return;
+    const selected = main.querySelector('.source-list a.is-selected-source');
+    if (!selected) return;
+    const details = selected.closest('details');
+    if (details && selection.expanded) details.open = true;
+    requestAnimationFrame(() => {
+      if (sourceSelectionForRoute()?.href !== selection.href || !main.contains(selected)) return;
+      window.scrollTo({ top: Math.max(0, Number(selection.scrollY) || 0), behavior: 'instant' });
+      selected.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
   function itemRow(item, query = '') {
     const key = `item:${item.id}`;
     const active = state.favorites.has(key);
@@ -1728,6 +1783,7 @@
     const drops = [...(data.drops || [])];
     const sourceSummary = bestSourceSummary(drops);
     state.sourceSections = buildSourceSections(drops);
+    restoreSourceSectionPagination();
     state.monsterDrops = null;
     state.itemEnhancement = data.enhancement || null;
 
@@ -1754,6 +1810,7 @@
       </section>
     </section>`;
     positionSearchWidget(false);
+    restoreSourceSelectionView();
   }
 
   function transformationBuffRows(card) {
@@ -1776,6 +1833,7 @@
     trackRecentlyViewed('transformation', id, card.name, [card.formName, `ID ${id}`].filter(Boolean).join(' · '));
     const drops = [...(data.drops || [])];
     state.sourceSections = buildSourceSections(drops);
+    restoreSourceSectionPagination();
     state.monsterDrops = null;
     state.itemEnhancement = null;
     const baseSpeed = Number(data.basePlayerRunSpeed) || 450;
@@ -1821,6 +1879,7 @@
       <section class="detail-accordions">${drops.length ? accordion('Источники получения', formatCount(drops.length, 'вариант', 'варианта', 'вариантов'), sourcesContent(), false, 'transformation-sources') : ''}${accordion('Технические сведения', `ID ${id}`, kvList(technicalRows), false)}</section>
     </section>`;
     positionSearchWidget(false);
+    restoreSourceSelectionView();
   }
 
   function titleDetail(data) {
@@ -1843,6 +1902,7 @@
     const active = state.favorites.has(key);
     trackRecentlyViewed('title', index, name, levelLabel);
     state.sourceSections = buildSourceSections(drops);
+    restoreSourceSectionPagination();
     state.monsterDrops = null;
 
     main.innerHTML = `<section class="page detail-page" data-route="title/${index}">
@@ -1865,6 +1925,7 @@
       </section>
     </section>`;
     positionSearchWidget(false);
+    restoreSourceSelectionView();
   }
 
   function effectLabel(option) {
@@ -1969,7 +2030,7 @@
     return quantity > 1 ? `×${formatNumber(quantity)}` : '';
   }
 
-  function sourceRow(drop) {
+  function sourceRow(drop, sectionIndex = -1, rowIndex = -1) {
     const isWorld = drop.source === 'Мировое выпадение';
     const isChest = drop.source === 'Сундук';
     const isQuestReward = drop.source === 'Награда за задание';
@@ -2003,7 +2064,10 @@
         && [monsterId, itemId, sourceLine, choicePosition].every(value => Number.isSafeInteger(value) && value > 0);
       const positionQuery = Number.isSafeInteger(itemPosition) && itemPosition > 0 ? `&position=${itemPosition}` : '';
       const sourceQuery = exactSource ? `?item=${itemId}&line=${sourceLine}&choice=${choicePosition}${positionQuery}` : '';
-      return `<a class="source-row" href="#monster/${monsterId}${sourceQuery}">${content}</a>`;
+      const href = `#monster/${monsterId}${sourceQuery}`;
+      const selection = sourceSelectionForRoute();
+      const selected = selection && selection.href === href && selection.sectionIndex === sectionIndex && selection.rowIndex === rowIndex;
+      return `<a class="source-row${selected ? ' is-selected-source' : ''}" href="${escapeHTML(href)}"${selected ? ' aria-current="true"' : ''}>${content}</a>`;
     }
     return `<div class="source-row">${content}</div>`;
   }
@@ -2024,7 +2088,7 @@
 
   function sourceSectionHTML(section, index) {
     const visible = section.rows.slice(0, section.shown);
-    return `<section class="source-section" data-source-section="${index}"><header><h3>${escapeHTML(section.title)}</h3><span>${formatNumber(section.rows.length)}</span></header><div class="source-list">${visible.map(sourceRow).join('')}</div>${section.shown < section.rows.length ? `<button class="secondary-button load-more" type="button" data-source-more="${index}">Показать ещё ${formatNumber(Math.min(SOURCE_BATCH, section.rows.length - section.shown))}</button>` : ''}</section>`;
+    return `<section class="source-section" data-source-section="${index}"><header><h3>${escapeHTML(section.title)}</h3><span>${formatNumber(section.rows.length)}</span></header><div class="source-list">${visible.map((drop, rowIndex) => sourceRow(drop, index, rowIndex)).join('')}</div>${section.shown < section.rows.length ? `<button class="secondary-button load-more" type="button" data-source-more="${index}">Показать ещё ${formatNumber(Math.min(SOURCE_BATCH, section.rows.length - section.shown))}</button>` : ''}</section>`;
   }
 
   function monsterDetail(data) {
@@ -3118,6 +3182,7 @@
       if (isInternalAppRoute(normalizeRouteValue(route))) {
         rememberMonsterDropSelection(internalLink);
         rememberCatalogItemSelection(internalLink);
+        rememberSourceSelection(internalLink);
       }
       if (navigateToRoute(route)) {
         event.preventDefault();
