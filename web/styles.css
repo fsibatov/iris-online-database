@@ -430,6 +430,13 @@ html[data-theme="light"] .control-select { color-scheme: light; }
 .result-list { display: grid; gap: 1px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: clip; background: var(--border); }
 .result-row { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 54px; background: var(--surface); }
 .result-row:hover { background: var(--surface-2); }
+/* Selected catalog entry follows its browser-history entry, not the global favorites state. */
+.result-row.is-selected-item {
+  background: var(--accent-soft);
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+.result-row.is-selected-item:hover { background: var(--surface-hover); }
+.result-row.is-selected-item .result-icon { color: var(--accent); background: var(--surface-3); }
 .result-row + .result-row { border-top: 0; }
 .result-main {
   min-width: 0;
@@ -725,6 +732,11 @@ a.link-row:hover { background: var(--surface-2); }
 .drop-slot > header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 .drop-choice { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .drop-choice + .drop-choice { margin-top: 7px; }
+.drop-choice.is-active-source > summary {
+  background: var(--accent-soft);
+  box-shadow: inset 4px 0 0 var(--accent);
+  border-radius: var(--radius);
+}
 .drop-choice > summary { min-height: 54px; padding: 8px 11px; }
 .drop-choice > summary span { min-width: 0; }
 .drop-choice > summary strong, .drop-choice > summary small { display: block; overflow-wrap: anywhere; }
@@ -733,8 +745,8 @@ a.link-row:hover { background: var(--surface-2); }
 .drop-items a { min-width: 0; min-height: 46px; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 7px 4px; border-top: 1px solid var(--border); }
 .drop-items a:hover { color: var(--accent); }
 .drop-items a.is-active-drop, .drop-preview-list a.is-active-drop {
-  background: var(--surface-2);
-  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 4px 0 0 var(--accent), inset 0 0 0 1px var(--accent);
   color: var(--text);
 }
 .drop-items a.is-active-drop { border-radius: 5px; }

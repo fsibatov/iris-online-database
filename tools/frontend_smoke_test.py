@@ -218,6 +218,32 @@ TRANSFORMATION_CATALOG = {
 }
 
 
+ITEM_CATALOG = {
+    "items": [
+        {
+            "id": 2001,
+            "name": "Тестовая шкатулка",
+            "category": "Шкатулки",
+            "typeLine": "Шкатулка",
+            "quality": "Обычное",
+            "qualityId": 1,
+        },
+        {
+            "id": 2002,
+            "name": "Тестовая руна",
+            "category": "Руны",
+            "typeLine": "Руна",
+            "quality": "Событийное",
+            "qualityId": 9,
+        },
+    ],
+    "total": 2,
+    "page": 1,
+    "pages": 1,
+    "filters": {"categories": [], "subcategories": [], "qualities": []},
+}
+
+
 class FixtureState:
     def __init__(self) -> None:
         self.profile = profile()
@@ -296,6 +322,12 @@ class FixtureHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/monsters/42":
             self.send_json(MONSTER)
+            return
+        if parsed.path == "/api/items":
+            self.send_json(ITEM_CATALOG)
+            return
+        if parsed.path == "/api/items/1002":
+            self.send_json({**RUNE_ITEM, "item": {**RUNE_ITEM["item"], "id": 1002}})
             return
         if parsed.path == "/api/items/2001":
             self.send_json(CHEST_ITEM)
@@ -471,6 +503,75 @@ def exercise_frontend(base_url: str, state: FixtureState) -> None:
                 "middle-click bypassed the external URL bridge",
             )
 
+            # Selection must be visible after returning from item details, in both list and grid.
+            page.evaluate("location.hash = 'items'")
+            page.wait_for_selector('.catalog-page[data-catalog-kind="items"]')
+            item_link = page.locator('.catalog-page .result-main[href="#item/2002"]')
+            item_link.click()
+            page.wait_for_selector('.detail-page[data-route="item/2002"]')
+            page.locator(".detail-page [data-route-back]").click()
+            page.wait_for_selector('.catalog-page[data-catalog-kind="items"]')
+            selected = page.locator(".catalog-page .result-row.is-selected-item")
+            require(selected.count() == 1, "selected catalog item was not restored")
+            require(
+                selected.locator('.result-main[href="#item/2002"]').get_attribute(
+                    "aria-current"
+                )
+                == "true",
+                "selected catalog item has no accessible state",
+            )
+            require(
+                "inset"
+                in selected.evaluate("node => getComputedStyle(node).boxShadow"),
+                "selected catalog item has no visible highlight",
+            )
+            page.locator('[data-view="cards"]').click()
+            require(
+                page.locator(
+                    '.catalog-page .result-row.is-selected-item .result-main[href="#item/2002"]'
+                ).count()
+                == 1,
+                "selected catalog item was lost in card view",
+            )
+            page.locator('.catalog-page .result-main[href="#item/2001"]').click()
+            page.wait_for_selector('.detail-page[data-route="item/2001"]')
+            page.locator(".detail-page [data-route-back]").click()
+            page.wait_for_selector('.catalog-page[data-catalog-kind="items"]')
+            require(
+                page.locator(
+                    '.catalog-page .result-row.is-selected-item .result-main[href="#item/2001"]'
+                ).count()
+                == 1,
+                "new selection did not replace previous catalog item",
+            )
+            require(
+                page.locator(".catalog-page .result-row.is-selected-item").count() == 1,
+                "multiple catalog rows highlighted",
+            )
+            page.evaluate("location.hash = 'monster/42'")
+            page.wait_for_selector('.detail-page[data-route="monster/42"]')
+            page.locator('[data-open-details="monster-drops"]').click()
+            page.locator('[data-drop-group="0"] > summary').click()
+            page.locator('[data-drop-group-host="0"] a[href="#item/1002"]').click()
+            page.wait_for_selector('.detail-page[data-route="item/1002"]')
+            page.locator(".detail-page [data-route-back]").click()
+            page.wait_for_selector('.detail-page[data-route="monster/42"]')
+            require(
+                page.locator('.drop-items a.is-active-drop[href="#item/1002"]').count()
+                == 1,
+                "monster drop item selection was not restored",
+            )
+            require(
+                page.locator(".drop-choice.is-active-source").count() == 1,
+                "selected monster drop source group was not highlighted",
+            )
+            require(
+                page.locator(".drop-items a.is-active-drop").get_attribute(
+                    "aria-current"
+                )
+                == "true",
+                "monster drop selection has no accessible state",
+            )
             page.evaluate("location.hash = 'item/2001'")
             page.wait_for_selector('.detail-page[data-route="item/2001"]')
             require(

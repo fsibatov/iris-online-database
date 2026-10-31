@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '2.0.5';
+  const APP_VERSION = '2.0.6';
   const PAGE_SIZE = 24;
   const FAVORITES_PAGE_SIZE = 24;
   const SOURCE_BATCH = 20;
@@ -210,7 +210,7 @@
     const current = window.history.state;
     const base = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
     // Drop selection belongs to the monster history entry, not its destination.
-    const { monsterDropView, ...otherState } = base;
+    const { monsterDropView, catalogItemSelection, ...otherState } = base;
     return { ...otherState, [ROUTE_HISTORY_STATE_KEY]: { index, route } };
   }
 
@@ -953,13 +953,34 @@
     </article>`;
   }
 
+  function selectedCatalogItemId() {
+    const selection = window.history.state?.catalogItemSelection;
+    if (selection?.route !== decodeRouteHash() || selection.server !== state.server) return 0;
+    const id = Number(selection.itemId);
+    return Number.isSafeInteger(id) && id > 0 ? id : 0;
+  }
+
+  function rememberCatalogItemSelection(link) {
+    const page = link.closest('.catalog-page[data-catalog-kind="items"], .search-results-page');
+    if (!page || !main.contains(page)) return;
+    const itemId = Number(link.getAttribute('href')?.match(/^#item\/(\d+)$/)?.[1]);
+    if (!Number.isSafeInteger(itemId) || itemId <= 0) return;
+    const current = window.history.state;
+    const base = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
+    window.history.replaceState({
+      ...base,
+      catalogItemSelection: { route: decodeRouteHash(), server: state.server, itemId },
+    }, '', location.href);
+  }
+
   function itemRow(item, query = '') {
     const key = `item:${item.id}`;
     const active = state.favorites.has(key);
+    const selected = selectedCatalogItemId() === Number(item.id);
     const secondary = [item.typeLine || item.category, item.level ? `Ранг ${item.level}` : ''].filter(Boolean).join(' · ');
     const tertiary = [qualityBadge(item.quality, item.qualityId), primaryItemStat(item) ? `<span>${escapeHTML(primaryItemStat(item))}</span>` : '', itemSetBadge(item.setSize)].filter(Boolean).join('');
-    return `<article class="result-row">
-      <a class="result-main" href="#item/${item.id}" aria-label="Открыть предмет: ${escapeHTML(item.name)}">
+    return `<article class="result-row${selected ? ' is-selected-item' : ''}">
+      <a class="result-main" href="#item/${item.id}" aria-label="Открыть предмет: ${escapeHTML(item.name)}"${selected ? ' aria-current="true"' : ''}>
         <span class="result-icon">${icons.item}</span>
         <span class="result-copy"><strong>${highlight(item.name, query)}</strong><span class="result-secondary">${escapeHTML(secondary)}</span><span class="result-tertiary">${tertiary}</span></span>
         <span class="result-arrow">${icons.chevron}</span>
@@ -2167,7 +2188,7 @@
         const groupIndex = model.groups.length;
         model.groups.push({ choice, shown: 0, rendered: false });
         const count = (choice.items || []).length;
-        return `<details class="drop-choice" data-drop-group="${groupIndex}"><summary><span><strong>${escapeHTML(choice.title || 'Группа предметов')}</strong><small>Шанс группы: ${formatKnownChance(choice.baseSelectionChance)} · ${count ? formatCount(count, 'предмет', 'предмета', 'предметов') : 'Состав не указан'}</small></span>${icons.chevron}</summary><div class="drop-items" data-drop-group-host="${groupIndex}"><p class="empty-copy">Откройте группу, чтобы показать предметы.</p></div></details>`;
+        return `<details class="drop-choice${model.activeGroupIndex === groupIndex ? ' is-active-source' : ''}" data-drop-group="${groupIndex}"><summary><span><strong>${escapeHTML(choice.title || 'Группа предметов')}</strong><small>Шанс группы: ${formatKnownChance(choice.baseSelectionChance)} · ${count ? formatCount(count, 'предмет', 'предмета', 'предметов') : 'Состав не указан'}</small></span>${icons.chevron}</summary><div class="drop-items" data-drop-group-host="${groupIndex}"><p class="empty-copy">Откройте группу, чтобы показать предметы.</p></div></details>`;
       }).join('');
       const extraAttempts = [
         slot.addAttempt1Count ? `${formatCount(slot.addAttempt1Count, 'дополнительная попытка', 'дополнительные попытки', 'дополнительных попыток')} при ${formatChance(slot.addAttempt1Rate)}` : '',
@@ -3094,7 +3115,10 @@
     const internalLink = event.target.closest('a[href^="#"]');
     if (internalLink) {
       const route = internalLink.getAttribute('href');
-      if (isInternalAppRoute(normalizeRouteValue(route))) rememberMonsterDropSelection(internalLink);
+      if (isInternalAppRoute(normalizeRouteValue(route))) {
+        rememberMonsterDropSelection(internalLink);
+        rememberCatalogItemSelection(internalLink);
+      }
       if (navigateToRoute(route)) {
         event.preventDefault();
         return;
