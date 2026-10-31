@@ -177,9 +177,14 @@ class ReleaseHelperTests(unittest.TestCase):
             ),
             (
                 "disabled-dpi",
-                valid.replace("permonitorv2,permonitor", "system").replace(
+                valid.replace("permonitorv2,system", "system").replace(
                     "<description>", "<!-- permonitorv2 --><description>"
                 ),
+                False,
+            ),
+            (
+                "disabled-legacy-dpi",
+                valid.replace(">true</dpiAware>", ">false</dpiAware>"),
                 False,
             ),
             (
@@ -233,21 +238,20 @@ class ReleaseHelperTests(unittest.TestCase):
                         verify_target(Path("fixture.exe"), "2.0.5", target)
 
     def test_release_manifest_requires_valid_dpi_fallback(self):
-        """A valid primary DPI mode must not mask an invalid legacy fallback."""
+        """Require the exact DPI fallback emitted by Wails v2.14.0/winres v0.3.1."""
         valid = (ROOT / "build" / "windows" / "wails.exe.manifest").read_text(
             encoding="utf-8"
         )
-        self.assertIn("permonitorv2,permonitor", valid)
+        self.assertIn("permonitorv2,system", valid)
+        self.assertIn(">true</dpiAware>", valid)
         verify_manifest(valid, "amd64")
         for fallback in (
-            "permonitorv2,system",
+            "permonitorv2,permonitor",
             "permonitorv2,unknown",
-            "permonitorv2,permonitor,system",
+            "permonitorv2,system,permonitor",
         ):
             with self.subTest(fallback=fallback), self.assertRaises(SystemExit):
-                verify_manifest(
-                    valid.replace("permonitorv2,permonitor", fallback), "amd64"
-                )
+                verify_manifest(valid.replace("permonitorv2,system", fallback), "amd64")
 
     def test_windows_release_requires_nonempty_icon_image_payloads(self):
         """A group icon alone must not hide missing or empty RT_ICON images."""

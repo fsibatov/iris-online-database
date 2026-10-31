@@ -335,6 +335,7 @@ def verify_manifest(manifest: str, goarch: str) -> None:
 
     asm1 = "{urn:schemas-microsoft-com:asm.v1}"
     asm3 = "{urn:schemas-microsoft-com:asm.v3}"
+    windows_2005 = "{http://schemas.microsoft.com/SMI/2005/WindowsSettings}"
     windows_2016 = "{http://schemas.microsoft.com/SMI/2016/WindowsSettings}"
     levels = root.findall(
         f"./{asm3}trustInfo/{asm3}security/{asm3}requestedPrivileges/"
@@ -346,12 +347,15 @@ def verify_manifest(manifest: str, goarch: str) -> None:
     if levels[0].get("level") != "asInvoker" or levels[0].get("uiAccess") != "false":
         raise SystemExit(f"application manifest privilege level is invalid ({goarch})")
 
+    legacy_dpi = settings[0].findall(f"{windows_2005}dpiAware")
     dpi = settings[0].findall(f"{windows_2016}dpiAwareness")
     long_paths = settings[0].findall(f"{windows_2016}longPathAware")
     if (
-        len(dpi) != 1
+        len(legacy_dpi) != 1
+        or (legacy_dpi[0].text or "").strip().lower() != "true"
+        or len(dpi) != 1
         or [part.strip().lower() for part in (dpi[0].text or "").split(",")]
-        != ["permonitorv2", "permonitor"]
+        != ["permonitorv2", "system"]
         or len(long_paths) != 1
         or (long_paths[0].text or "").strip().lower() != "true"
     ):
