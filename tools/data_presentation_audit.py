@@ -304,19 +304,24 @@ def audit() -> dict:
                 for choice in slot.get("choices", []):
                     group_id = choice.get("groupId")
                     if str(group_id) not in known_groups:
-                        unresolved.append({
-                            "monsterId": int(monster_id),
-                            "sourceLine": slot.get("sourceLine", 0),
-                            "groupId": group_id,
-                        })
+                        unresolved.append(
+                            {
+                                "monsterId": int(monster_id),
+                                "sourceLine": slot.get("sourceLine", 0),
+                                "groupId": group_id,
+                            }
+                        )
         unresolved_direct_drop_groups[server_key] = sorted(
             unresolved,
             key=lambda row: (row["monsterId"], row["sourceLine"], row["groupId"]),
         )
     unresolved_direct_drop_monsters = {
         server_key: sorted(
-            (int(monster_id) for monster_id in server.get("directSlots", {})
-             if monster_id not in monster_ids)
+            (
+                int(monster_id)
+                for monster_id in server.get("directSlots", {})
+                if monster_id not in monster_ids
+            )
         )
         for server_key, server in sorted(game["servers"].items())
     }

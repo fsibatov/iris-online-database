@@ -45,7 +45,8 @@ def missing_metadata_categories(metadata: str, goarch: str = "amd64") -> list[st
         if category == "WAILS_VERSION":
             expected = ["dep", *marker.split("\t")]
             candidates = [
-                (index, record) for index, record in enumerate(records)
+                (index, record)
+                for index, record in enumerate(records)
                 if len(record) >= 2 and record[:2] == expected[:2]
             ]
             present = len(candidates) == 1 and (
@@ -66,7 +67,8 @@ def missing_metadata_categories(metadata: str, goarch: str = "amd64") -> list[st
         else:
             key = marker.split("=", 1)[0] + "="
             candidates = [
-                record for record in records
+                record
+                for record in records
                 if len(record) >= 2
                 and record[0] == "build"
                 and record[1].startswith(key)
@@ -79,9 +81,11 @@ def missing_metadata_categories(metadata: str, goarch: str = "amd64") -> list[st
 
 def pinned_go_compiler_matches(metadata: str) -> bool:
     """The first `go version -m` line identifies the actual compiler."""
-    pinned = (Path(__file__).resolve().parents[1] / ".go-version").read_text(
-        encoding="utf-8"
-    ).strip()
+    pinned = (
+        (Path(__file__).resolve().parents[1] / ".go-version")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", pinned):
         return False
     header = metadata.splitlines()[0] if metadata else ""
@@ -131,9 +135,8 @@ def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
         binary.decode("utf-16le", errors="ignore").lower(),
         binary[1:].decode("utf-16le", errors="ignore").lower(),
     )
-    if (
-        any(re.search(pattern, lowered) for pattern in absolute_path_patterns)
-        or any(re.search(pattern, text) for text in wide_texts for pattern in wide_patterns)
+    if any(re.search(pattern, lowered) for pattern in absolute_path_patterns) or any(
+        re.search(pattern, text) for text in wide_texts for pattern in wide_patterns
     ):
         raise SystemExit(
             f"absolute developer path found in release executable ({goarch})"

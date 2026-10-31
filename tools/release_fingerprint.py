@@ -80,9 +80,7 @@ def assert_release_tree(root: Path, expected_branch: str) -> tuple[str, str]:
         raise FingerprintError("Git index flags could not be checked") from error
     if index.returncode:
         raise FingerprintError("Git index flags could not be checked")
-    if any(
-        record[:2] != b"H " for record in index.stdout.split(b"\0") if record
-    ):
+    if any(record[:2] != b"H " for record in index.stdout.split(b"\0") if record):
         raise FingerprintError("Git index hides tracked source entries")
     return head, branch
 

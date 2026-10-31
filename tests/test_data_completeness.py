@@ -159,14 +159,26 @@ class DropReferenceDiagnosticsTests(unittest.TestCase):
         result = MODULE.audit()
         references = result["unresolvedDirectDropGroupsByServer"]
         self.assertEqual(
-            {server: sorted({row["groupId"] for row in rows}) for server, rows in references.items()},
-            {"kiss": [1002903, 1003110],
-             "original": [1002903, 1003110, 180020801, 180020802, 180020803]},
+            {
+                server: sorted({row["groupId"] for row in rows})
+                for server, rows in references.items()
+            },
+            {
+                "kiss": [1002903, 1003110],
+                "original": [1002903, 1003110, 180020801, 180020802, 180020803],
+            },
         )
-        self.assertEqual({server: len(rows) for server, rows in references.items()},
-                         {"kiss": 2, "original": 18})
-        self.assertTrue(all(row["monsterId"] > 0 and row["sourceLine"] > 0
-                            for rows in references.values() for row in rows))
+        self.assertEqual(
+            {server: len(rows) for server, rows in references.items()},
+            {"kiss": 2, "original": 18},
+        )
+        self.assertTrue(
+            all(
+                row["monsterId"] > 0 and row["sourceLine"] > 0
+                for rows in references.values()
+                for row in rows
+            )
+        )
         self.assertEqual(result["fatal"], [])
 
 

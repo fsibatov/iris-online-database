@@ -231,7 +231,6 @@ def powershell_step_failures(document: dict[object, object]) -> int:
     return failures
 
 
-
 def ci_trigger_failures(ci: str, *, require_dispatch: bool = True) -> int:
     """Require unfiltered main push/PR; CI also requires manual dispatch."""
     try:
@@ -256,7 +255,9 @@ def ci_trigger_failures(ci: str, *, require_dispatch: bool = True) -> int:
         # GitHub applies branch patterns in order: a later `!main` (or `!m*`)
         # excludes main despite the earlier literal match. Mandatory checks
         # must not rely on negated patterns whose order changes coverage.
-        if any(not isinstance(branch, str) or branch.startswith("!") for branch in branches):
+        if any(
+            not isinstance(branch, str) or branch.startswith("!") for branch in branches
+        ):
             return 1
         # Path filters can suppress mandatory Windows CI for otherwise valid
         # pushes and pull requests (including changes to Go/security code).
@@ -359,7 +360,9 @@ def release_policy_failures() -> int:
         dependency_events = yaml.load(dependency, Loader=yaml.BaseLoader)
     except yaml.YAMLError:
         dependency_events = None
-    triggers = dependency_events.get("on") if isinstance(dependency_events, dict) else None
+    triggers = (
+        dependency_events.get("on") if isinstance(dependency_events, dict) else None
+    )
     if (
         not isinstance(triggers, dict)
         or "pull_request" not in triggers
@@ -392,14 +395,13 @@ def release_policy_failures() -> int:
         # Required Windows gates must run unconditionally for every CI trigger.
         # A job-level `if` can silently skip a correctly named security gate.
         if any(
-            isinstance(job, dict)
-            and job.get("name") in required_checks
-            and "if" in job
+            isinstance(job, dict) and job.get("name") in required_checks and "if" in job
             for job in jobs.values()
         ):
             failures += 1
     if "ubuntu-" in ci or "ubuntu-" in codeql or "ubuntu-" in dependency:
         failures += 1
+
     def pinned_windows_runner_count(document: object) -> int:
         jobs = document.get("jobs") if isinstance(document, dict) else None
         if not isinstance(jobs, dict):
@@ -420,8 +422,7 @@ def release_policy_failures() -> int:
     # Job-level continue-on-error can report a failed mandatory Windows gate
     # as successful, even when its runner and steps are otherwise correct.
     if isinstance(jobs, dict) and any(
-        isinstance(jobs.get(job_id), dict)
-        and "continue-on-error" in jobs[job_id]
+        isinstance(jobs.get(job_id), dict) and "continue-on-error" in jobs[job_id]
         for job_id in ("windows-quality", "windows-race", "windows-build")
     ):
         failures += 1
@@ -433,10 +434,15 @@ def release_policy_failures() -> int:
             job = jobs.get(job_id)
             steps = job.get("steps") if isinstance(job, dict) else None
             go_steps = (
-                [step for step in steps if isinstance(step, dict)
-                 and isinstance(step.get("uses"), str)
-                 and re.fullmatch(r"actions/setup-go@[0-9a-f]{40}", step["uses"])]
-                if isinstance(steps, list) else []
+                [
+                    step
+                    for step in steps
+                    if isinstance(step, dict)
+                    and isinstance(step.get("uses"), str)
+                    and re.fullmatch(r"actions/setup-go@[0-9a-f]{40}", step["uses"])
+                ]
+                if isinstance(steps, list)
+                else []
             )
             if len(go_steps) != 1 or not (
                 "if" not in go_steps[0]
@@ -452,9 +458,13 @@ def release_policy_failures() -> int:
         for job_id in ("windows-quality", "windows-race", "windows-build"):
             job = jobs.get(job_id)
             steps = job.get("steps") if isinstance(job, dict) else None
-            if not isinstance(steps, list) or not steps or any(
-                not isinstance(step, dict) or "continue-on-error" in step
-                for step in steps
+            if (
+                not isinstance(steps, list)
+                or not steps
+                or any(
+                    not isinstance(step, dict) or "continue-on-error" in step
+                    for step in steps
+                )
             ):
                 failures += 1
     # A step-level `if` can skip the actual quality, race, or Go test gate
@@ -489,9 +499,13 @@ def release_policy_failures() -> int:
         job = jobs.get(job_id) if isinstance(jobs, dict) else None
         steps = job.get("steps") if isinstance(job, dict) else None
         gate_steps = (
-            [step for step in steps if isinstance(step, dict)
-             and step.get("name") == gate_name]
-            if isinstance(steps, list) else []
+            [
+                step
+                for step in steps
+                if isinstance(step, dict) and step.get("name") == gate_name
+            ]
+            if isinstance(steps, list)
+            else []
         )
         if len(gate_steps) != 1:
             failures += 1
@@ -499,7 +513,8 @@ def release_policy_failures() -> int:
         gate = gate_steps[0]
         script = gate.get("run")
         if (
-            "if" in gate or "uses" in gate
+            "if" in gate
+            or "uses" in gate
             or gate.get("shell") != "powershell"
             or not isinstance(script, str)
         ):
@@ -514,7 +529,7 @@ def release_policy_failures() -> int:
             line == command
             and index + 1 < len(active_lines)
             and active_lines[index + 1] == capture
-            and guard in active_lines[index + 2:]
+            and guard in active_lines[index + 2 :]
             for index, line in enumerate(active_lines)
         ):
             failures += 1
@@ -528,11 +543,13 @@ def release_policy_failures() -> int:
     # A pinned Windows runner alone does not prove dependency review ran.
     dependency_jobs = (
         dependency_document.get("jobs")
-        if isinstance(dependency_document, dict) else None
+        if isinstance(dependency_document, dict)
+        else None
     )
     dependency_job = (
         dependency_jobs.get("dependency-review")
-        if isinstance(dependency_jobs, dict) else None
+        if isinstance(dependency_jobs, dict)
+        else None
     )
     dependency_steps = (
         dependency_job.get("steps") if isinstance(dependency_job, dict) else None
@@ -570,7 +587,9 @@ def release_policy_failures() -> int:
         or "language: [go, python]" not in codeql
     ):
         failures += 1
-    codeql_jobs = codeql_document.get("jobs") if isinstance(codeql_document, dict) else None
+    codeql_jobs = (
+        codeql_document.get("jobs") if isinstance(codeql_document, dict) else None
+    )
     analyze = codeql_jobs.get("analyze") if isinstance(codeql_jobs, dict) else None
     # SARIF publication requires security-events: write in the effective
     # permissions. A job-level permissions map replaces the workflow map.
@@ -615,10 +634,15 @@ def release_policy_failures() -> int:
     # A missing, conditional or fail-open setup-go step breaks that guarantee.
     codeql_steps = analyze.get("steps") if isinstance(analyze, dict) else None
     go_setup_steps = (
-        [step for step in codeql_steps if isinstance(step, dict)
-         and isinstance(step.get("uses"), str)
-         and re.fullmatch(r"actions/setup-go@[0-9a-f]{40}", step["uses"])]
-        if isinstance(codeql_steps, list) else []
+        [
+            step
+            for step in codeql_steps
+            if isinstance(step, dict)
+            and isinstance(step.get("uses"), str)
+            and re.fullmatch(r"actions/setup-go@[0-9a-f]{40}", step["uses"])
+        ]
+        if isinstance(codeql_steps, list)
+        else []
     )
     if len(go_setup_steps) != 1 or not (
         go_setup_steps[0].get("if") == "matrix.language == 'go'"
@@ -631,22 +655,28 @@ def release_policy_failures() -> int:
     ):
         failures += 1
     go_build_steps = (
-        [step for step in codeql_steps if isinstance(step, dict)
-         and step.get("name") == "Build Windows Go sources"]
-        if isinstance(codeql_steps, list) else []
+        [
+            step
+            for step in codeql_steps
+            if isinstance(step, dict) and step.get("name") == "Build Windows Go sources"
+        ]
+        if isinstance(codeql_steps, list)
+        else []
     )
     # A substring in a comment or Write-Output decoy is not an executable
     # Go test/build. Require the expected commands on active PowerShell lines.
     go_build_script = go_build_steps[0].get("run") if len(go_build_steps) == 1 else None
     active_go_lines = (
         active_powershell_lines(go_build_script)
-        if isinstance(go_build_script, str) else []
+        if isinstance(go_build_script, str)
+        else []
     )
+
     def captures_and_guards_after(command: str, assignment: str, guard: str) -> bool:
         return any(
             active_go_lines[index] == command
             and active_go_lines[index + 1] == assignment
-            and guard in active_go_lines[index + 2:]
+            and guard in active_go_lines[index + 2 :]
             for index in range(len(active_go_lines) - 1)
         )
 
@@ -655,19 +685,23 @@ def release_policy_failures() -> int:
         and go_build_steps[0].get("shell") == "powershell"
         and any("iris-codeql-go-temp-" in line for line in active_go_lines)
         and "go test -count=1 ./..." in active_go_lines
-        and any(line.startswith("go build -trimpath -o ") and line.endswith(" .")
-                for line in active_go_lines)
+        and any(
+            line.startswith("go build -trimpath -o ") and line.endswith(" .")
+            for line in active_go_lines
+        )
         # A guard must follow its own command's status capture: an early
         # guard checks the initialized zero and can hide a failed Go command.
         and captures_and_guards_after(
-            "go test -count=1 ./...", "$goTestExitCode = $LASTEXITCODE",
+            "go test -count=1 ./...",
+            "$goTestExitCode = $LASTEXITCODE",
             "if ($goTestExitCode -ne 0) { exit $goTestExitCode }",
         )
         and any(
             line.startswith("go build -trimpath -o ")
             and line.endswith(" .")
             and captures_and_guards_after(
-                line, "$goBuildExitCode = $LASTEXITCODE",
+                line,
+                "$goBuildExitCode = $LASTEXITCODE",
                 "if ($goBuildExitCode -ne 0) { exit $goBuildExitCode }",
             )
             for line in active_go_lines
@@ -677,10 +711,15 @@ def release_policy_failures() -> int:
     # A named CodeQL job without its actual analyze action never publishes
     # security findings. Comments and unrelated pinned actions do not count.
     analyze_actions = (
-        [step for step in codeql_steps if isinstance(step, dict)
-         and isinstance(step.get("uses"), str)
-         and re.fullmatch(r"github/codeql-action/analyze@[0-9a-f]{40}", step["uses"])]
-        if isinstance(codeql_steps, list) else []
+        [
+            step
+            for step in codeql_steps
+            if isinstance(step, dict)
+            and isinstance(step.get("uses"), str)
+            and re.fullmatch(r"github/codeql-action/analyze@[0-9a-f]{40}", step["uses"])
+        ]
+        if isinstance(codeql_steps, list)
+        else []
     )
     if len(analyze_actions) != 1 or "if" in analyze_actions[0]:
         failures += 1
@@ -716,7 +755,8 @@ def release_policy_failures() -> int:
     if (
         isinstance(codeql_steps, list)
         and len(go_setup_steps) == len(init_actions) == len(go_build_steps) == 1
-        and codeql_steps.index(go_setup_steps[0]) >= min(
+        and codeql_steps.index(go_setup_steps[0])
+        >= min(
             codeql_steps.index(init_actions[0]),
             codeql_steps.index(go_build_steps[0]),
         )
@@ -751,8 +791,7 @@ def release_policy_failures() -> int:
     )
     required_names = [marker.removeprefix("- name: ") for marker in ordered_steps]
     positions = [
-        step_names.index(name) if name in step_names else -1
-        for name in required_names
+        step_names.index(name) if name in step_names else -1 for name in required_names
     ]
     if any(position < 0 for position in positions) or positions != sorted(positions):
         failures += 1

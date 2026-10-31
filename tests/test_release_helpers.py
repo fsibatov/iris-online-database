@@ -32,9 +32,21 @@ from verify_executables import (
     missing_metadata_categories,
     verify_executable,
 )
-from verify_release_assets import expected_asset_names, verify_release_assets
 from verify_python_environment import expected_versions
-from verify_windows_resources import directory_entries, parse_pe, resource_icon_ids, resource_icon_sizes, resource_payloads, resource_type_ids, verify_icon_group, verify_manifest, verify_target, verify_version_resource, version_tuple
+from verify_release_assets import expected_asset_names, verify_release_assets
+from verify_windows_resources import (
+    directory_entries,
+    parse_pe,
+    resource_icon_ids,
+    resource_icon_sizes,
+    resource_payloads,
+    resource_type_ids,
+    verify_icon_group,
+    verify_manifest,
+    verify_target,
+    verify_version_resource,
+    version_tuple,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
@@ -134,13 +146,13 @@ class ReleaseHelperTests(unittest.TestCase):
             (
                 "comment-only",
                 '<assembly xmlns="urn:schemas-microsoft-com:asm.v1">'
-                '<!-- asInvoker permonitorv2 longPathAware -->'
-                '</assembly>',
+                "<!-- asInvoker permonitorv2 longPathAware -->"
+                "</assembly>",
                 False,
             ),
             (
                 "malformed-xml",
-                '<assembly><!-- asInvoker permonitorv2 longPathAware -->',
+                "<assembly><!-- asInvoker permonitorv2 longPathAware -->",
                 False,
             ),
             (
@@ -151,25 +163,30 @@ class ReleaseHelperTests(unittest.TestCase):
             ),
             (
                 "wrong-namespace",
-                valid.replace('urn:schemas-microsoft-com:asm.v3', 'urn:invalid-namespace'),
+                valid.replace(
+                    "urn:schemas-microsoft-com:asm.v3", "urn:invalid-namespace"
+                ),
                 False,
             ),
             (
                 "elevated-privileges",
-                valid.replace('level="asInvoker"', 'level="requireAdministrator"')
-                .replace('<description>', '<!-- asInvoker --><description>'),
+                valid.replace(
+                    'level="asInvoker"', 'level="requireAdministrator"'
+                ).replace("<description>", "<!-- asInvoker --><description>"),
                 False,
             ),
             (
                 "disabled-dpi",
-                valid.replace('permonitorv2,permonitor', 'system')
-                .replace('<description>', '<!-- permonitorv2 --><description>'),
+                valid.replace("permonitorv2,permonitor", "system").replace(
+                    "<description>", "<!-- permonitorv2 --><description>"
+                ),
                 False,
             ),
             (
                 "disabled-long-paths",
-                valid.replace('>true</longPathAware>', '>false</longPathAware>')
-                .replace('<description>', '<!-- longPathAware true --><description>'),
+                valid.replace(
+                    ">true</longPathAware>", ">false</longPathAware>"
+                ).replace("<description>", "<!-- longPathAware true --><description>"),
                 False,
             ),
         )
@@ -183,23 +200,32 @@ class ReleaseHelperTests(unittest.TestCase):
             2 | (flags << 16),
         )
         for case, manifest, should_pass in cases:
-            with self.subTest(case=case), patch(
-                "verify_windows_resources.parse_pe", return_value=pe
-            ), patch(
-                "verify_windows_resources.resource_type_ids",
-                return_value={3, 14, 16, 24},
-            ), patch(
-                "verify_windows_resources.resource_payloads",
-                side_effect=lambda _path, kind: [
-                    manifest.encode("utf-8") if kind == 24 else
-                    VALID_ICON_GROUP if kind == 14 else b"fixture"
-                ],
-            ), patch(
-                "verify_windows_resources.resource_icon_ids", return_value={1, 2}
-            ), patch(
-                "verify_windows_resources.resource_icon_sizes",
-                return_value={1: {4}, 2: {4}},
-            ), patch("verify_windows_resources.verify_version_resource"):
+            with (
+                self.subTest(case=case),
+                patch("verify_windows_resources.parse_pe", return_value=pe),
+                patch(
+                    "verify_windows_resources.resource_type_ids",
+                    return_value={3, 14, 16, 24},
+                ),
+                patch(
+                    "verify_windows_resources.resource_payloads",
+                    side_effect=lambda _path, kind, manifest=manifest: [
+                        manifest.encode("utf-8")
+                        if kind == 24
+                        else VALID_ICON_GROUP
+                        if kind == 14
+                        else b"fixture"
+                    ],
+                ),
+                patch(
+                    "verify_windows_resources.resource_icon_ids", return_value={1, 2}
+                ),
+                patch(
+                    "verify_windows_resources.resource_icon_sizes",
+                    return_value={1: {4}, 2: {4}},
+                ),
+                patch("verify_windows_resources.verify_version_resource"),
+            ):
                 if should_pass:
                     verify_target(Path("fixture.exe"), "2.0.5", target)
                 else:
@@ -218,11 +244,10 @@ class ReleaseHelperTests(unittest.TestCase):
             "permonitorv2,unknown",
             "permonitorv2,permonitor,system",
         ):
-            with self.subTest(fallback=fallback):
-                with self.assertRaises(SystemExit):
-                    verify_manifest(
-                        valid.replace("permonitorv2,permonitor", fallback), "amd64"
-                    )
+            with self.subTest(fallback=fallback), self.assertRaises(SystemExit):
+                verify_manifest(
+                    valid.replace("permonitorv2,permonitor", fallback), "amd64"
+                )
 
     def test_windows_release_requires_nonempty_icon_image_payloads(self):
         """A group icon alone must not hide missing or empty RT_ICON images."""
@@ -243,23 +268,34 @@ class ReleaseHelperTests(unittest.TestCase):
             ("valid-icon-image", [b"icon-bytes"], True),
         )
         for label, icon_images, valid in cases:
-            with self.subTest(case=label), patch(
-                "verify_windows_resources.parse_pe", return_value=pe
-            ), patch(
-                "verify_windows_resources.resource_type_ids", return_value={3, 14, 16, 24}
-            ), patch(
-                "verify_windows_resources.resource_payloads",
-                side_effect=lambda _path, kind: (
-                    icon_images if kind == 3 else
-                    [manifest] if kind == 24 else
-                    [VALID_ICON_GROUP] if kind == 14 else [b"fixture"]
+            with (
+                self.subTest(case=label),
+                patch("verify_windows_resources.parse_pe", return_value=pe),
+                patch(
+                    "verify_windows_resources.resource_type_ids",
+                    return_value={3, 14, 16, 24},
                 ),
-            ), patch(
-                "verify_windows_resources.resource_icon_ids", return_value={1, 2}
-            ), patch(
-                "verify_windows_resources.resource_icon_sizes",
-                return_value={1: {4}, 2: {4}},
-            ), patch("verify_windows_resources.verify_version_resource"):
+                patch(
+                    "verify_windows_resources.resource_payloads",
+                    side_effect=lambda _path, kind, icon_images=icon_images: (
+                        icon_images
+                        if kind == 3
+                        else [manifest]
+                        if kind == 24
+                        else [VALID_ICON_GROUP]
+                        if kind == 14
+                        else [b"fixture"]
+                    ),
+                ),
+                patch(
+                    "verify_windows_resources.resource_icon_ids", return_value={1, 2}
+                ),
+                patch(
+                    "verify_windows_resources.resource_icon_sizes",
+                    return_value={1: {4}, 2: {4}},
+                ),
+                patch("verify_windows_resources.verify_version_resource"),
+            ):
                 if valid:
                     verify_target(Path("fixture.exe"), "2.0.5", target)
                 else:
@@ -286,26 +322,41 @@ class ReleaseHelperTests(unittest.TestCase):
             ("zero-count", b"\x00\x00\x01\x00\x00\x00", False),
             ("truncated-entry", VALID_ICON_GROUP[:-1], False),
             ("zero-icon-id", VALID_ICON_GROUP[:-2] + b"\x00\x00", False),
-            ("zero-icon-size", VALID_ICON_GROUP[:14] + b"\x00\x00\x00\x00" + VALID_ICON_GROUP[18:], False),
+            (
+                "zero-icon-size",
+                VALID_ICON_GROUP[:14] + b"\x00\x00\x00\x00" + VALID_ICON_GROUP[18:],
+                False,
+            ),
         )
         for label, group, valid in cases:
-            with self.subTest(case=label), patch(
-                "verify_windows_resources.parse_pe", return_value=pe
-            ), patch(
-                "verify_windows_resources.resource_type_ids", return_value={3, 14, 16, 24}
-            ), patch(
-                "verify_windows_resources.resource_payloads",
-                side_effect=lambda _path, kind: (
-                    [b"icon"] if kind == 3 else
-                    [group] if kind == 14 else
-                    [manifest] if kind == 24 else [b"fixture"]
+            with (
+                self.subTest(case=label),
+                patch("verify_windows_resources.parse_pe", return_value=pe),
+                patch(
+                    "verify_windows_resources.resource_type_ids",
+                    return_value={3, 14, 16, 24},
                 ),
-            ), patch(
-                "verify_windows_resources.resource_icon_ids", return_value={1, 2}
-            ), patch(
-                "verify_windows_resources.resource_icon_sizes",
-                return_value={1: {4}, 2: {4}},
-            ), patch("verify_windows_resources.verify_version_resource"):
+                patch(
+                    "verify_windows_resources.resource_payloads",
+                    side_effect=lambda _path, kind, group=group: (
+                        [b"icon"]
+                        if kind == 3
+                        else [group]
+                        if kind == 14
+                        else [manifest]
+                        if kind == 24
+                        else [b"fixture"]
+                    ),
+                ),
+                patch(
+                    "verify_windows_resources.resource_icon_ids", return_value={1, 2}
+                ),
+                patch(
+                    "verify_windows_resources.resource_icon_sizes",
+                    return_value={1: {4}, 2: {4}},
+                ),
+                patch("verify_windows_resources.verify_version_resource"),
+            ):
                 if valid:
                     verify_target(Path("fixture.exe"), "2.0.5", target)
                 else:
@@ -319,8 +370,10 @@ class ReleaseHelperTests(unittest.TestCase):
         flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
         group_entry = VALID_ICON_GROUP[6:]
         two_image_group = (
-            struct.pack("<HHH", 0, 1, 2) + group_entry
-            + group_entry[:-2] + struct.pack("<H", 2)
+            struct.pack("<HHH", 0, 1, 2)
+            + group_entry
+            + group_entry[:-2]
+            + struct.pack("<H", 2)
         )
         cases = (
             ("matching-id", 1, VALID_ICON_GROUP, True),
@@ -341,19 +394,31 @@ class ReleaseHelperTests(unittest.TestCase):
                 pe = (
                     target.pe_machine,
                     {".rsrc": (len(resource), 0x1000, len(resource), 0)},
-                    bytes(resource), 0, target.pe_magic, 2 | (flags << 16),
+                    bytes(resource),
+                    0,
+                    target.pe_magic,
+                    2 | (flags << 16),
                 )
-                with patch("verify_windows_resources.parse_pe", return_value=pe), patch(
-                    "verify_windows_resources.resource_type_ids",
-                    return_value={3, 14, 16, 24},
-                ), patch(
-                    "verify_windows_resources.resource_payloads",
-                    side_effect=lambda _path, kind: (
-                        [b"icon"] if kind == 3 else
-                        [group] if kind == 14 else
-                        [manifest] if kind == 24 else [b"fixture"]
+                with (
+                    patch("verify_windows_resources.parse_pe", return_value=pe),
+                    patch(
+                        "verify_windows_resources.resource_type_ids",
+                        return_value={3, 14, 16, 24},
                     ),
-                ), patch("verify_windows_resources.verify_version_resource"):
+                    patch(
+                        "verify_windows_resources.resource_payloads",
+                        side_effect=lambda _path, kind, group=group: (
+                            [b"icon"]
+                            if kind == 3
+                            else [group]
+                            if kind == 14
+                            else [manifest]
+                            if kind == 24
+                            else [b"fixture"]
+                        ),
+                    ),
+                    patch("verify_windows_resources.verify_version_resource"),
+                ):
                     if valid:
                         verify_target(Path("fixture.exe"), "2.0.5", target)
                     else:
@@ -377,27 +442,37 @@ class ReleaseHelperTests(unittest.TestCase):
         pe = (
             target.pe_machine,
             {".rsrc": (len(resource), 0x1000, len(resource), 0)},
-            bytes(resource), 0, target.pe_magic, 2 | (flags << 16),
+            bytes(resource),
+            0,
+            target.pe_magic,
+            2 | (flags << 16),
         )
         for declared_size, valid in ((4, True), (3, False), (5, False)):
-            with self.subTest(declared_size=declared_size), patch(
-                "verify_windows_resources.parse_pe", return_value=pe
-            ), patch(
-                "verify_windows_resources.resource_type_ids",
-                return_value={3, 14, 16, 24},
-            ), patch(
-                "verify_windows_resources.resource_payloads",
-                side_effect=lambda _path, kind: (
-                    [b"icon"] if kind == 3 else
-                    [
-                        VALID_ICON_GROUP[:14]
-                        + struct.pack("<I", declared_size)
-                        + VALID_ICON_GROUP[18:]
-                    ]
-                    if kind == 14 else
-                    [manifest] if kind == 24 else [b"fixture"]
+            with (
+                self.subTest(declared_size=declared_size),
+                patch("verify_windows_resources.parse_pe", return_value=pe),
+                patch(
+                    "verify_windows_resources.resource_type_ids",
+                    return_value={3, 14, 16, 24},
                 ),
-            ), patch("verify_windows_resources.verify_version_resource"):
+                patch(
+                    "verify_windows_resources.resource_payloads",
+                    side_effect=lambda _path, kind, declared_size=declared_size: (
+                        [b"icon"]
+                        if kind == 3
+                        else [
+                            VALID_ICON_GROUP[:14]
+                            + struct.pack("<I", declared_size)
+                            + VALID_ICON_GROUP[18:]
+                        ]
+                        if kind == 14
+                        else [manifest]
+                        if kind == 24
+                        else [b"fixture"]
+                    ),
+                ),
+                patch("verify_windows_resources.verify_version_resource"),
+            ):
                 if valid:
                     verify_target(Path("fixture.exe"), "2.0.5", target)
                 else:
@@ -429,19 +504,31 @@ class ReleaseHelperTests(unittest.TestCase):
                 pe = (
                     target.pe_machine,
                     {".rsrc": (len(resource), 0x1000, len(resource), 0)},
-                    bytes(resource), 0, target.pe_magic, 2 | (flags << 16),
+                    bytes(resource),
+                    0,
+                    target.pe_magic,
+                    2 | (flags << 16),
                 )
-                with patch("verify_windows_resources.parse_pe", return_value=pe), patch(
-                    "verify_windows_resources.resource_type_ids",
-                    return_value={3, 14, 16, 24},
-                ), patch(
-                    "verify_windows_resources.resource_payloads",
-                    side_effect=lambda _path, kind: (
-                        resource_payloads(_path, 3) if kind == 3 else
-                        [VALID_ICON_GROUP] if kind == 14 else
-                        [manifest] if kind == 24 else [b"fixture"]
+                with (
+                    patch("verify_windows_resources.parse_pe", return_value=pe),
+                    patch(
+                        "verify_windows_resources.resource_type_ids",
+                        return_value={3, 14, 16, 24},
                     ),
-                ), patch("verify_windows_resources.verify_version_resource"):
+                    patch(
+                        "verify_windows_resources.resource_payloads",
+                        side_effect=lambda _path, kind: (
+                            resource_payloads(_path, 3)
+                            if kind == 3
+                            else [VALID_ICON_GROUP]
+                            if kind == 14
+                            else [manifest]
+                            if kind == 24
+                            else [b"fixture"]
+                        ),
+                    ),
+                    patch("verify_windows_resources.verify_version_resource"),
+                ):
                     self.assertEqual(
                         resource_icon_sizes(Path("fixture.exe")), {1: {4, second_size}}
                     )
@@ -483,29 +570,43 @@ class ReleaseHelperTests(unittest.TestCase):
             ("duplicate", struct.pack("<HHH", 0, 1, 2) + first + first, False),
             (
                 "duplicate-different-size",
-                struct.pack("<HHH", 0, 1, 2) + first
-                + first[:8] + struct.pack("<I", 8) + first[12:],
+                struct.pack("<HHH", 0, 1, 2)
+                + first
+                + first[:8]
+                + struct.pack("<I", 8)
+                + first[12:],
                 False,
             ),
         )
         for label, group, valid in cases:
-            with self.subTest(case=label), patch(
-                "verify_windows_resources.parse_pe", return_value=pe
-            ), patch(
-                "verify_windows_resources.resource_type_ids", return_value={3, 14, 16, 24}
-            ), patch(
-                "verify_windows_resources.resource_payloads",
-                side_effect=lambda _path, kind: (
-                    [b"icon"] if kind == 3 else
-                    [group] if kind == 14 else
-                    [manifest] if kind == 24 else [b"fixture"]
+            with (
+                self.subTest(case=label),
+                patch("verify_windows_resources.parse_pe", return_value=pe),
+                patch(
+                    "verify_windows_resources.resource_type_ids",
+                    return_value={3, 14, 16, 24},
                 ),
-            ), patch(
-                "verify_windows_resources.resource_icon_ids", return_value={1, 2}
-            ), patch(
-                "verify_windows_resources.resource_icon_sizes",
-                return_value={1: {4}, 2: {4}},
-            ), patch("verify_windows_resources.verify_version_resource"):
+                patch(
+                    "verify_windows_resources.resource_payloads",
+                    side_effect=lambda _path, kind, group=group: (
+                        [b"icon"]
+                        if kind == 3
+                        else [group]
+                        if kind == 14
+                        else [manifest]
+                        if kind == 24
+                        else [b"fixture"]
+                    ),
+                ),
+                patch(
+                    "verify_windows_resources.resource_icon_ids", return_value={1, 2}
+                ),
+                patch(
+                    "verify_windows_resources.resource_icon_sizes",
+                    return_value={1: {4}, 2: {4}},
+                ),
+                patch("verify_windows_resources.verify_version_resource"),
+            ):
                 if valid:
                     verify_target(Path("fixture.exe"), "2.0.5", target)
                 else:
@@ -538,9 +639,7 @@ class ReleaseHelperTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         parse_pe(path)
                 else:
-                    machine, _sections, _data, _timestamp, magic, flags = parse_pe(
-                        path
-                    )
+                    machine, _sections, _data, _timestamp, magic, flags = parse_pe(path)
                     self.assertEqual(
                         (machine, magic, flags & 0xFFFF), (0x8664, 0x20B, 2)
                     )
@@ -562,7 +661,9 @@ class ReleaseHelperTests(unittest.TestCase):
                 data[:2] = b"MZ"
                 struct.pack_into("<I", data, 0x3C, 0x80)
                 data[0x80:0x84] = b"PE\0\0"
-                struct.pack_into("<HH", data, 0x84, 0x14C if magic == 0x10B else 0x8664, 0)
+                struct.pack_into(
+                    "<HH", data, 0x84, 0x14C if magic == 0x10B else 0x8664, 0
+                )
                 struct.pack_into("<H", data, 0x80 + 20, optional_size)
                 optional = 0x80 + 24
                 struct.pack_into("<H", data, optional, magic)
@@ -591,7 +692,9 @@ class ReleaseHelperTests(unittest.TestCase):
                 data[:2] = b"MZ"
                 struct.pack_into("<I", data, 0x3C, 0x80)
                 data[0x80:0x84] = b"PE\0\0"
-                struct.pack_into("<HH", data, 0x84, 0x14C if magic == 0x10B else 0x8664, 0)
+                struct.pack_into(
+                    "<HH", data, 0x84, 0x14C if magic == 0x10B else 0x8664, 0
+                )
                 struct.pack_into("<H", data, 0x80 + 20, 112)
                 optional = 0x80 + 24
                 struct.pack_into("<H", data, optional, magic)
@@ -631,7 +734,9 @@ class ReleaseHelperTests(unittest.TestCase):
                 for index, name in enumerate(names):
                     start = section_table + index * 40
                     data[start : start + len(name)] = name
-                    struct.pack_into("<IIII", data, start + 8, 16, index * 4096, 16, 384 + index * 16)
+                    struct.pack_into(
+                        "<IIII", data, start + 8, 16, index * 4096, 16, 384 + index * 16
+                    )
                 path = Path(temp) / "fixture.exe"
                 path.write_bytes(data)
                 if valid:
@@ -662,7 +767,7 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<H", data, optional + 70, 0x8160)
                 section = optional + 112
                 self.assertEqual(len(raw_name), 8)
-                data[section:section + 8] = raw_name
+                data[section : section + 8] = raw_name
                 struct.pack_into("<IIII", data, section + 8, 16, 0x1000, 16, 0x200 - 16)
                 path = Path(temp) / "fixture.exe"
                 path.write_bytes(data)
@@ -693,8 +798,10 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<H", data, optional + 68, 2)
                 struct.pack_into("<H", data, optional + 70, 0x8160)
                 section = optional + 112
-                data[section:section + 5] = b".text"
-                struct.pack_into("<IIII", data, section + 8, 16, 0x1000, raw_size, raw_offset)
+                data[section : section + 5] = b".text"
+                struct.pack_into(
+                    "<IIII", data, section + 8, 16, 0x1000, raw_size, raw_offset
+                )
                 path = Path(temp) / "fixture.exe"
                 path.write_bytes(data)
                 if valid:
@@ -727,14 +834,18 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<H", data, optional + 68, 2)
                 struct.pack_into("<H", data, optional + 70, 0x8160)
                 section = optional + 112
-                data[section:section + 5] = b".text"
-                struct.pack_into("<IIII", data, section + 8, 16, 0x1000, raw_size, raw_offset)
+                data[section : section + 5] = b".text"
+                struct.pack_into(
+                    "<IIII", data, section + 8, 16, 0x1000, raw_size, raw_offset
+                )
                 path = Path(temp) / "fixture.exe"
                 path.write_bytes(data)
                 if valid:
                     self.assertIn(".text", parse_pe(path)[1])
                 else:
-                    with self.assertRaisesRegex(ValueError, "section raw data overlaps PE headers"):
+                    with self.assertRaisesRegex(
+                        ValueError, "section raw data overlaps PE headers"
+                    ):
                         parse_pe(path)
 
     def test_pe_section_raw_ranges_must_not_overlap(self):
@@ -760,11 +871,22 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<H", data, optional + 70, 0x8160)
                 section_table = optional + 112
                 for index, (name, offset, size) in enumerate(
-                    ((b".text", first_offset, 0x40), (b".rsrc", second_offset, second_size))
+                    (
+                        (b".text", first_offset, 0x40),
+                        (b".rsrc", second_offset, second_size),
+                    )
                 ):
                     section = section_table + index * 40
                     data[section : section + len(name)] = name
-                    struct.pack_into("<IIII", data, section + 8, size, 0x1000 + index * 0x1000, size, offset)
+                    struct.pack_into(
+                        "<IIII",
+                        data,
+                        section + 8,
+                        size,
+                        0x1000 + index * 0x1000,
+                        size,
+                        offset,
+                    )
                 path = Path(temp) / "fixture.exe"
                 path.write_bytes(data)
                 if valid:
@@ -800,15 +922,22 @@ class ReleaseHelperTests(unittest.TestCase):
                     section = section_table + index * 40
                     data[section : section + len(name)] = name
                     struct.pack_into(
-                        "<IIII", data, section + 8,
-                        virtual_size, rva, 0x200, raw_offset,
+                        "<IIII",
+                        data,
+                        section + 8,
+                        virtual_size,
+                        rva,
+                        0x200,
+                        raw_offset,
                     )
                 path = Path(temp) / "fixture.exe"
                 path.write_bytes(data)
                 if valid:
                     self.assertEqual(set(parse_pe(path)[1]), {".text", ".rsrc"})
                 else:
-                    with self.assertRaisesRegex(ValueError, "overlapping PE section virtual ranges"):
+                    with self.assertRaisesRegex(
+                        ValueError, "overlapping PE section virtual ranges"
+                    ):
                         parse_pe(path)
 
     def test_pe_section_virtual_ranges_must_fit_32_bit_rva_space(self):
@@ -832,19 +961,25 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<H", data, optional + 68, 2)
                 struct.pack_into("<H", data, optional + 70, 0x8160)
                 section_table = optional + 112
-                for index, (name, rva, size, raw_offset) in enumerate((
-                    (b".text", text_rva, text_size, 0x200),
-                    (b".rsrc", resource_rva, resource_size, 0x400),
-                )):
+                for index, (name, rva, size, raw_offset) in enumerate(
+                    (
+                        (b".text", text_rva, text_size, 0x200),
+                        (b".rsrc", resource_rva, resource_size, 0x400),
+                    )
+                ):
                     section = section_table + index * 40
-                    data[section:section + len(name)] = name
-                    struct.pack_into("<IIII", data, section + 8, size, rva, 0x40, raw_offset)
+                    data[section : section + len(name)] = name
+                    struct.pack_into(
+                        "<IIII", data, section + 8, size, rva, 0x40, raw_offset
+                    )
                 path = Path(temp) / "fixture.exe"
                 path.write_bytes(data)
                 if valid:
                     self.assertEqual(set(parse_pe(path)[1]), {".text", ".rsrc"})
                 else:
-                    with self.assertRaisesRegex(ValueError, "PE section virtual range exceeds 32-bit RVA space"):
+                    with self.assertRaisesRegex(
+                        ValueError, "PE section virtual range exceeds 32-bit RVA space"
+                    ):
                         parse_pe(path)
 
     def test_resource_directory_timestamps_must_be_zero(self):
@@ -876,18 +1011,27 @@ class ReleaseHelperTests(unittest.TestCase):
 
         cases = (
             ("duplicate-type", ((16, 0x80000020), (16, 0x80000040)), False),
-            ("duplicate-name-offset", ((0x80000020, 0x80000040), (0x80000020, 0x80000060)), False),
+            (
+                "duplicate-name-offset",
+                ((0x80000020, 0x80000040), (0x80000020, 0x80000060)),
+                False,
+            ),
             ("distinct-types", ((16, 0x80000020), (24, 0x80000040)), True),
         )
         for label, entries, valid in cases:
             with self.subTest(case=label):
                 directory = bytearray(16 + len(entries) * 8)
                 named_count = len(entries) if label == "duplicate-name-offset" else 0
-                struct.pack_into("<HH", directory, 12, named_count, len(entries) - named_count)
+                struct.pack_into(
+                    "<HH", directory, 12, named_count, len(entries) - named_count
+                )
                 for index, entry in enumerate(entries):
                     struct.pack_into("<II", directory, 16 + index * 8, *entry)
                 if valid:
-                    self.assertEqual(directory_entries(directory, 0, len(directory), 0), list(entries))
+                    self.assertEqual(
+                        directory_entries(directory, 0, len(directory), 0),
+                        list(entries),
+                    )
                 else:
                     with self.assertRaises(ValueError):
                         directory_entries(directory, 0, len(directory), 0)
@@ -914,9 +1058,7 @@ class ReleaseHelperTests(unittest.TestCase):
                     "<HH", directory, 12, named_count, len(keys) - named_count
                 )
                 for index, key in enumerate(keys):
-                    struct.pack_into(
-                        "<II", directory, 16 + index * 8, key, 0x80000040
-                    )
+                    struct.pack_into("<II", directory, 16 + index * 8, key, 0x80000040)
                 if valid:
                     self.assertEqual(
                         [
@@ -952,7 +1094,7 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<HH", data, raw_offset + 12, 1, 0)
                 struct.pack_into("<II", data, raw_offset + 16, name_pointer, 0x80000028)
                 struct.pack_into("<H", data, raw_offset + 0x40, length)
-                data[raw_offset + 0x42:raw_offset + 0x46] = "OK".encode("utf-16le")
+                data[raw_offset + 0x42 : raw_offset + 0x46] = "OK".encode("utf-16le")
                 if valid:
                     self.assertEqual(
                         directory_entries(data, raw_offset, section_end, 0),
@@ -976,7 +1118,9 @@ class ReleaseHelperTests(unittest.TestCase):
                     struct.pack_into("<H", directory, offset, len(name))
                     directory[offset + 2 : offset + 4] = name.encode("utf-16le")
                 if valid:
-                    self.assertEqual(len(directory_entries(directory, 0, len(directory), 0)), 2)
+                    self.assertEqual(
+                        len(directory_entries(directory, 0, len(directory), 0)), 2
+                    )
                 else:
                     with self.assertRaises(ValueError):
                         directory_entries(directory, 0, len(directory), 0)
@@ -1028,12 +1172,18 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<IIII", resource, 0x60, 0x1080, 4, 0, reserved)
                 resource[0x80:0x84] = b"ICON"
                 pe = (
-                    0x8664, {".rsrc": (0x100, 0x1000, 0x100, 0)},
-                    bytes(resource), 0, 0x20B, 2,
+                    0x8664,
+                    {".rsrc": (0x100, 0x1000, 0x100, 0)},
+                    bytes(resource),
+                    0,
+                    0x20B,
+                    2,
                 )
                 with patch("verify_windows_resources.parse_pe", return_value=pe):
                     if valid:
-                        self.assertEqual(resource_payloads(Path("fixture.exe"), 3), [b"ICON"])
+                        self.assertEqual(
+                            resource_payloads(Path("fixture.exe"), 3), [b"ICON"]
+                        )
                     else:
                         with self.assertRaisesRegex(ValueError, "reserved"):
                             resource_payloads(Path("fixture.exe"), 3)
@@ -1055,12 +1205,18 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<IIII", resource, 0x60, 0x1080, 4, 0, 0)
                 resource[0x80:0x84] = b"ICON"
                 pe = (
-                    0x8664, {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
-                    bytes(resource), 0, 0x20B, 2,
+                    0x8664,
+                    {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
+                    bytes(resource),
+                    0,
+                    0x20B,
+                    2,
                 )
                 with patch("verify_windows_resources.parse_pe", return_value=pe):
                     if valid:
-                        self.assertEqual(resource_payloads(Path("fixture.exe"), 3), [b"ICON"])
+                        self.assertEqual(
+                            resource_payloads(Path("fixture.exe"), 3), [b"ICON"]
+                        )
                     else:
                         with self.assertRaisesRegex(ValueError, "virtual size"):
                             resource_payloads(Path("fixture.exe"), 3)
@@ -1088,14 +1244,22 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<IIII", resource, entry_offset, 0x1080, 4, 0, 0)
                 resource[0x80:0x84] = b"ICON"
                 pe = (
-                    0x8664, {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
-                    bytes(resource), 0, 0x20B, 2,
+                    0x8664,
+                    {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
+                    bytes(resource),
+                    0,
+                    0x20B,
+                    2,
                 )
                 with patch("verify_windows_resources.parse_pe", return_value=pe):
                     if valid:
-                        self.assertEqual(resource_payloads(Path("fixture.exe"), 3), [b"ICON"])
+                        self.assertEqual(
+                            resource_payloads(Path("fixture.exe"), 3), [b"ICON"]
+                        )
                     else:
-                        with self.assertRaisesRegex(ValueError, "resource.*(directory|entry)"):
+                        with self.assertRaisesRegex(
+                            ValueError, "resource.*(directory|entry)"
+                        ):
                             resource_payloads(Path("fixture.exe"), 3)
 
     def test_rt_icon_helpers_reject_unmapped_resource_metadata_and_payloads(self):
@@ -1120,8 +1284,12 @@ class ReleaseHelperTests(unittest.TestCase):
         for label, virtual_size, ids_valid, sizes_valid in cases:
             with self.subTest(case=label):
                 pe = (
-                    0x8664, {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
-                    bytes(resource), 0, 0x20B, 2,
+                    0x8664,
+                    {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
+                    bytes(resource),
+                    0,
+                    0x20B,
+                    2,
                 )
                 with patch("verify_windows_resources.parse_pe", return_value=pe):
                     if ids_valid:
@@ -1130,7 +1298,9 @@ class ReleaseHelperTests(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             resource_icon_ids(Path("fixture.exe"))
                     if sizes_valid:
-                        self.assertEqual(resource_icon_sizes(Path("fixture.exe")), {1: {4}})
+                        self.assertEqual(
+                            resource_icon_sizes(Path("fixture.exe")), {1: {4}}
+                        )
                     else:
                         with self.assertRaises(ValueError):
                             resource_icon_sizes(Path("fixture.exe"))
@@ -1181,7 +1351,12 @@ class ReleaseHelperTests(unittest.TestCase):
                     directory[0x42:0x44] = "A".encode("utf-16le")
                 if valid:
                     self.assertEqual(
-                        [key for key, _ in directory_entries(directory, 0, len(directory), 0)],
+                        [
+                            key
+                            for key, _ in directory_entries(
+                                directory, 0, len(directory), 0
+                            )
+                        ],
                         list(keys),
                     )
                 else:
@@ -1209,13 +1384,18 @@ class ReleaseHelperTests(unittest.TestCase):
                 struct.pack_into("<HH", directory, 12, 2, int(has_id))
                 for index, key in enumerate(keys):
                     struct.pack_into("<II", directory, 16 + index * 8, key, 0x80000040)
-                for offset, name in zip((0x50, 0x70), names):
+                for offset, name in zip((0x50, 0x70), names, strict=True):
                     encoded = name.encode("utf-16le")
                     struct.pack_into("<H", directory, offset, len(encoded) // 2)
                     directory[offset + 2 : offset + 2 + len(encoded)] = encoded
                 if valid:
                     self.assertEqual(
-                        [key for key, _ in directory_entries(directory, 0, len(directory), 0)],
+                        [
+                            key
+                            for key, _ in directory_entries(
+                                directory, 0, len(directory), 0
+                            )
+                        ],
                         list(keys),
                     )
                 else:
@@ -1260,12 +1440,28 @@ class ReleaseHelperTests(unittest.TestCase):
     def test_windows_fixed_version_resource_rejects_invalid_structure_revision(self):
         """VS_FIXEDFILEINFO.dwStrucVersion must be the documented 1.0 value."""
         fixed = (
-            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
-            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+            0xFEEF04BD,
+            0x00010000,
+            0x00020000,
+            0,
+            0x00020000,
+            0,
+            0x0000003F,
+            0,
+            0x00040004,
+            1,
+            0,
+            0,
+            0,
         )
         markers = b"".join(
             value.encode("utf-16le")
-            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+            for value in (
+                "Iris Online Database",
+                "FileVersion",
+                "ProductVersion",
+                "2.0.0",
+            )
         )
         for revision, valid in ((0x00010000, True), (0, False), (0x00020000, False)):
             with self.subTest(revision=revision):
@@ -1281,12 +1477,28 @@ class ReleaseHelperTests(unittest.TestCase):
     def test_windows_fixed_version_resource_requires_application_file_type(self):
         """Executable version resources must use VFT_APP, not DLL or driver types."""
         fixed = (
-            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
-            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+            0xFEEF04BD,
+            0x00010000,
+            0x00020000,
+            0,
+            0x00020000,
+            0,
+            0x0000003F,
+            0,
+            0x00040004,
+            1,
+            0,
+            0,
+            0,
         )
         markers = b"".join(
             value.encode("utf-16le")
-            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+            for value in (
+                "Iris Online Database",
+                "FileVersion",
+                "ProductVersion",
+                "2.0.0",
+            )
         )
         for file_type, valid in ((1, True), (0, False), (2, False), (3, False)):
             with self.subTest(file_type=file_type):
@@ -1302,12 +1514,28 @@ class ReleaseHelperTests(unittest.TestCase):
     def test_windows_fixed_version_resource_requires_zero_application_subtype(self):
         """VFT_APP has no subtype; nonzero dwFileSubtype is malformed EXE metadata."""
         fixed = (
-            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
-            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+            0xFEEF04BD,
+            0x00010000,
+            0x00020000,
+            0,
+            0x00020000,
+            0,
+            0x0000003F,
+            0,
+            0x00040004,
+            1,
+            0,
+            0,
+            0,
         )
         markers = b"".join(
             value.encode("utf-16le")
-            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+            for value in (
+                "Iris Online Database",
+                "FileVersion",
+                "ProductVersion",
+                "2.0.0",
+            )
         )
         for subtype, valid in ((0, True), (1, False), (2, False), (0xFFFFFFFF, False)):
             with self.subTest(subtype=subtype):
@@ -1323,12 +1551,28 @@ class ReleaseHelperTests(unittest.TestCase):
     def test_windows_fixed_version_resource_rejects_debug_and_prerelease_flags(self):
         """Stable Windows release binaries must not declare DEBUG or PRERELEASE."""
         fixed = (
-            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
-            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+            0xFEEF04BD,
+            0x00010000,
+            0x00020000,
+            0,
+            0x00020000,
+            0,
+            0x0000003F,
+            0,
+            0x00040004,
+            1,
+            0,
+            0,
+            0,
         )
         markers = b"".join(
             value.encode("utf-16le")
-            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+            for value in (
+                "Iris Online Database",
+                "FileVersion",
+                "ProductVersion",
+                "2.0.0",
+            )
         )
         for label, flags, valid in (
             ("stable", 0, True),
@@ -1350,12 +1594,28 @@ class ReleaseHelperTests(unittest.TestCase):
     def test_windows_fixed_version_resource_requires_standard_flag_mask(self):
         """VS_FIXEDFILEINFO must declare the canonical Windows file flag mask."""
         fixed = (
-            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
-            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+            0xFEEF04BD,
+            0x00010000,
+            0x00020000,
+            0,
+            0x00020000,
+            0,
+            0x0000003F,
+            0,
+            0x00040004,
+            1,
+            0,
+            0,
+            0,
         )
         markers = b"".join(
             value.encode("utf-16le")
-            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+            for value in (
+                "Iris Online Database",
+                "FileVersion",
+                "ProductVersion",
+                "2.0.0",
+            )
         )
         for mask, valid in (
             (0x3F, True),
@@ -1377,12 +1637,28 @@ class ReleaseHelperTests(unittest.TestCase):
     def test_windows_fixed_version_resource_rejects_private_and_unknown_flags(self):
         """Public release metadata must not claim PRIVATEBUILD/SPECIALBUILD or unknown flags."""
         fixed = (
-            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
-            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+            0xFEEF04BD,
+            0x00010000,
+            0x00020000,
+            0,
+            0x00020000,
+            0,
+            0x0000003F,
+            0,
+            0x00040004,
+            1,
+            0,
+            0,
+            0,
         )
         markers = b"".join(
             value.encode("utf-16le")
-            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+            for value in (
+                "Iris Online Database",
+                "FileVersion",
+                "ProductVersion",
+                "2.0.0",
+            )
         )
         for label, flags, valid in (
             ("stable", 0, True),
@@ -1499,7 +1775,9 @@ class ReleaseHelperTests(unittest.TestCase):
             f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
             for category, marker in EXPECTED_METADATA_MARKERS
         )
-        metadata = SimpleNamespace(returncode=0, stdout=f"release.exe: go{pinned}\n{markers}")
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
         with tempfile.TemporaryDirectory(prefix="iris-release-path-gate-") as temporary:
             binary = Path(temporary) / "release.exe"
             cases = (
@@ -1550,7 +1828,9 @@ class ReleaseHelperTests(unittest.TestCase):
             for label, payload, should_pass in cases:
                 with self.subTest(label=label):
                     binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload)
-                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=metadata
+                    ):
                         if should_pass:
                             verify_executable(binary, "2.0.5", "amd64", "go")
                         else:
@@ -1580,7 +1860,9 @@ class ReleaseHelperTests(unittest.TestCase):
             for label, payload, should_pass in cases:
                 with self.subTest(label=label):
                     binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload)
-                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=metadata
+                    ):
                         if should_pass:
                             verify_executable(binary, "2.0.5", "amd64", "go")
                         else:
@@ -1635,15 +1917,23 @@ class ReleaseHelperTests(unittest.TestCase):
             ("unix-home-uri", ("file:///" + "home/builder/project").encode(), False),
             ("macos-home-uri", ("file:///" + "Users/builder/project").encode(), False),
             ("tmp-build-uri", ("file:///" + "tmp/iris-build/obj").encode(), False),
-            ("wide-home-uri", ("file:///" + "home/builder/project").encode("utf-16le"), False),
+            (
+                "wide-home-uri",
+                ("file:///" + "home/builder/project").encode("utf-16le"),
+                False,
+            ),
             ("system-uri", ("file:///" + "etc/hosts").encode(), True),
         )
         with tempfile.TemporaryDirectory(prefix="iris-file-uri-gate-") as temp:
             binary = Path(temp) / "release.exe"
             for label, payload, should_pass in cases:
                 with self.subTest(case=label):
-                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload + b"\x00")
-                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                    binary.write_bytes(
+                        b"IrisOnlineRelease/2.0.5/\x00" + payload + b"\x00"
+                    )
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=metadata
+                    ):
                         if should_pass:
                             verify_executable(binary, "2.0.5", "amd64", "go")
                         else:
@@ -1675,8 +1965,12 @@ class ReleaseHelperTests(unittest.TestCase):
                     encoded = payload.encode(
                         "utf-16le" if label == "unc-wide" else "utf-8"
                     )
-                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + encoded + b"\x00")
-                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                    binary.write_bytes(
+                        b"IrisOnlineRelease/2.0.5/\x00" + encoded + b"\x00"
+                    )
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=metadata
+                    ):
                         if should_pass:
                             verify_executable(binary, "2.0.5", "amd64", "go")
                         else:
@@ -1708,8 +2002,12 @@ class ReleaseHelperTests(unittest.TestCase):
                     encoded = payload.encode(
                         "utf-16le" if label == "wide-legacy" else "utf-8"
                     )
-                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + encoded + b"\x00")
-                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                    binary.write_bytes(
+                        b"IrisOnlineRelease/2.0.5/\x00" + encoded + b"\x00"
+                    )
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=metadata
+                    ):
                         if should_pass:
                             verify_executable(binary, "2.0.5", "amd64", "go")
                         else:
@@ -1738,7 +2036,9 @@ class ReleaseHelperTests(unittest.TestCase):
             for label, payload, should_pass in cases:
                 with self.subTest(label=label):
                     binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload)
-                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=metadata
+                    ):
                         if should_pass:
                             verify_executable(binary, "2.0.5", "amd64", "go")
                         else:
@@ -1767,7 +2067,9 @@ class ReleaseHelperTests(unittest.TestCase):
             for label, payload, should_pass in cases:
                 with self.subTest(label=label):
                     binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload)
-                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=metadata
+                    ):
                         if should_pass:
                             verify_executable(binary, "2.0.5", "amd64", "go")
                         else:
@@ -1787,12 +2089,18 @@ class ReleaseHelperTests(unittest.TestCase):
             ("enabled-cgo", "\tbuild\tCGO_ENABLED=1", "CGO_DISABLED"),
             ("no-trimpath", "\tbuild\t-trimpath=false", "TRIMPATH"),
             ("different-tags", "\tbuild\t-tags=desktop", "PRODUCTION_TAGS"),
-            ("old-wails", "\tdep\tgithub.com/wailsapp/wails/v2\tv2.13.0", "WAILS_VERSION"),
+            (
+                "old-wails",
+                "\tdep\tgithub.com/wailsapp/wails/v2\tv2.13.0",
+                "WAILS_VERSION",
+            ),
             ("duplicate-os", "\tbuild\tGOOS=windows", "TARGET_OS"),
         )
         for label, extra, category in conflicts:
             with self.subTest(case=label):
-                self.assertIn(category, missing_metadata_categories(valid + "\n" + extra))
+                self.assertIn(
+                    category, missing_metadata_categories(valid + "\n" + extra)
+                )
 
     def test_release_metadata_rejects_replaced_wails_dependency(self):
         """A pinned dep line cannot conceal a Go module replacement."""
@@ -1840,7 +2148,9 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertEqual(missing_metadata_categories(legitimate), [])
         self.assertEqual(
             missing_metadata_categories(
-                legitimate.replace(markers["WAILS_VERSION"], markers["WAILS_VERSION"] + "\th1:checksum")
+                legitimate.replace(
+                    markers["WAILS_VERSION"], markers["WAILS_VERSION"] + "\th1:checksum"
+                )
             ),
             [],
         )
@@ -1852,7 +2162,8 @@ class ReleaseHelperTests(unittest.TestCase):
             for category, marker in markers.items()
         )
         self.assertEqual(
-            missing_metadata_categories(forged), list(markers),
+            missing_metadata_categories(forged),
+            list(markers),
             "substring matches must not satisfy Go build metadata requirements",
         )
 
@@ -2062,10 +2373,12 @@ class ReleaseHelperTests(unittest.TestCase):
                 {"go": "go1.25.0", "govulncheck": "v1"},
                 {"go": "go1.26.6", "govulncheck": "v2"},
             ):
-                with self.subTest(changed=changed):
-                    with patch("release_fingerprint.toolchain", return_value=changed):
-                        with self.assertRaises(FingerprintError):
-                            verify_fingerprint(root, "main")
+                with (
+                    self.subTest(changed=changed),
+                    patch("release_fingerprint.toolchain", return_value=changed),
+                    self.assertRaises(FingerprintError),
+                ):
+                    verify_fingerprint(root, "main")
 
     def test_python_requirements_reject_normalized_duplicate_pins(self):
         """PEP 503-equivalent names must not bypass unique direct pins."""
@@ -2582,7 +2895,9 @@ class ReleaseHelperTests(unittest.TestCase):
         # A release staging directory must contain only the four approved files.
         import hashlib
 
-        with tempfile.TemporaryDirectory(prefix="iris-release-dir-entries-") as temporary:
+        with tempfile.TemporaryDirectory(
+            prefix="iris-release-dir-entries-"
+        ) as temporary:
             directory = Path(temporary)
             manifest = []
             for index, name in enumerate(expected_asset_names("2.0.0")[:-1], 1):
@@ -2842,7 +3157,9 @@ class ReleaseHelperTests(unittest.TestCase):
         for drive, username, suffix in cases:
             with self.subTest(drive=drive):
                 sensitive_path = drive + ":/" + "Users/" + username + "/" + suffix
-                with tempfile.TemporaryDirectory(prefix="iris-path-audit-") as temporary:
+                with tempfile.TemporaryDirectory(
+                    prefix="iris-path-audit-"
+                ) as temporary:
                     root = Path(temporary)
                     (root / "fixture.txt").write_text(sensitive_path, encoding="utf-8")
                     result = self.run_audit(root)
@@ -2863,18 +3180,20 @@ class ReleaseHelperTests(unittest.TestCase):
             (fake_token, "SEC001"),
             (sensitive_path, "SEC002"),
         ):
-            with self.subTest(category=category):
-                with tempfile.TemporaryDirectory(prefix="iris-self-audit-") as temporary:
-                    root = Path(temporary)
-                    tools = root / "tools"
-                    tools.mkdir()
-                    (tools / "repository_audit.py").write_text(
-                        "# self-audit fixture\n" + payload + "\n", encoding="utf-8"
-                    )
-                    result = self.run_audit(root)
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertIn(f"[{category}]", result.stdout)
-                    self.assertNotIn(payload, result.stdout)
+            with (
+                self.subTest(category=category),
+                tempfile.TemporaryDirectory(prefix="iris-self-audit-") as temporary,
+            ):
+                root = Path(temporary)
+                tools = root / "tools"
+                tools.mkdir()
+                (tools / "repository_audit.py").write_text(
+                    "# self-audit fixture\n" + payload + "\n", encoding="utf-8"
+                )
+                result = self.run_audit(root)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"[{category}]", result.stdout)
+                self.assertNotIn(payload, result.stdout)
 
     def test_repository_audit_enforces_python_shebang_mode_coherence(self):
         self.assertTrue(python_mode_violation("#!/usr/bin/env python3\n", 0))

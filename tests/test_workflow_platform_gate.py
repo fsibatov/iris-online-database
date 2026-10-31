@@ -12,7 +12,6 @@ import validate_workflows as workflow
 
 
 class WorkflowPlatformGateTests(TestCase):
-
     def test_ci_go_setup_must_use_declared_toolchain_unconditionally(self):
         """Mandatory Windows jobs must not bypass or override .go-version."""
         with TemporaryDirectory(prefix="iris-ci-go-pin-") as directory:
@@ -35,8 +34,7 @@ class WorkflowPlatformGateTests(TestCase):
                         end = len(original)
                     job = original[start:end]
                     setup = (
-                        "      - name: Setup pinned Go\n"
-                        "        uses: actions/setup-go@"
+                        "      - name: Setup pinned Go\n        uses: actions/setup-go@"
                     )
                     self.assertIn(setup, job)
                     version_file = "          go-version-file: .go-version"
@@ -52,21 +50,36 @@ class WorkflowPlatformGateTests(TestCase):
                         ),
                         (
                             "wrong-version-file",
-                            job.replace(version_file, "          go-version-file: go.mod", 1),
+                            job.replace(
+                                version_file, "          go-version-file: go.mod", 1
+                            ),
                         ),
                         (
                             "explicit-version-override",
-                            job.replace(version_file, version_file + "\n          go-version: '1.20'", 1),
+                            job.replace(
+                                version_file,
+                                version_file + "\n          go-version: '1.20'",
+                                1,
+                            ),
                         ),
                         (
                             "conditional-setup",
-                            job.replace(setup, setup.replace("        uses:", "        if: false\n        uses:"), 1),
+                            job.replace(
+                                setup,
+                                setup.replace(
+                                    "        uses:", "        if: false\n        uses:"
+                                ),
+                                1,
+                            ),
                         ),
                         (
                             "fail-open-setup",
                             job.replace(
                                 setup,
-                                setup.replace("        uses:", "        continue-on-error: true\n        uses:"),
+                                setup.replace(
+                                    "        uses:",
+                                    "        continue-on-error: true\n        uses:",
+                                ),
                                 1,
                             ),
                         ),
@@ -117,7 +130,9 @@ class WorkflowPlatformGateTests(TestCase):
                     (
                         "step-ignore-failure",
                         original.replace(
-                            action, action + "        continue-on-error: true\n", 1,
+                            action,
+                            action + "        continue-on-error: true\n",
+                            1,
                         ),
                     ),
                     (
@@ -159,12 +174,16 @@ class WorkflowPlatformGateTests(TestCase):
                     (
                         "job-ignore-failure",
                         original.replace(
-                            job, job + "    continue-on-error: true\n", 1,
+                            job,
+                            job + "    continue-on-error: true\n",
+                            1,
                         ),
                     ),
                     (
                         "job-runner-downgrade",
-                        original.replace("    runs-on: windows-2025", "    runs-on: windows-2022", 1),
+                        original.replace(
+                            "    runs-on: windows-2025", "    runs-on: windows-2022", 1
+                        ),
                     ),
                 )
                 for case, modified in cases:
@@ -182,7 +201,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             path = workflows / "dependency-review.yml"
             original = path.read_text(encoding="utf-8")
             trigger = "on:\n  pull_request:\n"
@@ -199,7 +221,9 @@ class WorkflowPlatformGateTests(TestCase):
                 self.assertEqual(workflow.release_policy_failures(), 0)
                 for case, replacement in cases.items():
                     with self.subTest(case=case):
-                        path.write_text(original.replace(trigger, replacement, 1), encoding="utf-8")
+                        path.write_text(
+                            original.replace(trigger, replacement, 1), encoding="utf-8"
+                        )
                         self.assertGreater(workflow.release_policy_failures(), 0)
                 path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
@@ -211,7 +235,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             ci_path = workflows / "ci.yml"
             original = ci_path.read_text(encoding="utf-8")
             trigger_block = (
@@ -244,7 +271,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             ci_path = workflows / "ci.yml"
             original = ci_path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
@@ -274,7 +304,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             with patch.object(workflow, "ROOT", root):
                 self.assertEqual(workflow.release_policy_failures(), 0)
                 for filename in ("ci.yml", "codeql.yml"):
@@ -284,7 +317,9 @@ class WorkflowPlatformGateTests(TestCase):
                         marker = f"  {event}:\n    branches: [main]\n"
                         self.assertIn(marker, original)
                         for negative in ("'!main'", "'!m*'"):
-                            with self.subTest(workflow=filename, event=event, negative=negative):
+                            with self.subTest(
+                                workflow=filename, event=event, negative=negative
+                            ):
                                 path.write_text(
                                     original.replace(
                                         marker,
@@ -293,7 +328,9 @@ class WorkflowPlatformGateTests(TestCase):
                                     ),
                                     encoding="utf-8",
                                 )
-                                self.assertGreater(workflow.release_policy_failures(), 0)
+                                self.assertGreater(
+                                    workflow.release_policy_failures(), 0
+                                )
                         path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
@@ -304,7 +341,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             with patch.object(workflow, "ROOT", root):
                 self.assertEqual(workflow.release_policy_failures(), 0)
                 for filename in ("ci.yml", "codeql.yml"):
@@ -315,7 +355,9 @@ class WorkflowPlatformGateTests(TestCase):
                     for types in ("[closed]", "[labeled]", "[opened]"):
                         with self.subTest(workflow=filename, types=types):
                             path.write_text(
-                                original.replace(marker, marker + f"    types: {types}\n", 1),
+                                original.replace(
+                                    marker, marker + f"    types: {types}\n", 1
+                                ),
                                 encoding="utf-8",
                             )
                             self.assertGreater(workflow.release_policy_failures(), 0)
@@ -329,7 +371,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             codeql_path = workflows / "codeql.yml"
             original = codeql_path.read_text(encoding="utf-8")
             marker = "  analyze:\n"
@@ -357,7 +402,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             codeql_path = workflows / "codeql.yml"
             original = codeql_path.read_text(encoding="utf-8")
             push = "  push:\n    branches: [main]\n"
@@ -390,7 +438,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             ci_path = workflows / "ci.yml"
             original = ci_path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
@@ -401,7 +452,9 @@ class WorkflowPlatformGateTests(TestCase):
                             header = f"  {job}:\n"
                             self.assertIn(header, original)
                             ci_path.write_text(
-                                original.replace(header, header + f"    if: {condition}\n", 1),
+                                original.replace(
+                                    header, header + f"    if: {condition}\n", 1
+                                ),
                                 encoding="utf-8",
                             )
                             self.assertGreater(workflow.release_policy_failures(), 0)
@@ -413,7 +466,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             ci_path = workflows / "ci.yml"
             original = ci_path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
@@ -442,7 +498,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             ci_path = workflows / "ci.yml"
             original = ci_path.read_text(encoding="utf-8")
             cases = (
@@ -465,7 +524,7 @@ class WorkflowPlatformGateTests(TestCase):
                                 original[:step_start]
                                 + step
                                 + f"        continue-on-error: {setting}\n"
-                                + original[step_start + len(step):]
+                                + original[step_start + len(step) :]
                             )
                             ci_path.write_text(modified, encoding="utf-8")
                             self.assertGreater(workflow.release_policy_failures(), 0)
@@ -479,7 +538,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             ci_path = workflows / "ci.yml"
             original = ci_path.read_text(encoding="utf-8")
             cases = (
@@ -502,7 +564,7 @@ class WorkflowPlatformGateTests(TestCase):
                                 original[:step_start]
                                 + step_header
                                 + f"        if: {condition}\n"
-                                + original[step_start + len(step_header):]
+                                + original[step_start + len(step_header) :]
                             )
                             ci_path.write_text(modified, encoding="utf-8")
                             self.assertGreater(workflow.release_policy_failures(), 0)
@@ -516,7 +578,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             ci_path = workflows / "ci.yml"
             original = ci_path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
@@ -531,7 +596,9 @@ class WorkflowPlatformGateTests(TestCase):
                         self.assertIn(marker, original)
                         ci_path.write_text(
                             original.replace(marker, "name: Disabled placeholder", 1)
-                            + "\n# " + marker + "\n",
+                            + "\n# "
+                            + marker
+                            + "\n",
                             encoding="utf-8",
                         )
                         self.assertGreater(workflow.release_policy_failures(), 0)
@@ -544,7 +611,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows.mkdir(parents=True)
             filenames = ("ci.yml", "codeql.yml", "dependency-review.yml")
             for filename in filenames:
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             with patch.object(workflow, "ROOT", root):
                 self.assertEqual(workflow.release_policy_failures(), 0)
                 for filename in filenames:
@@ -553,8 +623,11 @@ class WorkflowPlatformGateTests(TestCase):
                         original = path.read_text(encoding="utf-8")
                         self.assertIn("runs-on: windows-2025", original)
                         path.write_text(
-                            original.replace("runs-on: windows-2025", "runs-on: windows-2022")
-                            + "\n# runs-on: windows-2025\n" * original.count("runs-on: windows-2025"),
+                            original.replace(
+                                "runs-on: windows-2025", "runs-on: windows-2022"
+                            )
+                            + "\n# runs-on: windows-2025\n"
+                            * original.count("runs-on: windows-2025"),
                             encoding="utf-8",
                         )
                         self.assertGreater(workflow.release_policy_failures(), 0)
@@ -567,7 +640,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             ci_path = workflows / "ci.yml"
             original = ci_path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
@@ -576,11 +652,13 @@ class WorkflowPlatformGateTests(TestCase):
                     with self.subTest(job=job):
                         header = f"  {job}:\n"
                         self.assertIn(header, original)
-                        runner = original.index("    runs-on: windows-2025\n", original.index(header))
+                        runner = original.index(
+                            "    runs-on: windows-2025\n", original.index(header)
+                        )
                         modified = (
                             original[:runner]
                             + "    runs-on: windows-2022\n"
-                            + original[runner + len("    runs-on: windows-2025\n"):]
+                            + original[runner + len("    runs-on: windows-2025\n") :]
                             + "\n  decoy-runner:\n    runs-on: windows-2025\n"
                             + "    steps:\n      - run: Write-Output 'decoy'\n"
                         )
@@ -596,7 +674,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             codeql_path = workflows / "codeql.yml"
             original = codeql_path.read_text(encoding="utf-8")
             self.assertIn("  analyze:\n", original)
@@ -604,7 +685,9 @@ class WorkflowPlatformGateTests(TestCase):
             with patch.object(workflow, "ROOT", root):
                 self.assertEqual(workflow.release_policy_failures(), 0)
                 modified = (
-                    original.replace("    runs-on: windows-2025\n", "    runs-on: windows-2022\n", 1)
+                    original.replace(
+                        "    runs-on: windows-2025\n", "    runs-on: windows-2022\n", 1
+                    )
                     + "\n  decoy-runner:\n    runs-on: windows-2025\n"
                     + "    steps:\n      - run: Write-Output 'decoy'\n"
                 )
@@ -620,7 +703,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             codeql_path = workflows / "codeql.yml"
             original = codeql_path.read_text(encoding="utf-8")
             start = original.index("      - name: Build Windows Go sources\n")
@@ -666,7 +752,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             codeql_path = workflows / "codeql.yml"
             original = codeql_path.read_text(encoding="utf-8")
             commands = ("go test -count=1 ./...", "go build -trimpath")
@@ -701,7 +790,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             path = workflows / "codeql.yml"
             original = path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
@@ -729,14 +821,18 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             path = workflows / "codeql.yml"
             original = path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
                 self.assertEqual(workflow.release_policy_failures(), 0)
                 for command in ("go test -count=1 ./...", "go build -trimpath"):
                     line = next(
-                        line for line in original.splitlines()
+                        line
+                        for line in original.splitlines()
                         if line.strip().startswith(command)
                     )
                     for quote in ("'", '"'):
@@ -745,9 +841,14 @@ class WorkflowPlatformGateTests(TestCase):
                             # PowerShell script (Windows PowerShell 5.1 syntax).
                             decoy = (
                                 " " * (len(line) - len(line.lstrip()))
-                                + "$decoy = @" + quote + "\n"
-                                + line + "\n"
-                                + "          " + quote + "@"
+                                + "$decoy = @"
+                                + quote
+                                + "\n"
+                                + line
+                                + "\n"
+                                + "          "
+                                + quote
+                                + "@"
                             )
                             modified = original.replace(line, decoy, 1)
                             self.assertNotEqual(modified, original)
@@ -763,7 +864,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             codeql_path = workflows / "codeql.yml"
             original = codeql_path.read_text(encoding="utf-8")
             marker = "language: [go, python]"
@@ -773,7 +877,9 @@ class WorkflowPlatformGateTests(TestCase):
                 for remaining in ("[python]", "[go]"):
                     with self.subTest(remaining=remaining):
                         codeql_path.write_text(
-                            original.replace(marker, f"language: {remaining} # {marker}", 1),
+                            original.replace(
+                                marker, f"language: {remaining} # {marker}", 1
+                            ),
                             encoding="utf-8",
                         )
                         self.assertGreater(workflow.release_policy_failures(), 0)
@@ -787,7 +893,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             codeql_path = workflows / "codeql.yml"
             original = codeql_path.read_text(encoding="utf-8")
             action_step = (
@@ -825,12 +934,19 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             codeql_path = workflows / "codeql.yml"
             original = codeql_path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
                 self.assertEqual(workflow.release_policy_failures(), 0)
-                for step_name in ("Initialize CodeQL", "Build Windows Go sources", "Analyze"):
+                for step_name in (
+                    "Initialize CodeQL",
+                    "Build Windows Go sources",
+                    "Analyze",
+                ):
                     for setting in ("true", "${{ true }}"):
                         with self.subTest(step=step_name, setting=setting):
                             marker = f"      - name: {step_name}\n"
@@ -854,7 +970,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             codeql_path = workflows / "codeql.yml"
             original = codeql_path.read_text(encoding="utf-8")
             action_step = (
@@ -951,9 +1070,7 @@ class WorkflowPlatformGateTests(TestCase):
     def test_non_windows_reports_not_run_after_static_checks(self):
         output = StringIO()
         with (
-            patch.object(
-                workflow, "windows_powershell_executable", return_value=None
-            ),
+            patch.object(workflow, "windows_powershell_executable", return_value=None),
             patch.object(workflow, "powershell_step_failures") as parser,
             redirect_stdout(output),
         ):
@@ -966,9 +1083,7 @@ class WorkflowPlatformGateTests(TestCase):
     def test_static_violation_still_fails_without_powershell(self):
         output = StringIO()
         with (
-            patch.object(
-                workflow, "windows_powershell_executable", return_value=None
-            ),
+            patch.object(workflow, "windows_powershell_executable", return_value=None),
             patch.object(workflow, "release_policy_failures", return_value=1),
             redirect_stdout(output),
         ):
@@ -1077,14 +1192,15 @@ class WorkflowPlatformGateTests(TestCase):
                         "name: Steps shape fixture\n"
                         "jobs:\n"
                         "  build:\n"
-                        "    runs-on: windows-2025\n"
-                        + steps,
+                        "    runs-on: windows-2025\n" + steps,
                         encoding="utf-8",
                     )
                     output = StringIO()
                     with (
                         patch.object(workflow, "ROOT", root),
-                        patch.object(workflow, "release_policy_failures", return_value=0),
+                        patch.object(
+                            workflow, "release_policy_failures", return_value=0
+                        ),
                         patch.object(
                             workflow, "windows_powershell_executable", return_value=None
                         ),
@@ -1115,14 +1231,15 @@ class WorkflowPlatformGateTests(TestCase):
                         "name: Shell fixture\n"
                         "jobs:\n"
                         "  build:\n"
-                        "    runs-on: windows-2025\n"
-                        + extra,
+                        "    runs-on: windows-2025\n" + extra,
                         encoding="utf-8",
                     )
                     output = StringIO()
                     with (
                         patch.object(workflow, "ROOT", root),
-                        patch.object(workflow, "release_policy_failures", return_value=0),
+                        patch.object(
+                            workflow, "release_policy_failures", return_value=0
+                        ),
                         patch.object(
                             workflow, "windows_powershell_executable", return_value=None
                         ),
@@ -1158,7 +1275,9 @@ class WorkflowPlatformGateTests(TestCase):
                     output = StringIO()
                     with (
                         patch.object(workflow, "ROOT", root),
-                        patch.object(workflow, "release_policy_failures", return_value=0),
+                        patch.object(
+                            workflow, "release_policy_failures", return_value=0
+                        ),
                         patch.object(
                             workflow, "windows_powershell_executable", return_value=None
                         ),
@@ -1180,13 +1299,15 @@ class WorkflowPlatformGateTests(TestCase):
                 with self.subTest(defaults=defaults):
                     if defaults.startswith("jobs:"):
                         content = (
-                            "name: Defaults fixture\n" + defaults
+                            "name: Defaults fixture\n"
+                            + defaults
                             + "    runs-on: windows-2025\n"
                             + "    steps: [{run: 'echo hello'}]\n"
                         )
                     else:
                         content = (
-                            "name: Defaults fixture\n" + defaults
+                            "name: Defaults fixture\n"
+                            + defaults
                             + "jobs:\n  build:\n    runs-on: windows-2025\n"
                             + "    steps: [{run: 'echo hello'}]\n"
                         )
@@ -1194,8 +1315,12 @@ class WorkflowPlatformGateTests(TestCase):
                     output = StringIO()
                     with (
                         patch.object(workflow, "ROOT", root),
-                        patch.object(workflow, "release_policy_failures", return_value=0),
-                        patch.object(workflow, "windows_powershell_executable", return_value=None),
+                        patch.object(
+                            workflow, "release_policy_failures", return_value=0
+                        ),
+                        patch.object(
+                            workflow, "windows_powershell_executable", return_value=None
+                        ),
                         redirect_stdout(output),
                     ):
                         result = workflow.main()
@@ -1208,7 +1333,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             codeql_path = workflows / "codeql.yml"
             original = codeql_path.read_text(encoding="utf-8")
             self.assertIn("  analyze:\n", original)
@@ -1237,7 +1365,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             ci_path = workflows / "ci.yml"
             original = ci_path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
@@ -1253,10 +1384,12 @@ class WorkflowPlatformGateTests(TestCase):
                         run_start = original.index("        run: |\n", start)
                         script_start = run_start + len("        run: |\n")
                         ends = [
-                            pos for pos in (
+                            pos
+                            for pos in (
                                 original.find("\n      - name:", script_start),
                                 original.find("\n  windows-", script_start),
-                            ) if pos >= 0
+                            )
+                            if pos >= 0
                         ]
                         end = min(ends) if ends else len(original)
                         old_script = original[script_start:end]
@@ -1266,7 +1399,9 @@ class WorkflowPlatformGateTests(TestCase):
                             original[:run_start]
                             + "        run: Write-Host 'skipped'\n"
                             + original[end:]
-                            + "\n# " + old_script.replace("\n", "\n# ") + "\n"
+                            + "\n# "
+                            + old_script.replace("\n", "\n# ")
+                            + "\n"
                         )
                         ci_path.write_text(modified, encoding="utf-8")
                         self.assertGreater(workflow.release_policy_failures(), 0)
@@ -1280,7 +1415,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             path = workflows / "ci.yml"
             original = path.read_text(encoding="utf-8")
             required = (
@@ -1294,16 +1432,26 @@ class WorkflowPlatformGateTests(TestCase):
             with patch.object(workflow, "ROOT", root):
                 self.assertEqual(workflow.release_policy_failures(), 0)
                 for command in required:
-                    matches = [line for line in original.splitlines() if line.strip() == command]
+                    matches = [
+                        line
+                        for line in original.splitlines()
+                        if line.strip() == command
+                    ]
                     self.assertEqual(len(matches), 1, command)
                     line = matches[0]
                     indentation = line[: len(line) - len(line.lstrip())]
                     for quote in ("'", '"'):
                         with self.subTest(command=command, quote=quote):
                             decoy = (
-                                indentation + "$decoy = @" + quote + "\n"
-                                + line + "\n"
-                                + indentation + quote + "@"
+                                indentation
+                                + "$decoy = @"
+                                + quote
+                                + "\n"
+                                + line
+                                + "\n"
+                                + indentation
+                                + quote
+                                + "@"
                             )
                             modified = original.replace(line, decoy, 1)
                             self.assertNotEqual(modified, original)
@@ -1319,7 +1467,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             path = workflows / "codeql.yml"
             original = path.read_text(encoding="utf-8")
             setup = (
@@ -1331,9 +1482,30 @@ class WorkflowPlatformGateTests(TestCase):
             with patch.object(workflow, "ROOT", root):
                 self.assertEqual(workflow.release_policy_failures(), 0)
                 for case, changed in (
-                    ("removed", original.replace("        uses: actions/setup-go@", "        # uses: actions/setup-go@", 1)),
-                    ("disabled", original.replace("        if: matrix.language == 'go'", "        if: false", 1)),
-                    ("wrong-version", original.replace("          go-version-file: .go-version", "          go-version-file: other-go-version", 1)),
+                    (
+                        "removed",
+                        original.replace(
+                            "        uses: actions/setup-go@",
+                            "        # uses: actions/setup-go@",
+                            1,
+                        ),
+                    ),
+                    (
+                        "disabled",
+                        original.replace(
+                            "        if: matrix.language == 'go'",
+                            "        if: false",
+                            1,
+                        ),
+                    ),
+                    (
+                        "wrong-version",
+                        original.replace(
+                            "          go-version-file: .go-version",
+                            "          go-version-file: other-go-version",
+                            1,
+                        ),
+                    ),
                     (
                         "explicit-version-override",
                         original.replace(
@@ -1350,7 +1522,14 @@ class WorkflowPlatformGateTests(TestCase):
                             1,
                         ),
                     ),
-                    ("fail-open", original.replace(setup, "      - name: Setup pinned Go\n        continue-on-error: true\n        if: matrix.language == 'go'\n        uses: actions/setup-go@", 1)),
+                    (
+                        "fail-open",
+                        original.replace(
+                            setup,
+                            "      - name: Setup pinned Go\n        continue-on-error: true\n        if: matrix.language == 'go'\n        uses: actions/setup-go@",
+                            1,
+                        ),
+                    ),
                 ):
                     with self.subTest(case=case):
                         self.assertNotEqual(changed, original)
@@ -1366,7 +1545,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             codeql_path = workflows / "codeql.yml"
             original = codeql_path.read_text(encoding="utf-8")
             marker = "        language: [go, python]\n"
@@ -1380,7 +1562,8 @@ class WorkflowPlatformGateTests(TestCase):
                 ):
                     with self.subTest(case=case):
                         exclusion = "        exclude:\n" + "".join(
-                            f"          - language: {language}\n" for language in languages
+                            f"          - language: {language}\n"
+                            for language in languages
                         )
                         codeql_path.write_text(
                             original.replace(marker, marker + exclusion, 1),
@@ -1397,10 +1580,15 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             path = workflows / "codeql.yml"
             original = path.read_text(encoding="utf-8")
-            marker = "      - name: Analyze\n        uses: github/codeql-action/analyze@"
+            marker = (
+                "      - name: Analyze\n        uses: github/codeql-action/analyze@"
+            )
             self.assertIn(marker, original)
             with patch.object(workflow, "ROOT", root):
                 self.assertEqual(workflow.release_policy_failures(), 0)
@@ -1410,7 +1598,9 @@ class WorkflowPlatformGateTests(TestCase):
                     ("false-expression", "${{ false }}"),
                 ):
                     with self.subTest(case=case):
-                        changed = original + f"        with:\n          upload: {value}\n"
+                        changed = (
+                            original + f"        with:\n          upload: {value}\n"
+                        )
                         path.write_text(changed, encoding="utf-8")
                         self.assertGreater(workflow.release_policy_failures(), 0)
                 path.write_text(original, encoding="utf-8")
@@ -1423,7 +1613,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             path = workflows / "codeql.yml"
             original = path.read_text(encoding="utf-8")
             permission = "  security-events: write\n"
@@ -1434,10 +1627,15 @@ class WorkflowPlatformGateTests(TestCase):
                 self.assertEqual(workflow.release_policy_failures(), 0)
                 for case, modified in (
                     ("missing-global-write", original.replace(permission, "", 1)),
-                    ("global-read-only", original.replace(permission, "  security-events: read\n", 1)),
+                    (
+                        "global-read-only",
+                        original.replace(permission, "  security-events: read\n", 1),
+                    ),
                     (
                         "job-overrides-global-write",
-                        original.replace(job, job + "    permissions:\n      contents: read\n", 1),
+                        original.replace(
+                            job, job + "    permissions:\n      contents: read\n", 1
+                        ),
                     ),
                 ):
                     with self.subTest(case=case):
@@ -1446,7 +1644,8 @@ class WorkflowPlatformGateTests(TestCase):
                 path.write_text(
                     original.replace(
                         job,
-                        job + "    permissions:\n      contents: read\n      security-events: write\n",
+                        job
+                        + "    permissions:\n      contents: read\n      security-events: write\n",
                         1,
                     ),
                     encoding="utf-8",
@@ -1460,7 +1659,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             targets = {
                 "ci.yml": (
                     "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\IrisTools.ps1 -Action Test",
@@ -1481,25 +1683,38 @@ class WorkflowPlatformGateTests(TestCase):
                     path = workflows / filename
                     original = path.read_text(encoding="utf-8")
                     for command in commands:
-                        lines = [line for line in original.splitlines() if line.strip() == command]
+                        lines = [
+                            line
+                            for line in original.splitlines()
+                            if line.strip() == command
+                        ]
                         self.assertEqual(len(lines), 1, command)
                         line = lines[0]
-                        indent = line[:len(line) - len(line.lstrip())]
+                        indent = line[: len(line) - len(line.lstrip())]
                         for variant in ("plain", "nested"):
-                            with self.subTest(filename=filename, command=command, variant=variant):
+                            with self.subTest(
+                                filename=filename, command=command, variant=variant
+                            ):
                                 prefix = indent + "<#\n"
                                 if variant == "nested":
                                     prefix += indent + "<# nested block #>\n"
                                 replacement = prefix + line + "\n" + indent + "#>"
-                                path.write_text(original.replace(line, replacement, 1), encoding="utf-8")
-                                self.assertGreater(workflow.release_policy_failures(), 0)
+                                path.write_text(
+                                    original.replace(line, replacement, 1),
+                                    encoding="utf-8",
+                                )
+                                self.assertGreater(
+                                    workflow.release_policy_failures(), 0
+                                )
                         path.write_text(original, encoding="utf-8")
                 self.assertEqual(workflow.release_policy_failures(), 0)
 
     def test_block_comment_tokens_inside_powershell_strings_are_not_comments(self):
         """A quoted <# ... #> is literal data, not a block-comment opener."""
         script = 'Write-Output "<# literal #>"\ngo test -count=1 ./...'
-        self.assertIn("go test -count=1 ./...", workflow.active_powershell_lines(script))
+        self.assertIn(
+            "go test -count=1 ./...", workflow.active_powershell_lines(script)
+        )
 
     def test_codeql_pinned_go_setup_precedes_initialization_and_build(self):
         """CodeQL must not initialize or compile Go before setup-go runs."""
@@ -1508,7 +1723,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             path = workflows / "codeql.yml"
             original = path.read_text(encoding="utf-8")
             setup_start = original.index("      - name: Setup pinned Go\n")
@@ -1520,7 +1738,11 @@ class WorkflowPlatformGateTests(TestCase):
                 for target in ("Build Windows Go sources", "Analyze"):
                     with self.subTest(setup_moved_before=target):
                         insertion = without_setup.index(f"      - name: {target}\n")
-                        modified = without_setup[:insertion] + setup + without_setup[insertion:]
+                        modified = (
+                            without_setup[:insertion]
+                            + setup
+                            + without_setup[insertion:]
+                        )
                         self.assertNotEqual(modified, original)
                         path.write_text(modified, encoding="utf-8")
                         self.assertGreater(workflow.release_policy_failures(), 0)
@@ -1534,7 +1756,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             path = workflows / "codeql.yml"
             original = path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
@@ -1562,7 +1787,10 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             path = workflows / "codeql.yml"
             original = path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
@@ -1571,9 +1799,13 @@ class WorkflowPlatformGateTests(TestCase):
                     with self.subTest(variable=variable):
                         guard = f"if (${variable} -ne 0) {{ exit ${variable} }}"
                         lines = original.splitlines(keepends=True)
-                        guard_index = next(i for i, line in enumerate(lines) if line.strip() == guard)
+                        guard_index = next(
+                            i for i, line in enumerate(lines) if line.strip() == guard
+                        )
                         guard_line = lines.pop(guard_index)
-                        try_index = next(i for i, line in enumerate(lines) if line.strip() == "try {")
+                        try_index = next(
+                            i for i, line in enumerate(lines) if line.strip() == "try {"
+                        )
                         # Both guards still exist, but the moved guard checks
                         # the initialized zero before the Go command executes.
                         lines.insert(try_index, guard_line)
@@ -1589,24 +1821,38 @@ class WorkflowPlatformGateTests(TestCase):
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
             for filename in ("ci.yml", "codeql.yml", "dependency-review.yml"):
-                copyfile(workflow.ROOT / ".github" / "workflows" / filename, workflows / filename)
+                copyfile(
+                    workflow.ROOT / ".github" / "workflows" / filename,
+                    workflows / filename,
+                )
             path = workflows / "codeql.yml"
             original = path.read_text(encoding="utf-8")
             with patch.object(workflow, "ROOT", root):
                 self.assertEqual(workflow.release_policy_failures(), 0)
                 for command, capture in (
                     ("go test -count=1 ./...", "$goTestExitCode = $LASTEXITCODE"),
-                    ('go build -trimpath -o (Join-Path $env:RUNNER_TEMP "iris-codeql.exe") .',
-                     "$goBuildExitCode = $LASTEXITCODE"),
+                    (
+                        'go build -trimpath -o (Join-Path $env:RUNNER_TEMP "iris-codeql.exe") .',
+                        "$goBuildExitCode = $LASTEXITCODE",
+                    ),
                 ):
                     with self.subTest(command=command):
                         original_lines = original.splitlines(keepends=True)
-                        cmd_index = next(i for i, line in enumerate(original_lines) if line.strip() == command)
-                        capture_index = next(i for i, line in enumerate(original_lines) if line.strip() == capture)
+                        cmd_index = next(
+                            i
+                            for i, line in enumerate(original_lines)
+                            if line.strip() == command
+                        )
+                        capture_index = next(
+                            i
+                            for i, line in enumerate(original_lines)
+                            if line.strip() == capture
+                        )
                         self.assertEqual(capture_index, cmd_index + 1)
                         # Same active commands and guards, but status is stale.
                         original_lines[cmd_index], original_lines[capture_index] = (
-                            original_lines[capture_index], original_lines[cmd_index]
+                            original_lines[capture_index],
+                            original_lines[cmd_index],
                         )
                         path.write_text("".join(original_lines), encoding="utf-8")
                         self.assertGreater(workflow.release_policy_failures(), 0)
@@ -1633,19 +1879,27 @@ class WorkflowPlatformGateTests(TestCase):
                     "-File .\\IrisTools.ps1 -Action Test",
                     "gateExitCode",
                 ),
-                ("Windows amd64 race detector", "go test -race -count=1 ./...", "raceExitCode"),
+                (
+                    "Windows amd64 race detector",
+                    "go test -race -count=1 ./...",
+                    "raceExitCode",
+                ),
                 ("Windows Go tests", "go test -count=1 ./...", "goTestExitCode"),
             )
             with patch.object(workflow, "ROOT", root):
                 self.assertEqual(workflow.release_policy_failures(), 0)
                 for step_name, command, variable in cases:
                     start = original.index(f"      - name: {step_name}\n")
-                    script_start = original.index("        run: |\n", start) + len("        run: |\n")
+                    script_start = original.index("        run: |\n", start) + len(
+                        "        run: |\n"
+                    )
                     ends = [
-                        position for position in (
+                        position
+                        for position in (
                             original.find("\n      - name:", script_start),
                             original.find("\n  windows-", script_start),
-                        ) if position >= 0
+                        )
+                        if position >= 0
                     ]
                     end = min(ends) if ends else len(original)
                     script = original[script_start:end]
@@ -1659,17 +1913,21 @@ class WorkflowPlatformGateTests(TestCase):
                         with self.subTest(step=step_name, case=case):
                             changed = lines.copy()
                             target = next(
-                                i for i, line in enumerate(changed)
+                                i
+                                for i, line in enumerate(changed)
                                 if line.strip() == moved_line
                             )
                             moved = changed.pop(target)
                             command_index = next(
-                                i for i, line in enumerate(changed)
+                                i
+                                for i, line in enumerate(changed)
                                 if line.strip() == command
                             )
                             changed.insert(command_index, moved)
                             path.write_text(
-                                original[:script_start] + "".join(changed) + original[end:],
+                                original[:script_start]
+                                + "".join(changed)
+                                + original[end:],
                                 encoding="utf-8",
                             )
                             self.assertGreater(workflow.release_policy_failures(), 0)

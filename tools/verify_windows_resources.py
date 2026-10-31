@@ -68,7 +68,7 @@ def parse_pe(
         for _virtual_size, _virtual_address, raw_size, raw_offset in result.values()
         if raw_size
     )
-    for previous, current in zip(raw_ranges, raw_ranges[1:]):
+    for previous, current in zip(raw_ranges, raw_ranges[1:], strict=False):
         if current[0] < previous[1]:
             raise ValueError("overlapping PE section raw data")
     virtual_ranges = sorted(
@@ -76,7 +76,7 @@ def parse_pe(
         for virtual_size, virtual_address, _raw_size, _raw_offset in result.values()
         if virtual_size
     )
-    for previous, current in zip(virtual_ranges, virtual_ranges[1:]):
+    for previous, current in zip(virtual_ranges, virtual_ranges[1:], strict=False):
         if current[0] < previous[1]:
             raise ValueError("overlapping PE section virtual ranges")
     return (
@@ -96,7 +96,9 @@ def directory_entries(
     if base < raw_offset or base + 16 > section_end:
         raise ValueError("invalid resource directory offset")
     if struct.unpack_from("<I", data, base + 4)[0] != 0:
-        raise ValueError("resource directory timestamp prevents deterministic release output")
+        raise ValueError(
+            "resource directory timestamp prevents deterministic release output"
+        )
     named, ids = struct.unpack_from("<HH", data, base + 12)
     count = named + ids
     if base + 16 + count * 8 > section_end:
@@ -130,7 +132,10 @@ def directory_entries(
             raise ValueError("duplicate resource directory name")
         names.add(name)
         name_order.append(
-            tuple(int.from_bytes(name[i : i + 2], "little") for i in range(0, len(name), 2))
+            tuple(
+                int.from_bytes(name[i : i + 2], "little")
+                for i in range(0, len(name), 2)
+            )
         )
     if name_order != sorted(name_order):
         raise ValueError("unsorted resource directory names")
@@ -348,7 +353,9 @@ def verify_manifest(manifest: str, goarch: str) -> None:
         or len(long_paths) != 1
         or (long_paths[0].text or "").strip().lower() != "true"
     ):
-        raise SystemExit(f"application manifest Windows settings are invalid ({goarch})")
+        raise SystemExit(
+            f"application manifest Windows settings are invalid ({goarch})"
+        )
 
 
 def version_tuple(version: str) -> tuple[int, int, int, int]:
@@ -396,13 +403,21 @@ def verify_version_resource(payloads: list[bytes], version: str, goarch: str) ->
     if fields[6] != 0x0000003F:
         raise SystemExit(f"Windows version resource flag mask is invalid ({goarch})")
     if fields[9] != 1:
-        raise SystemExit(f"Windows version resource file type is not VFT_APP ({goarch})")
+        raise SystemExit(
+            f"Windows version resource file type is not VFT_APP ({goarch})"
+        )
     if fields[10] != 0:
-        raise SystemExit(f"Windows version resource application subtype is invalid ({goarch})")
+        raise SystemExit(
+            f"Windows version resource application subtype is invalid ({goarch})"
+        )
     if fields[7] & 0x00000003:
-        raise SystemExit(f"Windows version resource declares DEBUG or PRERELEASE ({goarch})")
+        raise SystemExit(
+            f"Windows version resource declares DEBUG or PRERELEASE ({goarch})"
+        )
     if fields[7] & ~0x00000007:
-        raise SystemExit(f"Windows version resource declares non-release flags ({goarch})")
+        raise SystemExit(
+            f"Windows version resource declares non-release flags ({goarch})"
+        )
     expected = version_tuple(version)
     expected_ms = (expected[0] << 16) | expected[1]
     expected_ls = (expected[2] << 16) | expected[3]
@@ -459,7 +474,9 @@ def verify_target(path: pathlib.Path, version: str, target) -> None:
         struct.unpack_from("<H", icon_groups[0], offset + 12)[0] not in icon_ids
         for offset in range(6, len(icon_groups[0]), 14)
     ):
-        raise SystemExit(f"application icon group references missing RT_ICON ID ({target.goarch})")
+        raise SystemExit(
+            f"application icon group references missing RT_ICON ID ({target.goarch})"
+        )
     icon_sizes = resource_icon_sizes(path)
     if any(
         icon_sizes.get(struct.unpack_from("<H", icon_groups[0], offset + 12)[0])
