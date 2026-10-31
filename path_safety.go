@@ -107,7 +107,9 @@ func safeOwnedFilePath(path string) bool {
 	}
 	info, err := os.Lstat(pathAbs)
 	if err == nil {
-		return !fileInfoIsReparse(info) && !info.IsDir()
+		// Only regular files may hold owned JSON data. FIFOs, sockets and
+		// device nodes can block reads or cause unexpected side effects.
+		return !fileInfoIsReparse(info) && info.Mode().IsRegular()
 	}
 	return os.IsNotExist(err)
 }

@@ -436,8 +436,10 @@ class InterfaceDetailTests(unittest.TestCase):
             + """
 if (formatChance(0.0833) !== '0,0833%') process.exit(1);
 if (formatChance(0.0042) !== '0,0042%') process.exit(2);
-if (formatChance(0.0000034986) !== '0,0000035%') process.exit(3);
+if (formatChance(0.0000034986) !== '0,0000034986%') process.exit(3);
 if (formatChance(0.0000000001) !== '0,0000000001%') process.exit(4);
+// Primary source: monster 135 / group 13531 / item 2406, both servers.
+if (formatChance(0.000125) !== '0,000125%') process.exit(6);
 if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
 """
         )

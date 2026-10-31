@@ -64,6 +64,26 @@ def assert_release_tree(root: Path, expected_branch: str) -> tuple[str, str]:
         raise FingerprintError("Unexpected release branch")
     if git(root, "status", "--porcelain=v1", "--untracked-files=all"):
         raise FingerprintError("Git working tree is not clean")
+    # Git status trusts assume-unchanged/skip-worktree index flags, which can
+    # hide modified tracked bytes from the release cleanliness check.
+    executable = shutil.which("git")
+    if not executable:
+        raise FingerprintError("Git executable is unavailable")
+    try:
+        index = subprocess.run(
+            [executable, "-C", str(root), "ls-files", "-v", "-z"],
+            check=False,
+            capture_output=True,
+            timeout=30,
+        )  # nosec B603
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise FingerprintError("Git index flags could not be checked") from error
+    if index.returncode:
+        raise FingerprintError("Git index flags could not be checked")
+    if any(
+        record[:2] != b"H " for record in index.stdout.split(b"\0") if record
+    ):
+        raise FingerprintError("Git index hides tracked source entries")
     return head, branch
 
 
@@ -215,6 +235,8 @@ def verify_fingerprint(root: Path, expected_branch: str) -> None:
     }
     if any(saved.get(key) != value for key, value in expected.items()):
         raise FingerprintError("Release fingerprint does not match the current source")
+    if saved.get("toolchain") != toolchain():
+        raise FingerprintError("Release toolchain differs from tested toolchain")
 
 
 def main() -> int:

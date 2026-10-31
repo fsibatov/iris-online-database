@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -108,18 +111,82 @@ var knownProfileKeys = map[string]struct{}{
 
 type userProfileWire userProfile
 
-func (p *userProfile) UnmarshalJSON(data []byte) error {
-	var wire userProfileWire
-	if err := json.Unmarshal(data, &wire); err != nil {
+// encoding/json accepts case-insensitive aliases for struct fields. Treat
+// those aliases as reserved too, so Extra cannot shadow canonical fields.
+func canonicalProfileKey(key string) (string, bool) {
+	if _, known := knownProfileKeys[key]; known {
+		return key, true
+	}
+	for canonical := range knownProfileKeys {
+		if strings.EqualFold(key, canonical) {
+			return canonical, true
+		}
+	}
+	return "", false
+}
+
+// Nested settings fields are decoded case-insensitively by encoding/json.
+// Reject multiple spellings of one preference before decoding the struct.
+func rejectConflictingSettingsAliases(data json.RawMessage) error {
+	// encoding/json accepts null for structs and strings, silently clearing
+	// preferences. Reject explicit nulls so a damaged disk profile can fall
+	// back to its valid backup instead of replacing user settings.
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return errors.New("null profile settings")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
+	seen := make(map[string]string, 3)
+	for key, value := range fields {
+		for _, canonical := range [...]string{"server", "theme", "view"} {
+			if !strings.EqualFold(key, canonical) {
+				continue
+			}
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return fmt.Errorf("null profile setting %q", key)
+			}
+			if previous, exists := seen[canonical]; exists {
+				return fmt.Errorf("conflicting settings fields %q and %q", previous, key)
+			}
+			seen[canonical] = key
+			break
+		}
+	}
+	return nil
+}
+
+func (p *userProfile) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+	// Two differently cased names can write the same struct field. Reject
+	// the ambiguous profile rather than making its value depend on JSON order.
+	seen := make(map[string]string, len(knownProfileKeys))
+	for key := range raw {
+		canonical, known := canonicalProfileKey(key)
+		if !known {
+			continue
+		}
+		if previous, exists := seen[canonical]; exists {
+			return fmt.Errorf("conflicting profile fields %q and %q", previous, key)
+		}
+		seen[canonical] = key
+		if canonical == "settings" {
+			if err := rejectConflictingSettingsAliases(raw[key]); err != nil {
+				return err
+			}
+		}
+	}
+	var wire userProfileWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
 	extra := make(map[string]json.RawMessage)
 	for key, value := range raw {
-		if _, known := knownProfileKeys[key]; known {
+		if _, known := canonicalProfileKey(key); known {
 			continue
 		}
 		extra[key] = append(json.RawMessage(nil), value...)
@@ -141,7 +208,7 @@ func (p userProfile) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	for key, value := range p.Extra {
-		if _, known := knownProfileKeys[key]; known || !json.Valid(value) {
+		if _, known := canonicalProfileKey(key); known || !json.Valid(value) {
 			continue
 		}
 		raw[key] = append(json.RawMessage(nil), value...)
@@ -193,14 +260,233 @@ func loadProfileFile(path string) (userProfile, error) {
 	if err != nil {
 		return userProfile{}, err
 	}
+	// encoding/json silently replaces malformed UTF-8 with U+FFFD. Reject
+	// damaged profile bytes so the last valid backup remains recoverable.
+	if !utf8.Valid(data) {
+		return userProfile{}, errors.New("profile JSON contains invalid UTF-8")
+	}
+	// Apply the same duplicate-key policy to disk as to API requests. A
+	// malformed primary profile must not silently override preferences or
+	// prevent recovery from the last valid backup.
+	if err := validateNoDuplicateJSONKeys(data); err != nil {
+		return userProfile{}, fmt.Errorf("некорректные ключи профиля: %w", err)
+	}
 	var profile userProfile
 	if err := json.Unmarshal(data, &profile); err != nil {
 		return userProfile{}, err
+	}
+	// The writer retains at most 64 unknown fields. Reject a primary that
+	// would silently lose fields during sanitization and hide a valid backup.
+	if len(profile.Extra) > 64 {
+		return userProfile{}, errors.New("слишком много дополнительных полей профиля")
+	}
+	// The writer cannot persist extension values larger than 64 KiB.
+	// Reject such a primary instead of silently dropping its metadata and
+	// hiding the last readable backup during profile sanitization.
+	for key, value := range profile.Extra {
+		if len([]rune(key)) > 80 {
+			return userProfile{}, fmt.Errorf("слишком длинное имя дополнительного поля профиля %q", key)
+		}
+		if len(value) > 64<<10 {
+			return userProfile{}, fmt.Errorf("слишком большое дополнительное поле профиля %q", key)
+		}
+	}
+	// The writer always persists all three preferences together. A partial
+	// on-disk settings object must not mask a complete backup; older profiles
+	// without a settings object are still supported.
+	if err := validateDiskSettingsCompleteness(data); err != nil {
+		return userProfile{}, err
+	}
+	// A disk recent-view entry may come from a newer client. Unknown nested
+	// fields cannot survive the fixed-shape writer and must not mask backup.
+	if err := validateDiskRecentViewFields(data); err != nil {
+		return userProfile{}, err
+	}
+	// The writer retains at most 5000 favorites and 50 history entries.
+	// An oversized primary would silently lose saved entries and mask backup.
+	if len(profile.Favorites) > 5000 {
+		return userProfile{}, errors.New("слишком много избранных записей в профиле")
+	}
+	// Unknown keys and repeated favorites are dropped by the writer. Reject
+	// lossy disk lists before they can conceal the last valid backup.
+	seenFavorites := make(map[string]struct{}, len(profile.Favorites))
+	for _, entry := range profile.Favorites {
+		value := strings.TrimSpace(entry)
+		if len([]rune(value)) > 80 || !validFavoriteKey(value) {
+			return userProfile{}, fmt.Errorf("некорректная избранная запись в профиле %q", entry)
+		}
+		if _, duplicate := seenFavorites[value]; duplicate {
+			return userProfile{}, errors.New("повторяющаяся избранная запись в профиле")
+		}
+		seenFavorites[value] = struct{}{}
+	}
+	if len(profile.History) > 50 {
+		return userProfile{}, errors.New("слишком много записей истории в профиле")
+	}
+	// The writer discards long or repeated history entries after trimming.
+	// A lossy disk primary must not conceal a valid backup.
+	seenHistory := make(map[string]struct{}, len(profile.History))
+	for _, entry := range profile.History {
+		value := strings.TrimSpace(entry)
+		// Empty, whitespace-only and JSON null entries are discarded by the
+		// writer. Reject a lossy primary so a valid backup remains recoverable.
+		if value == "" {
+			return userProfile{}, errors.New("пустая запись истории в профиле")
+		}
+		if len([]rune(value)) > 120 {
+			return userProfile{}, errors.New("слишком длинная запись истории в профиле")
+		}
+		if _, duplicate := seenHistory[value]; duplicate {
+			return userProfile{}, errors.New("повторяющаяся запись истории в профиле")
+		}
+		seenHistory[value] = struct{}{}
+	}
+	// The writer retains at most eight recent views. A longer disk list
+	// would be silently truncated during sanitization and could conceal
+	// the last intact backup.
+	if len(profile.RecentlyViewed) > 8 {
+		return userProfile{}, errors.New("слишком много недавно просмотренных записей в профиле")
+	}
+	// The writer deduplicates recent views by type, ID and normalized monster
+	// server. Reject duplicate disk identities rather than hiding a valid backup.
+	seenRecentViews := make(map[string]struct{}, len(profile.RecentlyViewed))
+	// The sanitizer discards recent views whose names exceed 160 Unicode
+	// characters after trimming. Do not let a lossy primary hide a backup.
+	for _, entry := range profile.RecentlyViewed {
+		entryType := strings.TrimSpace(entry.Type)
+		if (entryType != "item" && entryType != "recipe" && entryType != "monster" &&
+			entryType != "title" && entryType != "transformation") || entry.ID <= 0 || strings.TrimSpace(entry.Name) == "" {
+			return userProfile{}, errors.New("некорректная недавно просмотренная запись в профиле")
+		}
+		server := ""
+		if entryType == "monster" {
+			server = normalizeServerDataKey(entry.Server)
+			if server != "" && server != "kiss" && server != "original" {
+				return userProfile{}, errors.New("некорректный сервер недавно просмотренного монстра в профиле")
+			}
+		}
+		key := fmt.Sprintf("%s:%d:%s", entryType, entry.ID, server)
+		if _, exists := seenRecentViews[key]; exists {
+			return userProfile{}, errors.New("повторяющаяся недавно просмотренная запись в профиле")
+		}
+		seenRecentViews[key] = struct{}{}
+		if len([]rune(strings.TrimSpace(entry.Name))) > 160 {
+			return userProfile{}, errors.New("слишком длинное название недавно просмотренной записи в профиле")
+		}
+	}
+	// sanitizeRecentViews trims metadata before enforcing its 240-rune
+	// limit. Apply that same order so a lossless primary is not rejected
+	// in favor of a stale backup, while truly oversized data still falls back.
+	for _, entry := range profile.RecentlyViewed {
+		if len([]rune(strings.TrimSpace(entry.Meta))) > 240 {
+			return userProfile{}, errors.New("слишком длинное описание недавно просмотренной записи в профиле")
+		}
 	}
 	if profile.SchemaVersion <= 0 || profile.SchemaVersion > profileSchemaVersion {
 		return userProfile{}, errors.New("неподдерживаемая версия профиля")
 	}
 	return profile, nil
+}
+
+func validateDiskSettingsCompleteness(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for key, raw := range fields {
+		if !strings.EqualFold(key, "settings") {
+			continue
+		}
+		var settings map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &settings); err != nil {
+			return err
+		}
+		// Unknown nested settings cannot survive a rewrite through
+		// userSettings. Reject a lossy primary so its backup can be used.
+		for name := range settings {
+			if !strings.EqualFold(name, "server") && !strings.EqualFold(name, "theme") && !strings.EqualFold(name, "view") {
+				return fmt.Errorf("неизвестное поле настроек профиля %q", name)
+			}
+		}
+		for _, required := range [...]string{"server", "theme", "view"} {
+			found := false
+			for name := range settings {
+				if strings.EqualFold(name, required) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("неполные настройки профиля: отсутствует %s", required)
+			}
+		}
+		// The disk writer stores only these canonical preference values.
+		// Invalid values in a primary must not conceal a valid backup.
+		var decoded userSettings
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return err
+		}
+		if decoded.Server != "kiss" && decoded.Server != "original" {
+			return errors.New("некорректный сервер в профиле")
+		}
+		if decoded.Theme != "dark" && decoded.Theme != "light" {
+			return errors.New("некорректная тема в профиле")
+		}
+		if decoded.View != "cards" && decoded.View != "list" {
+			return errors.New("некорректный режим отображения в профиле")
+		}
+	}
+	return nil
+}
+
+func validateDiskRecentViewFields(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for key, raw := range fields {
+		if !strings.EqualFold(key, "recentlyViewed") {
+			continue
+		}
+		var entries []map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return err
+		}
+		for index, entry := range entries {
+			seen := make(map[string]string, len(entry))
+			for name := range entry {
+				canonical := ""
+				for _, allowed := range [...]string{"type", "id", "name", "meta", "server"} {
+					if strings.EqualFold(name, allowed) {
+						canonical = allowed
+						break
+					}
+				}
+				if canonical == "" {
+					return fmt.Errorf("неизвестное поле недавно просмотренной записи %d: %q", index, name)
+				}
+				if previous, duplicate := seen[canonical]; duplicate {
+					return fmt.Errorf("повторяющиеся поля недавно просмотренной записи %d: %q и %q", index, previous, name)
+				}
+				seen[canonical] = name
+			}
+			if metaField, exists := seen["meta"]; exists && bytes.Equal(bytes.TrimSpace(entry[metaField]), []byte("null")) {
+				return fmt.Errorf("null metadata for recently viewed entry %d", index)
+			}
+			if typeField, exists := seen["type"]; exists {
+				var entryType string
+				if err := json.Unmarshal(entry[typeField], &entryType); err != nil {
+					return err
+				}
+				if strings.TrimSpace(entryType) == "monster" {
+					if serverField, exists := seen["server"]; exists && bytes.Equal(bytes.TrimSpace(entry[serverField]), []byte("null")) {
+						return fmt.Errorf("null server for recently viewed monster %d", index)
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func readLimitedFile(path string, maximum int64) ([]byte, error) {
@@ -233,26 +519,29 @@ func sanitizeProfile(profile userProfile) userProfile {
 
 	profile.ItemFilters = map[string]string{}
 	profile.MonsterFilters = map[string]string{}
-	profile.Favorites = sanitizeStringList(profile.Favorites, 5000, 80, func(value string) bool {
-		parts := strings.Split(value, ":")
-		if len(parts) != 2 || (parts[0] != "item" && parts[0] != "monster" && parts[0] != "title" && parts[0] != "transformation") {
-			return false
-		}
-		if parts[1] == "" || len(parts[1]) > 20 {
-			return false
-		}
-		for _, r := range parts[1] {
-			if r < '0' || r > '9' {
-				return false
-			}
-		}
-		return true
-	})
+	profile.Favorites = sanitizeStringList(profile.Favorites, 5000, 80, validFavoriteKey)
 	profile.History = sanitizeStringList(profile.History, 50, 120, func(value string) bool { return value != "" })
 	profile.RecentlyViewed = sanitizeRecentViews(profile.RecentlyViewed, 8)
 	profile.Extra = sanitizeProfileExtra(profile.Extra)
 	profile.UpdatedAt = time.Now().UTC()
 	return profile
+}
+
+// Keep the disk validator and the profile writer on the same favorite-key policy.
+func validFavoriteKey(value string) bool {
+	parts := strings.Split(value, ":")
+	if len(parts) != 2 || (parts[0] != "item" && parts[0] != "monster" && parts[0] != "title" && parts[0] != "transformation") {
+		return false
+	}
+	if parts[1] == "" || len(parts[1]) > 20 {
+		return false
+	}
+	for _, r := range parts[1] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func sanitizeRecentViews(values []recentViewEntry, maxCount int) []recentViewEntry {
@@ -305,7 +594,7 @@ func sanitizeProfileExtra(values map[string]json.RawMessage) map[string]json.Raw
 		if len([]rune(key)) > 80 {
 			continue
 		}
-		if _, known := knownProfileKeys[key]; known {
+		if _, known := canonicalProfileKey(key); known {
 			continue
 		}
 		value := values[key]
@@ -351,8 +640,8 @@ func (p *profileStore) Get() userProfile {
 	copyProfile := p.profile
 	copyProfile.ItemFilters = copyStringMap(p.profile.ItemFilters)
 	copyProfile.MonsterFilters = copyStringMap(p.profile.MonsterFilters)
-	copyProfile.Favorites = append([]string(nil), p.profile.Favorites...)
-	copyProfile.History = append([]string(nil), p.profile.History...)
+	copyProfile.Favorites = append([]string{}, p.profile.Favorites...)
+	copyProfile.History = append([]string{}, p.profile.History...)
 	copyProfile.RecentlyViewed = append([]recentViewEntry{}, p.profile.RecentlyViewed...)
 	copyProfile.Extra = copyRawMessageMap(p.profile.Extra)
 	return copyProfile
@@ -375,6 +664,9 @@ func (p *profileStore) Replace(profile userProfile) error {
 	if profile.Extra == nil {
 		profile.Extra = copyRawMessageMap(p.profile.Extra)
 	} else {
+		// Merge preserved metadata into an owned copy. The caller may reuse
+		// its map even when the disk write fails.
+		profile.Extra = copyRawMessageMap(profile.Extra)
 		for key, value := range p.profile.Extra {
 			if _, exists := profile.Extra[key]; !exists {
 				profile.Extra[key] = append(json.RawMessage(nil), value...)
@@ -394,8 +686,8 @@ func (p *profileStore) Flush() error {
 	profile := p.profile
 	profile.ItemFilters = copyStringMap(p.profile.ItemFilters)
 	profile.MonsterFilters = copyStringMap(p.profile.MonsterFilters)
-	profile.Favorites = append([]string(nil), p.profile.Favorites...)
-	profile.History = append([]string(nil), p.profile.History...)
+	profile.Favorites = append([]string{}, p.profile.Favorites...)
+	profile.History = append([]string{}, p.profile.History...)
 	profile.RecentlyViewed = append([]recentViewEntry{}, p.profile.RecentlyViewed...)
 	profile.Extra = copyRawMessageMap(p.profile.Extra)
 	p.mu.RUnlock()
@@ -409,6 +701,18 @@ func atomicWriteJSON(path, backup string, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
+	}
+	// Persist only payloads that their respective disk loaders can read.
+	// Profile extensions and large maintenance queues can exceed the limits.
+	switch value.(type) {
+	case userProfile, *userProfile:
+		if int64(len(data)) > maxProfileBytes {
+			return fmt.Errorf("профиль превышает допустимый размер %d байт", maxProfileBytes)
+		}
+	case pendingDeleteList, *pendingDeleteList:
+		if int64(len(data)) > maxPendingListBytes {
+			return fmt.Errorf("очередь отложенной очистки превышает допустимый размер %d байт", maxPendingListBytes)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -439,12 +743,40 @@ func atomicWriteJSON(path, backup string, value any) error {
 	old := path + ".old"
 	_ = os.Remove(old)
 	if _, err := os.Stat(path); err == nil {
-		if err := atomicCopyFile(path, backup, 0o600); err != nil {
-			return err
+		// Profile writes must not replace a valid backup with a corrupt
+		// primary. This writer also stores maintenance metadata, which is
+		// not a profile and must retain its normal backup behavior.
+		backupPrevious := true
+		switch value.(type) {
+		case userProfile, *userProfile:
+			_, err := loadProfileFile(path)
+			backupPrevious = err == nil
+		case pendingDeleteList, *pendingDeleteList:
+			// Do not overwrite the last valid maintenance queue with a
+			// damaged primary when recovering from an interrupted write.
+			_, err := loadPendingDeleteList(path)
+			backupPrevious = err == nil
+		}
+		if backupPrevious {
+			if err := atomicCopyFile(path, backup, 0o600); err != nil {
+				return err
+			}
 		}
 		if err := os.Rename(path, old); err != nil {
 			return err
 		}
+	} else if os.IsNotExist(err) {
+		// A missing maintenance queue means the previous generation ended.
+		// Its backup must not become the fallback for a newly created queue:
+		// replaying it could delete files created at reused paths.
+		switch value.(type) {
+		case pendingDeleteList, *pendingDeleteList:
+			if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	} else {
+		return err
 	}
 	if err := os.Rename(tmpName, path); err != nil {
 		_ = os.Rename(old, path)
@@ -515,6 +847,141 @@ type pendingDeleteList struct {
 	Paths []string `json:"paths"`
 }
 
+func pendingDeletePathKey(path string) string {
+	var key strings.Builder
+	key.Grow(len(path))
+	for _, r := range path {
+		canonical := r
+		for folded := unicode.SimpleFold(r); folded != r; folded = unicode.SimpleFold(folded) {
+			if folded < canonical {
+				canonical = folded
+			}
+		}
+		key.WriteRune(canonical)
+	}
+	return key.String()
+}
+
+// Win32 device names remain reserved even with an extension and when used
+// as a component of a longer path. A queue containing one cannot be replayed.
+func windowsReservedDeviceComponent(component string) bool {
+	stem, _, _ := strings.Cut(component, ".")
+	// Win32 also resolves a DOS device alias when ASCII spaces precede the
+	// first extension separator (for example, "CON .txt").
+	stem = strings.TrimRight(stem, " ")
+	stem = strings.ToUpper(stem)
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	if len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) {
+		return stem[3] >= '1' && stem[3] <= '9'
+	}
+	for _, prefix := range [...]string{"COM", "LPT"} {
+		for _, suffix := range [...]string{"¹", "²", "³"} {
+			if stem == prefix+suffix {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func loadPendingDeleteList(path string) (pendingDeleteList, error) {
+	if !safeOwnedFilePath(path) {
+		return pendingDeleteList{}, errUnsafeDestructivePath
+	}
+	data, err := readLimitedFile(path, maxPendingListBytes)
+	if err != nil {
+		return pendingDeleteList{}, err
+	}
+	// encoding/json replaces malformed UTF-8 with U+FFFD, which changes
+	// queued filenames and can hide an intact backup. Reject the raw bytes.
+	if !utf8.Valid(data) {
+		return pendingDeleteList{}, errors.New("pending-delete JSON contains invalid UTF-8")
+	}
+	if err := validateNoDuplicateJSONKeys(data); err != nil {
+		return pendingDeleteList{}, err
+	}
+	// A valid JSON document is not necessarily a valid maintenance queue:
+	// null, {}, and {"paths":null} would silently discard queued cleanup
+	// and prevent recovery from an intact backup. Preserve legacy casing,
+	// but reject ambiguous case-insensitive aliases.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return pendingDeleteList{}, err
+	}
+	var rawPaths json.RawMessage
+	for key, value := range fields {
+		// A future queue format may add safety constraints. Never execute
+		// paths while silently ignoring unknown envelope fields.
+		if !strings.EqualFold(key, "paths") {
+			return pendingDeleteList{}, fmt.Errorf("unknown pending-delete field %q", key)
+		}
+		if rawPaths != nil {
+			return pendingDeleteList{}, errors.New("conflicting pending-delete paths fields")
+		}
+		rawPaths = value
+	}
+	array := bytes.TrimSpace(rawPaths)
+	if len(array) == 0 || array[0] != '[' {
+		return pendingDeleteList{}, errors.New("pending-delete paths must be an array")
+	}
+	var list pendingDeleteList
+	if err := json.Unmarshal(array, &list.Paths); err != nil {
+		return pendingDeleteList{}, err
+	}
+	// JSON null decodes into an empty string in []string. An empty entry
+	// makes this primary unusable: accepting it would hide a valid backup
+	// and silently discard pending deletions.
+	seenPaths := make(map[string]struct{}, len(list.Paths))
+	for _, candidate := range list.Paths {
+		// The queue and its backup are maintenance metadata, never cleanup
+		// targets. A self-referential primary must not mask a valid backup.
+		if sameFilePath(candidate, path) || sameFilePath(candidate, path+".bak") {
+			return pendingDeleteList{}, errors.New("pending-delete paths must not reference queue metadata")
+		}
+		if strings.TrimSpace(candidate) == "" {
+			return pendingDeleteList{}, errors.New("pending-delete paths must not contain blank entries")
+		}
+		// appendPendingDeletes stores absolute paths only. A relative entry
+		// cannot be safely replayed and must not hide a valid backup queue.
+		if !filepath.IsAbs(candidate) {
+			return pendingDeleteList{}, errors.New("pending-delete paths must be absolute")
+		}
+		// The maintenance writer persists cleaned paths. A non-canonical
+		// primary may mask the last valid backup even though its entries
+		// cannot be safely replayed as written.
+		if filepath.Clean(candidate) != candidate {
+			return pendingDeleteList{}, errors.New("pending-delete paths must be canonical")
+		}
+		// Windows filenames cannot contain ASCII control characters (including
+		// NUL). Reject unusable primary paths so a valid backup can recover.
+		if strings.IndexFunc(candidate, func(r rune) bool { return r < 0x20 }) >= 0 {
+			return pendingDeleteList{}, errors.New("pending-delete paths must not contain control characters")
+		}
+		// Win32 cannot open filenames containing these characters. Exclude
+		// the drive prefix (C:) but reject invalid names in all components.
+		if strings.ContainsAny(candidate[len(filepath.VolumeName(candidate)):], `<>:"|?*`) {
+			return pendingDeleteList{}, errors.New("pending-delete paths contain reserved Windows characters")
+		}
+		for _, component := range strings.Split(candidate[len(filepath.VolumeName(candidate)):], string(filepath.Separator)) {
+			if strings.HasSuffix(component, ".") || strings.HasSuffix(component, " ") {
+				return pendingDeleteList{}, errors.New("pending-delete paths contain Windows-trimmed components")
+			}
+			if windowsReservedDeviceComponent(component) {
+				return pendingDeleteList{}, errors.New("pending-delete paths contain reserved Windows device names")
+			}
+		}
+		key := pendingDeletePathKey(candidate)
+		if _, duplicate := seenPaths[key]; duplicate {
+			return pendingDeleteList{}, errors.New("pending-delete paths must be unique")
+		}
+		seenPaths[key] = struct{}{}
+	}
+	return list, nil
+}
+
 func runMaintenance(paths appPaths, currentExecutable string, logger interface{ Printf(string, ...any) }) {
 	allowed := []string{paths.Cache, paths.Temp, paths.Logs, paths.Updates, paths.Versions}
 	processPendingDeletes(paths.PendingDelete, allowed, currentExecutable, logger)
@@ -531,14 +998,17 @@ func processPendingDeletes(listPath string, allowedRoots []string, currentExecut
 	if !safeOwnedFilePath(listPath) {
 		return
 	}
-	data, err := readLimitedFile(listPath, maxPendingListBytes)
+	list, err := loadPendingDeleteList(listPath)
 	if err != nil {
-		return
-	}
-	var list pendingDeleteList
-	if json.Unmarshal(data, &list) != nil {
-		_ = os.Remove(listPath)
-		return
+		// A missing primary normally means cleanup completed. Replaying
+		// an old backup could delete newly created files at reused paths.
+		if errors.Is(err, fs.ErrNotExist) {
+			return
+		}
+		list, err = loadPendingDeleteList(listPath + ".bak")
+		if err != nil {
+			return
+		}
 	}
 	remaining := make([]string, 0, len(list.Paths))
 	for _, candidate := range list.Paths {
@@ -563,11 +1033,12 @@ func appendPendingDeletes(listPath string, paths []string, allowedRoots []string
 		return
 	}
 	combined := make([]string, 0, len(paths)+8)
-	if data, err := readLimitedFile(listPath, maxPendingListBytes); err == nil {
-		var existing pendingDeleteList
-		if json.Unmarshal(data, &existing) == nil {
-			combined = append(combined, existing.Paths...)
-		}
+	existing, err := loadPendingDeleteList(listPath)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		existing, err = loadPendingDeleteList(listPath + ".bak")
+	}
+	if err == nil {
+		combined = append(combined, existing.Paths...)
 	}
 	combined = append(combined, paths...)
 	seen := make(map[string]struct{}, len(combined))
@@ -577,10 +1048,11 @@ func appendPendingDeletes(listPath string, paths []string, allowedRoots []string
 		if !ok {
 			continue
 		}
-		if _, exists := seen[absolute]; exists {
+		key := pendingDeletePathKey(absolute)
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[absolute] = struct{}{}
+		seen[key] = struct{}{}
 		filtered = append(filtered, absolute)
 	}
 	if len(filtered) == 0 {
@@ -684,21 +1156,57 @@ func cleanupVersions(root string, keep int, currentExecutable string, logger int
 		return nil
 	}
 	type versionEntry struct {
-		path string
-		mod  time.Time
+		path    string
+		mod     time.Time
+		version string
 	}
 	versions := make([]versionEntry, 0, len(entries))
 	failed := make([]string, 0, 4)
 	for _, entry := range entries {
 		path := filepath.Join(rootAbs, entry.Name())
 		info, err := os.Lstat(path)
-		if err != nil || fileInfoIsReparse(info) {
+		// Retention applies to version directories, not unrelated files.
+		// Counting loose files could evict valid rollback versions.
+		if err != nil || fileInfoIsReparse(info) || !info.IsDir() {
 			continue
 		}
-		versions = append(versions, versionEntry{path: path, mod: info.ModTime()})
+		// Only recognized version names are rollback candidates. A staging
+		// or metadata directory must not consume retention slots or be deleted.
+		version, err := normalizeVersion(entry.Name())
+		if err != nil {
+			continue
+		}
+		// The currently running version is protected from deletion, but it
+		// must not consume a slot reserved for previous rollback versions.
+		if currentExecutable != "" && insideRoot(currentExecutable, path) {
+			continue
+		}
+		versions = append(versions, versionEntry{path: path, mod: info.ModTime(), version: version})
 	}
-	sort.Slice(versions, func(i, j int) bool { return versions[i].mod.After(versions[j].mod) })
-	for _, version := range versions[min(keep, len(versions)):] {
+	sort.Slice(versions, func(i, j int) bool {
+		if !versions[i].mod.Equal(versions[j].mod) {
+			return versions[i].mod.After(versions[j].mod)
+		}
+		// Timestamp resolution can make successive rollback directories
+		// indistinguishable. Prefer the higher version instead of evicting
+		// it according to ReadDir's lexical enumeration order.
+		left, right := filepath.Base(versions[i].path), filepath.Base(versions[j].path)
+		if cmp := compareVersions(left, right); cmp != 0 {
+			return cmp > 0
+		}
+		return left > right
+	})
+	// Aliases such as 3.0, v3.0 and 03.0 describe the same rollback
+	// version. Keep the newest directory for each distinct version; older
+	// aliases must not evict a different recoverable version.
+	retained := make(map[string]struct{}, min(max(keep, 0), len(versions)))
+	for _, version := range versions {
+		if len(retained) < keep {
+			if _, exists := retained[version.version]; !exists {
+				retained[version.version] = struct{}{}
+				continue
+			}
+		}
 		if err := safeRemoveAll(version.path, rootAbs, currentExecutable); err != nil {
 			failed = append(failed, version.path)
 		}

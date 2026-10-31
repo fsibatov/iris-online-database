@@ -46,7 +46,7 @@ func (a *application) shutdown() error {
 		}
 	}
 	if a.cache != nil {
-		a.cache.Clear()
+		a.cache.Close()
 	}
 	if a.logWriter != nil {
 		_ = a.logWriter.Close()
@@ -79,6 +79,17 @@ func (a *application) handleUserData(w http.ResponseWriter, r *http.Request) {
 		}
 		var profile userProfile
 		if !decodeJSONRequest(w, r, &profile, 1<<20) {
+			return
+		}
+		// A shutdown or cancellation can begin while the request body is
+		// being read. Do not persist a profile decoded after that point.
+		// Application shutdown takes precedence over request cancellation.
+		if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+			http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+			return
+		}
+		if r.Context().Err() != nil {
+			http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
 			return
 		}
 		if err := a.profile.Replace(profile); err != nil {

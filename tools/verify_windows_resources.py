@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 import struct
+from xml.etree import ElementTree
 
 from release_targets import RELEASE_TARGETS
 
@@ -30,9 +31,14 @@ def parse_pe(
     timestamp = struct.unpack_from("<I", data, pe + 8)[0]
     optional_size = struct.unpack_from("<H", data, pe + 20)[0]
     optional = pe + 24
-    if optional + optional_size > len(data):
+    if optional_size < 72 or optional + optional_size > len(data):
         raise ValueError("truncated optional header")
     magic = struct.unpack_from("<H", data, optional)[0]
+    minimum_size = {0x10B: 96, 0x20B: 112}.get(magic)
+    if minimum_size is None:
+        raise ValueError("unsupported PE optional header magic")
+    if optional_size < minimum_size:
+        raise ValueError("truncated PE optional header")
     subsystem = struct.unpack_from("<H", data, optional + 68)[0]
     dll_characteristics = struct.unpack_from("<H", data, optional + 70)[0]
     section_off = optional + optional_size
@@ -41,11 +47,38 @@ def parse_pe(
         off = section_off + index * 40
         if off + 40 > len(data):
             raise ValueError("truncated section table")
-        name = data[off : off + 8].split(b"\0", 1)[0].decode("ascii", "replace")
+        raw_name = data[off : off + 8]
+        if b"\0" in raw_name and raw_name.split(b"\0", 1)[1].strip(b"\0"):
+            raise ValueError("invalid PE section name padding")
+        name = raw_name.split(b"\0", 1)[0].decode("ascii", "replace")
         virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
             "<IIII", data, off + 8
         )
+        if raw_size and raw_offset < section_off + sections * 40:
+            raise ValueError("PE section raw data overlaps PE headers")
+        if raw_size and raw_offset + raw_size > len(data):
+            raise ValueError("PE section raw data extends beyond file")
+        if virtual_size and virtual_address + virtual_size > 0x100000000:
+            raise ValueError("PE section virtual range exceeds 32-bit RVA space")
+        if name in result:
+            raise ValueError("duplicate PE section name")
         result[name] = (virtual_size, virtual_address, raw_size, raw_offset)
+    raw_ranges = sorted(
+        (raw_offset, raw_offset + raw_size)
+        for _virtual_size, _virtual_address, raw_size, raw_offset in result.values()
+        if raw_size
+    )
+    for previous, current in zip(raw_ranges, raw_ranges[1:]):
+        if current[0] < previous[1]:
+            raise ValueError("overlapping PE section raw data")
+    virtual_ranges = sorted(
+        (virtual_address, virtual_address + virtual_size)
+        for virtual_size, virtual_address, _raw_size, _raw_offset in result.values()
+        if virtual_size
+    )
+    for previous, current in zip(virtual_ranges, virtual_ranges[1:]):
+        if current[0] < previous[1]:
+            raise ValueError("overlapping PE section virtual ranges")
     return (
         machine,
         result,
@@ -62,13 +95,51 @@ def directory_entries(
     base = raw_offset + relative
     if base < raw_offset or base + 16 > section_end:
         raise ValueError("invalid resource directory offset")
+    if struct.unpack_from("<I", data, base + 4)[0] != 0:
+        raise ValueError("resource directory timestamp prevents deterministic release output")
     named, ids = struct.unpack_from("<HH", data, base + 12)
     count = named + ids
     if base + 16 + count * 8 > section_end:
         raise ValueError("truncated resource directory")
-    return [
+    entries = [
         struct.unpack_from("<II", data, base + 16 + index * 8) for index in range(count)
     ]
+    if any(
+        bool(name_or_id & 0x80000000) != (index < named)
+        for index, (name_or_id, _target) in enumerate(entries)
+    ):
+        raise ValueError("invalid resource directory name/ID layout")
+    if any(
+        name_or_id & 0x7FFF0000
+        for name_or_id, _target in entries
+        if name_or_id & 0x80000000 == 0
+    ):
+        raise ValueError("invalid resource directory numeric ID")
+    names: set[bytes] = set()
+    name_order: list[tuple[int, ...]] = []
+    for name_or_id, _target in entries[:named]:
+        name_offset = raw_offset + (name_or_id & 0x7FFFFFFF)
+        if name_offset < raw_offset or name_offset + 2 > section_end:
+            raise ValueError("invalid resource directory name offset")
+        name_length = struct.unpack_from("<H", data, name_offset)[0]
+        name_end = name_offset + 2 + name_length * 2
+        if name_end > section_end:
+            raise ValueError("truncated resource directory name")
+        name = bytes(data[name_offset + 2 : name_end])
+        if name in names:
+            raise ValueError("duplicate resource directory name")
+        names.add(name)
+        name_order.append(
+            tuple(int.from_bytes(name[i : i + 2], "little") for i in range(0, len(name), 2))
+        )
+    if name_order != sorted(name_order):
+        raise ValueError("unsorted resource directory names")
+    numeric_ids = [name_or_id for name_or_id, _target in entries[named:]]
+    if numeric_ids != sorted(numeric_ids):
+        raise ValueError("unsorted resource directory numeric IDs")
+    if len({name_or_id for name_or_id, _target in entries}) != count:
+        raise ValueError("duplicate resource directory entry")
+    return entries
 
 
 def resource_payloads(path: pathlib.Path, wanted_type: int) -> list[bytes]:
@@ -77,13 +148,14 @@ def resource_payloads(path: pathlib.Path, wanted_type: int) -> list[bytes]:
         return []
     _virtual_size, virtual_address, raw_size, raw_offset = sections[".rsrc"]
     section_end = raw_offset + raw_size
+    directory_end = min(section_end, raw_offset + _virtual_size)
     if section_end > len(data):
         raise ValueError("truncated resource section")
     type_target = next(
         (
             target
             for name_or_id, target in directory_entries(
-                data, raw_offset, section_end, 0
+                data, raw_offset, directory_end, 0
             )
             if name_or_id == wanted_type
         ),
@@ -93,38 +165,143 @@ def resource_payloads(path: pathlib.Path, wanted_type: int) -> list[bytes]:
         return []
     payloads: list[bytes] = []
     for _resource_id, id_target in directory_entries(
-        data, raw_offset, section_end, type_target & 0x7FFFFFFF
+        data, raw_offset, directory_end, type_target & 0x7FFFFFFF
     ):
         if id_target & 0x80000000 == 0:
             raise ValueError("malformed resource id directory")
         for _language, data_target in directory_entries(
-            data, raw_offset, section_end, id_target & 0x7FFFFFFF
+            data, raw_offset, directory_end, id_target & 0x7FFFFFFF
         ):
             if data_target & 0x80000000:
                 raise ValueError("unexpected nested resource directory")
             entry = raw_offset + data_target
-            if entry < raw_offset or entry + 16 > section_end:
+            if entry < raw_offset or entry + 16 > directory_end:
                 raise ValueError("invalid resource data entry")
-            rva, size, _codepage, _reserved = struct.unpack_from("<IIII", data, entry)
+            rva, size, _codepage, reserved = struct.unpack_from("<IIII", data, entry)
+            if reserved != 0:
+                raise ValueError("invalid resource data entry reserved field")
             start = raw_offset + (rva - virtual_address)
             end = start + size
-            if rva < virtual_address or start < raw_offset or end > section_end:
+            if rva < virtual_address or rva + size > virtual_address + _virtual_size:
+                raise ValueError("resource payload exceeds section virtual size")
+            if start < raw_offset or end > section_end:
                 raise ValueError("invalid resource payload RVA")
             payloads.append(data[start:end])
     return payloads
+
+
+def resource_icon_ids(path: pathlib.Path) -> set[int]:
+    """Return numeric RT_ICON IDs for cross-checking group image references."""
+    _machine, sections, data, _timestamp, _magic, _flags = parse_pe(path)
+    if ".rsrc" not in sections:
+        return set()
+    virtual_size, _virtual_address, raw_size, raw_offset = sections[".rsrc"]
+    section_end = raw_offset + raw_size
+    directory_end = min(section_end, raw_offset + virtual_size)
+    if section_end > len(data):
+        raise ValueError("truncated resource section")
+    icon_type = next(
+        (
+            target
+            for name_or_id, target in directory_entries(
+                data, raw_offset, directory_end, 0
+            )
+            if name_or_id == 3
+        ),
+        None,
+    )
+    if icon_type is None or icon_type & 0x80000000 == 0:
+        return set()
+    return {
+        name_or_id
+        for name_or_id, _target in directory_entries(
+            data, raw_offset, directory_end, icon_type & 0x7FFFFFFF
+        )
+        if name_or_id & 0x80000000 == 0
+    }
+
+
+def resource_icon_sizes(path: pathlib.Path) -> dict[int, set[int]]:
+    """Map numeric RT_ICON IDs to their payload sizes across languages."""
+    _machine, sections, data, _timestamp, _magic, _flags = parse_pe(path)
+    if ".rsrc" not in sections:
+        return {}
+    virtual_size, virtual_address, raw_size, raw_offset = sections[".rsrc"]
+    section_end = raw_offset + raw_size
+    directory_end = min(section_end, raw_offset + virtual_size)
+    if section_end > len(data):
+        raise ValueError("truncated resource section")
+    icon_type = next(
+        (
+            target
+            for name_or_id, target in directory_entries(
+                data, raw_offset, directory_end, 0
+            )
+            if name_or_id == 3
+        ),
+        None,
+    )
+    if icon_type is None or icon_type & 0x80000000 == 0:
+        return {}
+    sizes: dict[int, set[int]] = {}
+    for icon_id, id_target in directory_entries(
+        data, raw_offset, directory_end, icon_type & 0x7FFFFFFF
+    ):
+        if icon_id & 0x80000000:
+            continue
+        if id_target & 0x80000000 == 0:
+            raise ValueError("malformed resource id directory")
+        for _language, data_target in directory_entries(
+            data, raw_offset, directory_end, id_target & 0x7FFFFFFF
+        ):
+            if data_target & 0x80000000:
+                raise ValueError("unexpected nested resource directory")
+            entry = raw_offset + data_target
+            if entry < raw_offset or entry + 16 > directory_end:
+                raise ValueError("invalid resource data entry")
+            rva, size, _codepage, reserved = struct.unpack_from("<IIII", data, entry)
+            start = raw_offset + (rva - virtual_address)
+            if (
+                reserved
+                or rva < virtual_address
+                or start < raw_offset
+                or start + size > section_end
+                or rva + size > virtual_address + virtual_size
+            ):
+                raise ValueError("invalid RT_ICON resource data entry")
+            sizes.setdefault(icon_id, set()).add(size)
+    return sizes
 
 
 def resource_type_ids(path: pathlib.Path) -> set[int]:
     _machine, sections, data, _timestamp, _magic, _flags = parse_pe(path)
     if ".rsrc" not in sections:
         return set()
-    _virtual_size, _virtual_address, raw_size, raw_offset = sections[".rsrc"]
-    section_end = raw_offset + raw_size
+    virtual_size, _virtual_address, raw_size, raw_offset = sections[".rsrc"]
+    section_end = min(raw_offset + raw_size, raw_offset + virtual_size)
     return {
         name_or_id
         for name_or_id, _target in directory_entries(data, raw_offset, section_end, 0)
         if name_or_id & 0x80000000 == 0
     }
+
+
+def verify_icon_group(payload: bytes, goarch: str) -> None:
+    """Validate the GRPICONDIR header and complete, nonempty image references."""
+    if len(payload) < 6:
+        raise SystemExit(f"application icon group is invalid ({goarch})")
+    reserved, kind, count = struct.unpack_from("<HHH", payload)
+    if reserved != 0 or kind != 1 or count == 0 or len(payload) != 6 + 14 * count:
+        raise SystemExit(f"application icon group is invalid ({goarch})")
+    image_ids: set[int] = set()
+    for offset in range(6, len(payload), 14):
+        if payload[offset + 3] != 0:
+            raise SystemExit(f"application icon group entry is invalid ({goarch})")
+        image_size = struct.unpack_from("<I", payload, offset + 8)[0]
+        image_id = struct.unpack_from("<H", payload, offset + 12)[0]
+        if image_size == 0 or image_id == 0 or image_id in image_ids:
+            raise SystemExit(f"application icon group entry is invalid ({goarch})")
+        image_ids.add(image_id)
 
 
 def decode_manifest(payload: bytes) -> str:
@@ -134,6 +311,44 @@ def decode_manifest(payload: bytes) -> str:
         except UnicodeDecodeError:
             continue
     raise ValueError("manifest is not valid Unicode")
+
+
+def verify_manifest(manifest: str, goarch: str) -> None:
+    """Check effective manifest elements, not strings in comments or descriptions."""
+    if (
+        len(manifest) > 131072
+        or "<!DOCTYPE" in manifest.upper()
+        or "<!ENTITY" in manifest.upper()
+    ):
+        raise SystemExit(f"application manifest XML is unsafe ({goarch})")
+    try:
+        root = ElementTree.fromstring(manifest)
+    except ElementTree.ParseError as error:
+        raise SystemExit(f"application manifest XML is invalid ({goarch})") from error
+
+    asm1 = "{urn:schemas-microsoft-com:asm.v1}"
+    asm3 = "{urn:schemas-microsoft-com:asm.v3}"
+    windows_2016 = "{http://schemas.microsoft.com/SMI/2016/WindowsSettings}"
+    levels = root.findall(
+        f"./{asm3}trustInfo/{asm3}security/{asm3}requestedPrivileges/"
+        f"{asm3}requestedExecutionLevel"
+    )
+    settings = root.findall(f"./{asm3}application/{asm3}windowsSettings")
+    if root.tag != f"{asm1}assembly" or len(levels) != 1 or len(settings) != 1:
+        raise SystemExit(f"application manifest structure is invalid ({goarch})")
+    if levels[0].get("level") != "asInvoker" or levels[0].get("uiAccess") != "false":
+        raise SystemExit(f"application manifest privilege level is invalid ({goarch})")
+
+    dpi = settings[0].findall(f"{windows_2016}dpiAwareness")
+    long_paths = settings[0].findall(f"{windows_2016}longPathAware")
+    if (
+        len(dpi) != 1
+        or [part.strip().lower() for part in (dpi[0].text or "").split(",")]
+        != ["permonitorv2", "permonitor"]
+        or len(long_paths) != 1
+        or (long_paths[0].text or "").strip().lower() != "true"
+    ):
+        raise SystemExit(f"application manifest Windows settings are invalid ({goarch})")
 
 
 def version_tuple(version: str) -> tuple[int, int, int, int]:
@@ -176,6 +391,18 @@ def verify_version_resource(payloads: list[bytes], version: str, goarch: str) ->
         raise SystemExit(f"VS_FIXEDFILEINFO is missing or ambiguous ({goarch})")
 
     fields = struct.unpack_from("<13I", payload, offsets[0])
+    if fields[1] != 0x00010000:
+        raise SystemExit(f"VS_FIXEDFILEINFO structure revision is invalid ({goarch})")
+    if fields[6] != 0x0000003F:
+        raise SystemExit(f"Windows version resource flag mask is invalid ({goarch})")
+    if fields[9] != 1:
+        raise SystemExit(f"Windows version resource file type is not VFT_APP ({goarch})")
+    if fields[10] != 0:
+        raise SystemExit(f"Windows version resource application subtype is invalid ({goarch})")
+    if fields[7] & 0x00000003:
+        raise SystemExit(f"Windows version resource declares DEBUG or PRERELEASE ({goarch})")
+    if fields[7] & ~0x00000007:
+        raise SystemExit(f"Windows version resource declares non-release flags ({goarch})")
     expected = version_tuple(version)
     expected_ms = (expected[0] << 16) | expected[1]
     expected_ls = (expected[2] << 16) | expected[3]
@@ -220,16 +447,32 @@ def verify_target(path: pathlib.Path, version: str, target) -> None:
         raise SystemExit(
             f"required Windows resource types are missing ({target.goarch})"
         )
-    if len(resource_payloads(path, 14)) != 1:
+    icon_images = resource_payloads(path, 3)
+    if not icon_images or any(not image for image in icon_images):
+        raise SystemExit(f"application icon image is missing ({target.goarch})")
+    icon_groups = resource_payloads(path, 14)
+    if len(icon_groups) != 1:
         raise SystemExit(f"application icon group is missing ({target.goarch})")
+    verify_icon_group(icon_groups[0], target.goarch)
+    icon_ids = resource_icon_ids(path)
+    if any(
+        struct.unpack_from("<H", icon_groups[0], offset + 12)[0] not in icon_ids
+        for offset in range(6, len(icon_groups[0]), 14)
+    ):
+        raise SystemExit(f"application icon group references missing RT_ICON ID ({target.goarch})")
+    icon_sizes = resource_icon_sizes(path)
+    if any(
+        icon_sizes.get(struct.unpack_from("<H", icon_groups[0], offset + 12)[0])
+        != {struct.unpack_from("<I", icon_groups[0], offset + 8)[0]}
+        for offset in range(6, len(icon_groups[0]), 14)
+    ):
+        raise SystemExit(
+            f"application icon group image size mismatches RT_ICON ({target.goarch})"
+        )
     manifests = resource_payloads(path, 24)
     if len(manifests) != 1:
         raise SystemExit(f"application manifest is missing ({target.goarch})")
-    manifest = decode_manifest(manifests[0])
-    lowered_manifest = manifest.lower()
-    for marker in ("permonitorv2", "asinvoker", "longpathaware"):
-        if marker not in lowered_manifest:
-            raise SystemExit(f"application manifest is incomplete ({target.goarch})")
+    verify_manifest(decode_manifest(manifests[0]), target.goarch)
     verify_version_resource(resource_payloads(path, 16), version, target.goarch)
 
     hardening = ["ASLR", "NX", "Terminal Server aware"]

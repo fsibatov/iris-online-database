@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def expected_versions(path: Path) -> dict[str, str]:
     result: dict[str, str] = {}
+    normalized_names: set[str] = set()
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -18,8 +20,10 @@ def expected_versions(path: Path) -> dict[str, str]:
         if line.count("==") != 1:
             raise ValueError("requirements must contain exact direct pins")
         package, version = (part.strip() for part in line.split("==", 1))
-        if not package or not version or package.lower() in result:
+        canonical = re.sub(r"[-_.]+", "-", package).lower()
+        if not package or not version or canonical in normalized_names:
             raise ValueError("requirements contain an invalid or duplicate pin")
+        normalized_names.add(canonical)
         result[package.lower()] = version
     if not result:
         raise ValueError("requirements contain no direct pins")

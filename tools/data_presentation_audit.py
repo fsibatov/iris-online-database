@@ -292,6 +292,34 @@ def audit() -> dict:
         set(abilities.get("items", {})) - set(base_items_by_id), key=int
     )
     monster_ids = {str(monster["id"]) for monster in game["monsters"]}
+    # Report unresolved direct-drop references without changing game values.
+    # A missing group is not proof of a zero chance: primary client tables
+    # must be inspected before correcting or suppressing its source rule.
+    unresolved_direct_drop_groups = {}
+    for server_key, server in sorted(game["servers"].items()):
+        known_groups = server.get("dropLists", {})
+        unresolved = []
+        for monster_id, slots in server.get("directSlots", {}).items():
+            for slot in slots:
+                for choice in slot.get("choices", []):
+                    group_id = choice.get("groupId")
+                    if str(group_id) not in known_groups:
+                        unresolved.append({
+                            "monsterId": int(monster_id),
+                            "sourceLine": slot.get("sourceLine", 0),
+                            "groupId": group_id,
+                        })
+        unresolved_direct_drop_groups[server_key] = sorted(
+            unresolved,
+            key=lambda row: (row["monsterId"], row["sourceLine"], row["groupId"]),
+        )
+    unresolved_direct_drop_monsters = {
+        server_key: sorted(
+            (int(monster_id) for monster_id in server.get("directSlots", {})
+             if monster_id not in monster_ids)
+        )
+        for server_key, server in sorted(game["servers"].items())
+    }
     monster_supplement_ids_missing = sorted(
         set(monster_details.get("monsters", {})) - monster_ids, key=int
     )
@@ -842,6 +870,8 @@ def audit() -> dict:
         "chestContentsSha256": hashlib.sha256(CHEST_CONTENTS.read_bytes()).hexdigest(),
         "items": len(game["items"]),
         "monsters": len(game["monsters"]),
+        "unresolvedDirectDropGroupsByServer": unresolved_direct_drop_groups,
+        "unresolvedDirectDropMonstersByServer": unresolved_direct_drop_monsters,
         "setsInEmbedded": len(embedded_sets),
         "setsWithPublishedMembers": len(embedded_member_set_ids),
         "setsWithEffectDefinitions": len(sets["sets"]),

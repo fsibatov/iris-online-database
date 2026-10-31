@@ -6,27 +6,39 @@ import json
 import os
 import re
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from frontend_smoke_test import playwright_failure_category
 from playwright.sync_api import Error as PlaywrightError
-from release_fingerprint import FingerprintError, assert_release_tree, source_hash
+from release_fingerprint import (
+    FingerprintError,
+    assert_release_tree,
+    source_hash,
+    verify_fingerprint,
+    write_fingerprint,
+)
 from release_targets import RELEASE_TARGETS
 from repository_audit import python_mode_violation
 from verify_executables import (
     EXPECTED_METADATA_MARKERS,
     expected_metadata_markers,
     missing_metadata_categories,
+    verify_executable,
 )
 from verify_release_assets import expected_asset_names, verify_release_assets
-from verify_windows_resources import verify_version_resource, version_tuple
+from verify_python_environment import expected_versions
+from verify_windows_resources import directory_entries, parse_pe, resource_icon_ids, resource_icon_sizes, resource_payloads, resource_type_ids, verify_icon_group, verify_manifest, verify_target, verify_version_resource, version_tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tools" / "repository_audit.py"
+VALID_ICON_GROUP = struct.pack("<HHHBBBBHHIH", 0, 1, 1, 16, 16, 0, 0, 1, 32, 4, 1)
 
 
 class ReleaseHelperTests(unittest.TestCase):
@@ -111,6 +123,1105 @@ class ReleaseHelperTests(unittest.TestCase):
         self.assertIn('"FileVersion".encode("utf-16le")', verifier)
         self.assertIn('"ProductVersion".encode("utf-16le")', verifier)
 
+    def test_release_manifest_requires_effective_windows_settings(self):
+        """Comments and unrelated text must not satisfy PE manifest hardening."""
+        target = RELEASE_TARGETS[0]
+        valid = (ROOT / "build" / "windows" / "wails.exe.manifest").read_text(
+            encoding="utf-8"
+        )
+        cases = (
+            ("valid", valid, True),
+            (
+                "comment-only",
+                '<assembly xmlns="urn:schemas-microsoft-com:asm.v1">'
+                '<!-- asInvoker permonitorv2 longPathAware -->'
+                '</assembly>',
+                False,
+            ),
+            (
+                "malformed-xml",
+                '<assembly><!-- asInvoker permonitorv2 longPathAware -->',
+                False,
+            ),
+            (
+                "entity-declaration",
+                '<!DOCTYPE assembly [<!ENTITY bypass "asInvoker permonitorv2 longPathAware">]>'
+                '<assembly xmlns="urn:schemas-microsoft-com:asm.v1">&bypass;</assembly>',
+                False,
+            ),
+            (
+                "wrong-namespace",
+                valid.replace('urn:schemas-microsoft-com:asm.v3', 'urn:invalid-namespace'),
+                False,
+            ),
+            (
+                "elevated-privileges",
+                valid.replace('level="asInvoker"', 'level="requireAdministrator"')
+                .replace('<description>', '<!-- asInvoker --><description>'),
+                False,
+            ),
+            (
+                "disabled-dpi",
+                valid.replace('permonitorv2,permonitor', 'system')
+                .replace('<description>', '<!-- permonitorv2 --><description>'),
+                False,
+            ),
+            (
+                "disabled-long-paths",
+                valid.replace('>true</longPathAware>', '>false</longPathAware>')
+                .replace('<description>', '<!-- longPathAware true --><description>'),
+                False,
+            ),
+        )
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        pe = (
+            target.pe_machine,
+            {".rsrc": (0, 0, 1, 0)},
+            b"",
+            0,
+            target.pe_magic,
+            2 | (flags << 16),
+        )
+        for case, manifest, should_pass in cases:
+            with self.subTest(case=case), patch(
+                "verify_windows_resources.parse_pe", return_value=pe
+            ), patch(
+                "verify_windows_resources.resource_type_ids",
+                return_value={3, 14, 16, 24},
+            ), patch(
+                "verify_windows_resources.resource_payloads",
+                side_effect=lambda _path, kind: [
+                    manifest.encode("utf-8") if kind == 24 else
+                    VALID_ICON_GROUP if kind == 14 else b"fixture"
+                ],
+            ), patch(
+                "verify_windows_resources.resource_icon_ids", return_value={1, 2}
+            ), patch(
+                "verify_windows_resources.resource_icon_sizes",
+                return_value={1: {4}, 2: {4}},
+            ), patch("verify_windows_resources.verify_version_resource"):
+                if should_pass:
+                    verify_target(Path("fixture.exe"), "2.0.5", target)
+                else:
+                    with self.assertRaises(SystemExit):
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_release_manifest_requires_valid_dpi_fallback(self):
+        """A valid primary DPI mode must not mask an invalid legacy fallback."""
+        valid = (ROOT / "build" / "windows" / "wails.exe.manifest").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("permonitorv2,permonitor", valid)
+        verify_manifest(valid, "amd64")
+        for fallback in (
+            "permonitorv2,system",
+            "permonitorv2,unknown",
+            "permonitorv2,permonitor,system",
+        ):
+            with self.subTest(fallback=fallback):
+                with self.assertRaises(SystemExit):
+                    verify_manifest(
+                        valid.replace("permonitorv2,permonitor", fallback), "amd64"
+                    )
+
+    def test_windows_release_requires_nonempty_icon_image_payloads(self):
+        """A group icon alone must not hide missing or empty RT_ICON images."""
+        target = RELEASE_TARGETS[0]
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_bytes()
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        pe = (
+            target.pe_machine,
+            {".rsrc": (0, 0, 1, 0)},
+            b"",
+            0,
+            target.pe_magic,
+            2 | (flags << 16),
+        )
+        cases = (
+            ("no-icon-image", [], False),
+            ("empty-icon-image", [b""], False),
+            ("valid-icon-image", [b"icon-bytes"], True),
+        )
+        for label, icon_images, valid in cases:
+            with self.subTest(case=label), patch(
+                "verify_windows_resources.parse_pe", return_value=pe
+            ), patch(
+                "verify_windows_resources.resource_type_ids", return_value={3, 14, 16, 24}
+            ), patch(
+                "verify_windows_resources.resource_payloads",
+                side_effect=lambda _path, kind: (
+                    icon_images if kind == 3 else
+                    [manifest] if kind == 24 else
+                    [VALID_ICON_GROUP] if kind == 14 else [b"fixture"]
+                ),
+            ), patch(
+                "verify_windows_resources.resource_icon_ids", return_value={1, 2}
+            ), patch(
+                "verify_windows_resources.resource_icon_sizes",
+                return_value={1: {4}, 2: {4}},
+            ), patch("verify_windows_resources.verify_version_resource"):
+                if valid:
+                    verify_target(Path("fixture.exe"), "2.0.5", target)
+                else:
+                    with self.assertRaises(SystemExit):
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_windows_release_rejects_invalid_icon_group_directory(self):
+        """RT_GROUP_ICON must contain a valid, nonempty icon directory."""
+        target = RELEASE_TARGETS[0]
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_bytes()
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        pe = (
+            target.pe_machine,
+            {".rsrc": (0, 0, 1, 0)},
+            b"",
+            0,
+            target.pe_magic,
+            2 | (flags << 16),
+        )
+        cases = (
+            ("valid", VALID_ICON_GROUP, True),
+            ("empty", b"", False),
+            ("wrong-type", b"\x00\x00\x02\x00" + VALID_ICON_GROUP[4:], False),
+            ("zero-count", b"\x00\x00\x01\x00\x00\x00", False),
+            ("truncated-entry", VALID_ICON_GROUP[:-1], False),
+            ("zero-icon-id", VALID_ICON_GROUP[:-2] + b"\x00\x00", False),
+            ("zero-icon-size", VALID_ICON_GROUP[:14] + b"\x00\x00\x00\x00" + VALID_ICON_GROUP[18:], False),
+        )
+        for label, group, valid in cases:
+            with self.subTest(case=label), patch(
+                "verify_windows_resources.parse_pe", return_value=pe
+            ), patch(
+                "verify_windows_resources.resource_type_ids", return_value={3, 14, 16, 24}
+            ), patch(
+                "verify_windows_resources.resource_payloads",
+                side_effect=lambda _path, kind: (
+                    [b"icon"] if kind == 3 else
+                    [group] if kind == 14 else
+                    [manifest] if kind == 24 else [b"fixture"]
+                ),
+            ), patch(
+                "verify_windows_resources.resource_icon_ids", return_value={1, 2}
+            ), patch(
+                "verify_windows_resources.resource_icon_sizes",
+                return_value={1: {4}, 2: {4}},
+            ), patch("verify_windows_resources.verify_version_resource"):
+                if valid:
+                    verify_target(Path("fixture.exe"), "2.0.5", target)
+                else:
+                    with self.assertRaises(SystemExit):
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_windows_release_rejects_group_icon_without_matching_rt_icon_id(self):
+        """A nonempty RT_ICON of another ID cannot satisfy GRPICONDIR.nID."""
+        target = RELEASE_TARGETS[0]
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_bytes()
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        group_entry = VALID_ICON_GROUP[6:]
+        two_image_group = (
+            struct.pack("<HHH", 0, 1, 2) + group_entry
+            + group_entry[:-2] + struct.pack("<H", 2)
+        )
+        cases = (
+            ("matching-id", 1, VALID_ICON_GROUP, True),
+            ("wrong-id", 2, VALID_ICON_GROUP, False),
+            ("missing-second-id", 1, two_image_group, False),
+        )
+        for label, available_id, group, valid in cases:
+            with self.subTest(case=label):
+                resource = bytearray(0x90)
+                struct.pack_into("<HH", resource, 12, 0, 1)
+                struct.pack_into("<II", resource, 16, 3, 0x80000020)
+                struct.pack_into("<HH", resource, 0x20 + 12, 0, 1)
+                struct.pack_into("<II", resource, 0x20 + 16, available_id, 0x80000040)
+                struct.pack_into("<HH", resource, 0x40 + 12, 0, 1)
+                struct.pack_into("<II", resource, 0x40 + 16, 1033, 0x60)
+                struct.pack_into("<IIII", resource, 0x60, 0x1080, 4, 0, 0)
+                resource[0x80:0x84] = b"icon"
+                pe = (
+                    target.pe_machine,
+                    {".rsrc": (len(resource), 0x1000, len(resource), 0)},
+                    bytes(resource), 0, target.pe_magic, 2 | (flags << 16),
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe), patch(
+                    "verify_windows_resources.resource_type_ids",
+                    return_value={3, 14, 16, 24},
+                ), patch(
+                    "verify_windows_resources.resource_payloads",
+                    side_effect=lambda _path, kind: (
+                        [b"icon"] if kind == 3 else
+                        [group] if kind == 14 else
+                        [manifest] if kind == 24 else [b"fixture"]
+                    ),
+                ), patch("verify_windows_resources.verify_version_resource"):
+                    if valid:
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+                    else:
+                        with self.assertRaisesRegex(SystemExit, "RT_ICON"):
+                            verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_windows_release_rejects_icon_group_declared_size_mismatch(self):
+        """GRPICONDIRENTRY.dwBytesInRes must match its RT_ICON payload."""
+        target = RELEASE_TARGETS[0]
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_bytes()
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        resource = bytearray(0x90)
+        struct.pack_into("<HH", resource, 12, 0, 1)
+        struct.pack_into("<II", resource, 16, 3, 0x80000020)
+        struct.pack_into("<HH", resource, 0x20 + 12, 0, 1)
+        struct.pack_into("<II", resource, 0x20 + 16, 1, 0x80000040)
+        struct.pack_into("<HH", resource, 0x40 + 12, 0, 1)
+        struct.pack_into("<II", resource, 0x40 + 16, 1033, 0x60)
+        struct.pack_into("<IIII", resource, 0x60, 0x1080, 4, 0, 0)
+        resource[0x80:0x84] = b"icon"
+        pe = (
+            target.pe_machine,
+            {".rsrc": (len(resource), 0x1000, len(resource), 0)},
+            bytes(resource), 0, target.pe_magic, 2 | (flags << 16),
+        )
+        for declared_size, valid in ((4, True), (3, False), (5, False)):
+            with self.subTest(declared_size=declared_size), patch(
+                "verify_windows_resources.parse_pe", return_value=pe
+            ), patch(
+                "verify_windows_resources.resource_type_ids",
+                return_value={3, 14, 16, 24},
+            ), patch(
+                "verify_windows_resources.resource_payloads",
+                side_effect=lambda _path, kind: (
+                    [b"icon"] if kind == 3 else
+                    [
+                        VALID_ICON_GROUP[:14]
+                        + struct.pack("<I", declared_size)
+                        + VALID_ICON_GROUP[18:]
+                    ]
+                    if kind == 14 else
+                    [manifest] if kind == 24 else [b"fixture"]
+                ),
+            ), patch("verify_windows_resources.verify_version_resource"):
+                if valid:
+                    verify_target(Path("fixture.exe"), "2.0.5", target)
+                else:
+                    with self.assertRaisesRegex(SystemExit, "icon.*size"):
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_windows_release_rejects_conflicting_rt_icon_language_sizes(self):
+        """Every language variant of an icon ID must match GRPICONDIRENTRY."""
+        target = RELEASE_TARGETS[0]
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_bytes()
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        for label, second_size, valid in (
+            ("same-size", 4, True),
+            ("different-size-5", 5, False),
+            ("different-size-6", 6, False),
+        ):
+            with self.subTest(case=label):
+                resource = bytearray(0xC0)
+                for offset, count in ((0, 1), (0x20, 1), (0x40, 2)):
+                    struct.pack_into("<HH", resource, offset + 12, 0, count)
+                struct.pack_into("<II", resource, 16, 3, 0x80000020)
+                struct.pack_into("<II", resource, 0x20 + 16, 1, 0x80000040)
+                struct.pack_into("<II", resource, 0x40 + 16, 1033, 0x70)
+                struct.pack_into("<II", resource, 0x40 + 24, 1049, 0x80)
+                struct.pack_into("<IIII", resource, 0x70, 0x10A0, 4, 0, 0)
+                struct.pack_into("<IIII", resource, 0x80, 0x10A8, second_size, 0, 0)
+                resource[0xA0:0xA4] = b"ICON"
+                resource[0xA8:0xAE] = b"ICONS!"
+                pe = (
+                    target.pe_machine,
+                    {".rsrc": (len(resource), 0x1000, len(resource), 0)},
+                    bytes(resource), 0, target.pe_magic, 2 | (flags << 16),
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe), patch(
+                    "verify_windows_resources.resource_type_ids",
+                    return_value={3, 14, 16, 24},
+                ), patch(
+                    "verify_windows_resources.resource_payloads",
+                    side_effect=lambda _path, kind: (
+                        resource_payloads(_path, 3) if kind == 3 else
+                        [VALID_ICON_GROUP] if kind == 14 else
+                        [manifest] if kind == 24 else [b"fixture"]
+                    ),
+                ), patch("verify_windows_resources.verify_version_resource"):
+                    self.assertEqual(
+                        resource_icon_sizes(Path("fixture.exe")), {1: {4, second_size}}
+                    )
+                    if valid:
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+                    else:
+                        with self.assertRaisesRegex(SystemExit, "icon.*size"):
+                            verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_group_icon_entry_reserved_byte_must_be_zero(self):
+        """GRPICONDIRENTRY.bReserved must be zero, not an arbitrary byte."""
+        for reserved, valid in ((0, True), (1, False), (255, False)):
+            with self.subTest(reserved=reserved):
+                payload = bytearray(VALID_ICON_GROUP)
+                payload[9] = reserved  # Fourth byte of the 14-byte group entry.
+                if valid:
+                    verify_icon_group(bytes(payload), "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "icon group entry"):
+                        verify_icon_group(bytes(payload), "amd64")
+
+    def test_windows_release_rejects_duplicate_group_icon_ids(self):
+        """An icon group must not reuse one RT_ICON ID for multiple images."""
+        target = RELEASE_TARGETS[0]
+        manifest = (ROOT / "build" / "windows" / "wails.exe.manifest").read_bytes()
+        flags = 0x0040 | 0x0100 | 0x8000 | 0x0020
+        pe = (
+            target.pe_machine,
+            {".rsrc": (0, 0, 1, 0)},
+            b"",
+            0,
+            target.pe_magic,
+            2 | (flags << 16),
+        )
+        first = VALID_ICON_GROUP[6:]
+        second = first[:-2] + struct.pack("<H", 2)
+        cases = (
+            ("distinct", struct.pack("<HHH", 0, 1, 2) + first + second, True),
+            ("duplicate", struct.pack("<HHH", 0, 1, 2) + first + first, False),
+            (
+                "duplicate-different-size",
+                struct.pack("<HHH", 0, 1, 2) + first
+                + first[:8] + struct.pack("<I", 8) + first[12:],
+                False,
+            ),
+        )
+        for label, group, valid in cases:
+            with self.subTest(case=label), patch(
+                "verify_windows_resources.parse_pe", return_value=pe
+            ), patch(
+                "verify_windows_resources.resource_type_ids", return_value={3, 14, 16, 24}
+            ), patch(
+                "verify_windows_resources.resource_payloads",
+                side_effect=lambda _path, kind: (
+                    [b"icon"] if kind == 3 else
+                    [group] if kind == 14 else
+                    [manifest] if kind == 24 else [b"fixture"]
+                ),
+            ), patch(
+                "verify_windows_resources.resource_icon_ids", return_value={1, 2}
+            ), patch(
+                "verify_windows_resources.resource_icon_sizes",
+                return_value={1: {4}, 2: {4}},
+            ), patch("verify_windows_resources.verify_version_resource"):
+                if valid:
+                    verify_target(Path("fixture.exe"), "2.0.5", target)
+                else:
+                    with self.assertRaises(SystemExit):
+                        verify_target(Path("fixture.exe"), "2.0.5", target)
+
+    def test_pe_optional_header_must_contain_all_read_fields(self):
+        """The section table must not mask a truncated PE32+ optional header."""
+        import struct
+
+        pe_offset = 0x80
+        optional = pe_offset + 24
+        for declared_size in (0, 70, 71, 72, 111, 112):
+            with (
+                self.subTest(declared_size=declared_size),
+                tempfile.TemporaryDirectory() as temp,
+            ):
+                data = bytearray(320)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, pe_offset)
+                data[pe_offset : pe_offset + 4] = b"PE\0\0"
+                struct.pack_into("<HH", data, pe_offset + 4, 0x8664, 0)
+                struct.pack_into("<H", data, pe_offset + 20, declared_size)
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                path = Path(temp) / "test.exe"
+                path.write_bytes(data)
+                if declared_size < 112:
+                    with self.assertRaises(ValueError):
+                        parse_pe(path)
+                else:
+                    machine, _sections, _data, _timestamp, magic, flags = parse_pe(
+                        path
+                    )
+                    self.assertEqual(
+                        (machine, magic, flags & 0xFFFF), (0x8664, 0x20B, 2)
+                    )
+
+    def test_pe_optional_header_rejects_truncated_standard_fields(self):
+        """PE32 and PE32+ must include their complete fixed optional-header fields."""
+        cases = (
+            ("pe32-short-72", 0x10B, 72, False),
+            ("pe32-short-95", 0x10B, 95, False),
+            ("pe32-minimum", 0x10B, 96, True),
+            ("pe32plus-short-72", 0x20B, 72, False),
+            ("pe32plus-short-96", 0x20B, 96, False),
+            ("pe32plus-short-111", 0x20B, 111, False),
+            ("pe32plus-minimum", 0x20B, 112, True),
+        )
+        for label, magic, optional_size, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(512)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x14C if magic == 0x10B else 0x8664, 0)
+                struct.pack_into("<H", data, 0x80 + 20, optional_size)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, magic)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(parse_pe(path)[4], magic)
+                else:
+                    with self.assertRaisesRegex(ValueError, "optional header"):
+                        parse_pe(path)
+
+    def test_pe_optional_header_magic_must_be_supported(self):
+        """Only PE32/PE32+ can be decoded as Windows release resources."""
+        cases = (
+            ("pe32", 0x10B, True),
+            ("pe32plus", 0x20B, True),
+            ("zero", 0x0000, False),
+            ("rom-image", 0x107, False),
+            ("unknown", 0x999, False),
+        )
+        for label, magic, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(512)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x14C if magic == 0x10B else 0x8664, 0)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, magic)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(parse_pe(path)[4], magic)
+                else:
+                    with self.assertRaisesRegex(ValueError, "optional header magic"):
+                        parse_pe(path)
+
+    def test_pe_duplicate_section_names_are_rejected(self):
+        """Ambiguous .rsrc sections must not select a decoy resource table."""
+        import struct
+
+        pe_offset = 0x80
+        optional = pe_offset + 24
+        section_table = optional + 112
+        cases = (
+            ("duplicate-resource", (b".rsrc", b".rsrc"), False),
+            ("duplicate-text", (b".text", b".text"), False),
+            ("distinct", (b".rsrc", b".text"), True),
+        )
+        for label, names, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(512)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, pe_offset)
+                data[pe_offset : pe_offset + 4] = b"PE\0\0"
+                struct.pack_into("<HH", data, pe_offset + 4, 0x8664, 2)
+                struct.pack_into("<H", data, pe_offset + 20, 112)
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                for index, name in enumerate(names):
+                    start = section_table + index * 40
+                    data[start : start + len(name)] = name
+                    struct.pack_into("<IIII", data, start + 8, 16, index * 4096, 16, 384 + index * 16)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(set(parse_pe(path)[1]), {".rsrc", ".text"})
+                else:
+                    with self.assertRaises(ValueError):
+                        parse_pe(path)
+
+    def test_pe_section_name_requires_zero_padding(self):
+        """An embedded NUL must not hide extra bytes in a PE section name."""
+        cases = (
+            ("resource-hidden-suffix", b".rsrc\0XY", False),
+            ("text-hidden-suffix", b".text\0AB", False),
+            ("resource-padded", b".rsrc\0\0\0", True),
+            ("eight-byte-name", b"ABCDEFGH", True),
+        )
+        for label, raw_name, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(512)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x8664, 1)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                section = optional + 112
+                self.assertEqual(len(raw_name), 8)
+                data[section:section + 8] = raw_name
+                struct.pack_into("<IIII", data, section + 8, 16, 0x1000, 16, 0x200 - 16)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(len(parse_pe(path)[1]), 1)
+                else:
+                    with self.assertRaisesRegex(ValueError, "section name padding"):
+                        parse_pe(path)
+
+    def test_pe_section_raw_data_must_fit_in_file(self):
+        """Nonempty PE sections must not claim raw bytes beyond the executable."""
+        cases = (
+            ("raw-overrun", 500, 32, False),
+            ("raw-start-at-eof", 512, 1, False),
+            ("valid-to-eof", 480, 32, True),
+            ("zero-raw-bss", 4096, 0, True),
+        )
+        for label, raw_offset, raw_size, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(512)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x8664, 1)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                section = optional + 112
+                data[section:section + 5] = b".text"
+                struct.pack_into("<IIII", data, section + 8, 16, 0x1000, raw_size, raw_offset)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertIn(".text", parse_pe(path)[1])
+                else:
+                    with self.assertRaisesRegex(ValueError, "section raw data"):
+                        parse_pe(path)
+
+    def test_pe_section_raw_data_must_not_alias_headers(self):
+        """Nonempty section payloads must not overwrite PE headers or section table."""
+        import struct
+
+        cases = (
+            ("optional-header", 0x100, 16, False),
+            ("section-table", 0x118, 16, False),
+            ("touching-table-end", 0x130, 16, True),
+            ("ordinary-section", 0x200, 16, True),
+            ("uninitialized-section", 0x100, 0, True),
+        )
+        for label, raw_offset, raw_size, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(1024)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x8664, 1)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                section = optional + 112
+                data[section:section + 5] = b".text"
+                struct.pack_into("<IIII", data, section + 8, 16, 0x1000, raw_size, raw_offset)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertIn(".text", parse_pe(path)[1])
+                else:
+                    with self.assertRaisesRegex(ValueError, "section raw data overlaps PE headers"):
+                        parse_pe(path)
+
+    def test_pe_section_raw_ranges_must_not_overlap(self):
+        """A PE section must not alias another section's raw file bytes."""
+        cases = (
+            ("overlapping", 0x200, 0x220, 0x40, False),
+            ("identical", 0x200, 0x200, 0x40, False),
+            ("touching", 0x200, 0x240, 0x40, True),
+            ("disjoint", 0x200, 0x280, 0x40, True),
+            ("zero-size", 0x200, 0x200, 0, True),
+        )
+        for label, first_offset, second_offset, second_size, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(1024)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x8664, 2)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                section_table = optional + 112
+                for index, (name, offset, size) in enumerate(
+                    ((b".text", first_offset, 0x40), (b".rsrc", second_offset, second_size))
+                ):
+                    section = section_table + index * 40
+                    data[section : section + len(name)] = name
+                    struct.pack_into("<IIII", data, section + 8, size, 0x1000 + index * 0x1000, size, offset)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(set(parse_pe(path)[1]), {".text", ".rsrc"})
+                else:
+                    with self.assertRaisesRegex(ValueError, "overlap"):
+                        parse_pe(path)
+
+    def test_pe_section_virtual_ranges_must_not_overlap(self):
+        """Two PE sections cannot map distinct raw bytes onto the same image RVA."""
+        cases = (
+            ("overlapping", 0x1000, 0x1200, 0x400, False),
+            ("identical", 0x1000, 0x1000, 0x400, False),
+            ("touching", 0x1000, 0x1400, 0x400, True),
+            ("disjoint", 0x1000, 0x2000, 0x400, True),
+        )
+        for label, first_rva, second_rva, virtual_size, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(0x800)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x8664, 2)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                section_table = optional + 112
+                for index, (name, rva, raw_offset) in enumerate(
+                    ((b".text", first_rva, 0x200), (b".rsrc", second_rva, 0x400))
+                ):
+                    section = section_table + index * 40
+                    data[section : section + len(name)] = name
+                    struct.pack_into(
+                        "<IIII", data, section + 8,
+                        virtual_size, rva, 0x200, raw_offset,
+                    )
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(set(parse_pe(path)[1]), {".text", ".rsrc"})
+                else:
+                    with self.assertRaisesRegex(ValueError, "overlapping PE section virtual ranges"):
+                        parse_pe(path)
+
+    def test_pe_section_virtual_ranges_must_fit_32_bit_rva_space(self):
+        """Section image ranges cannot extend beyond the 32-bit RVA address space."""
+        cases = (
+            ("text-overflow", 0xFFFFF000, 0x2000, 0x2000, 0x40, False),
+            ("resource-overflow", 0x1000, 0x40, 0xFFFFFFFE, 0x40, False),
+            ("high-boundary", 0xFFFFF000, 0x1000, 0x2000, 0x40, True),
+            ("ordinary-disjoint", 0x1000, 0x40, 0x2000, 0x40, True),
+        )
+        for label, text_rva, text_size, resource_rva, resource_size, valid in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temp:
+                data = bytearray(0x800)
+                data[:2] = b"MZ"
+                struct.pack_into("<I", data, 0x3C, 0x80)
+                data[0x80:0x84] = b"PE\0\0"
+                struct.pack_into("<HH", data, 0x84, 0x8664, 2)
+                struct.pack_into("<H", data, 0x80 + 20, 112)
+                optional = 0x80 + 24
+                struct.pack_into("<H", data, optional, 0x20B)
+                struct.pack_into("<H", data, optional + 68, 2)
+                struct.pack_into("<H", data, optional + 70, 0x8160)
+                section_table = optional + 112
+                for index, (name, rva, size, raw_offset) in enumerate((
+                    (b".text", text_rva, text_size, 0x200),
+                    (b".rsrc", resource_rva, resource_size, 0x400),
+                )):
+                    section = section_table + index * 40
+                    data[section:section + len(name)] = name
+                    struct.pack_into("<IIII", data, section + 8, size, rva, 0x40, raw_offset)
+                path = Path(temp) / "fixture.exe"
+                path.write_bytes(data)
+                if valid:
+                    self.assertEqual(set(parse_pe(path)[1]), {".text", ".rsrc"})
+                else:
+                    with self.assertRaisesRegex(ValueError, "PE section virtual range exceeds 32-bit RVA space"):
+                        parse_pe(path)
+
+    def test_resource_directory_timestamps_must_be_zero(self):
+        """Nonzero PE resource directory timestamps bypass deterministic release checks."""
+        for label, relative, timestamp, valid in (
+            ("root-zero", 0, 0, True),
+            ("root-one", 0, 1, False),
+            ("root-max", 0, 0xFFFFFFFF, False),
+            ("nested-zero", 0x20, 0, True),
+            ("nested-one", 0x20, 1, False),
+        ):
+            with self.subTest(case=label):
+                directory = bytearray(0x60)
+                struct.pack_into("<I", directory, relative + 4, timestamp)
+                struct.pack_into("<HH", directory, relative + 12, 0, 1)
+                struct.pack_into("<II", directory, relative + 16, 16, 0x80000040)
+                if valid:
+                    self.assertEqual(
+                        directory_entries(directory, 0, len(directory), relative),
+                        [(16, 0x80000040)],
+                    )
+                else:
+                    with self.assertRaisesRegex(ValueError, "timestamp"):
+                        directory_entries(directory, 0, len(directory), relative)
+
+    def test_resource_directory_rejects_duplicate_entry_keys(self):
+        """A later resource type/ID must not be hidden by a first match."""
+        import struct
+
+        cases = (
+            ("duplicate-type", ((16, 0x80000020), (16, 0x80000040)), False),
+            ("duplicate-name-offset", ((0x80000020, 0x80000040), (0x80000020, 0x80000060)), False),
+            ("distinct-types", ((16, 0x80000020), (24, 0x80000040)), True),
+        )
+        for label, entries, valid in cases:
+            with self.subTest(case=label):
+                directory = bytearray(16 + len(entries) * 8)
+                named_count = len(entries) if label == "duplicate-name-offset" else 0
+                struct.pack_into("<HH", directory, 12, named_count, len(entries) - named_count)
+                for index, entry in enumerate(entries):
+                    struct.pack_into("<II", directory, 16 + index * 8, *entry)
+                if valid:
+                    self.assertEqual(directory_entries(directory, 0, len(directory), 0), list(entries))
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
+
+    def test_resource_directory_validates_named_and_id_entry_layout(self):
+        """PE resource name entries must precede numeric IDs as counted in the header."""
+        import struct
+
+        cases = (
+            ("named-in-id-slot", 0, (0x80000020,), False),
+            ("id-in-named-slot", 1, (16,), False),
+            ("wrong-order", 1, (16, 0x80000020), False),
+            ("named-only", 1, (0x80000020,), True),
+            ("mixed-valid", 1, (0x80000020, 16), True),
+            ("numeric-only", 0, (16, 24), True),
+        )
+        for label, named_count, keys, valid in cases:
+            with self.subTest(case=label):
+                directory = bytearray(0x50 if named_count else 16 + len(keys) * 8)
+                if named_count:
+                    struct.pack_into("<H", directory, 0x20, 2)
+                    directory[0x22:0x26] = "OK".encode("utf-16le")
+                struct.pack_into(
+                    "<HH", directory, 12, named_count, len(keys) - named_count
+                )
+                for index, key in enumerate(keys):
+                    struct.pack_into(
+                        "<II", directory, 16 + index * 8, key, 0x80000040
+                    )
+                if valid:
+                    self.assertEqual(
+                        [
+                            key
+                            for key, _ in directory_entries(
+                                directory, 0, len(directory), 0
+                            )
+                        ],
+                        list(keys),
+                    )
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
+
+    def test_resource_directory_rejects_out_of_bounds_named_strings(self):
+        """Named PE resource entries must point to complete UTF-16 names in .rsrc."""
+        import struct
+
+        # The high bit selects a name offset relative to the start of .rsrc.
+        # Valid names are stored beyond the directory table, not inline.
+        cases = (
+            ("valid-named", 0x80000040, 2, True),
+            ("valid-empty", 0x80000040, 0, True),
+            ("pointer-outside", 0x80000080, 2, False),
+            ("length-outside", 0x80000040, 0x40, False),
+            ("truncated-length-word", 0x8000006F, 2, False),
+        )
+        for label, name_pointer, length, valid in cases:
+            with self.subTest(case=label):
+                raw_offset = 32
+                section_end = raw_offset + 0x70
+                data = bytearray(section_end)
+                struct.pack_into("<HH", data, raw_offset + 12, 1, 0)
+                struct.pack_into("<II", data, raw_offset + 16, name_pointer, 0x80000028)
+                struct.pack_into("<H", data, raw_offset + 0x40, length)
+                data[raw_offset + 0x42:raw_offset + 0x46] = "OK".encode("utf-16le")
+                if valid:
+                    self.assertEqual(
+                        directory_entries(data, raw_offset, section_end, 0),
+                        [(name_pointer, 0x80000028)],
+                    )
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(data, raw_offset, section_end, 0)
+
+    def test_resource_directory_rejects_duplicate_named_text(self):
+        """Distinct UTF-16 offsets must not disguise duplicate resource names."""
+        import struct
+
+        for second_name, valid in (("A", False), ("B", True)):
+            with self.subTest(second_name=second_name):
+                directory = bytearray(0x70)
+                struct.pack_into("<HH", directory, 12, 2, 0)
+                struct.pack_into("<II", directory, 16, 0x80000040, 0x80000028)
+                struct.pack_into("<II", directory, 24, 0x80000050, 0x80000030)
+                for offset, name in ((0x40, "A"), (0x50, second_name)):
+                    struct.pack_into("<H", directory, offset, len(name))
+                    directory[offset + 2 : offset + 4] = name.encode("utf-16le")
+                if valid:
+                    self.assertEqual(len(directory_entries(directory, 0, len(directory), 0)), 2)
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
+
+    def test_resource_type_directory_cannot_use_raw_padding(self):
+        """Root resource type IDs must fit the mapped .rsrc virtual extent."""
+        cases = (
+            ("empty-virtual-section", 0, False),
+            ("header-only", 0x10, False),
+            ("truncated-type-entry", 0x17, False),
+            ("complete-type-entry", 0x18, True),
+            ("full-directory", 0x100, True),
+        )
+        for label, virtual_size, valid in cases:
+            with self.subTest(case=label):
+                resource = bytearray(0x100)
+                struct.pack_into("<HH", resource, 12, 0, 1)
+                struct.pack_into("<II", resource, 16, 3, 0x80000020)
+                pe = (
+                    0x8664,
+                    {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
+                    bytes(resource),
+                    0,
+                    0x20B,
+                    2,
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe):
+                    if valid:
+                        self.assertEqual(resource_type_ids(Path("fixture.exe")), {3})
+                    else:
+                        with self.assertRaises(ValueError):
+                            resource_type_ids(Path("fixture.exe"))
+
+    def test_resource_data_entry_reserved_field_must_be_zero(self):
+        """Nonzero IMAGE_RESOURCE_DATA_ENTRY.Reserved must fail PE verification."""
+        for reserved, valid in ((0, True), (1, False), (0xFFFFFFFF, False)):
+            with self.subTest(reserved=reserved):
+                resource = bytearray(0x100)
+                # Type 3 -> icon ID 1 -> language 0x409 -> data entry.
+                for directory_offset, name_or_id, target in (
+                    (0x00, 3, 0x80000020),
+                    (0x20, 1, 0x80000040),
+                    (0x40, 0x409, 0x60),
+                ):
+                    struct.pack_into("<HH", resource, directory_offset + 12, 0, 1)
+                    struct.pack_into(
+                        "<II", resource, directory_offset + 16, name_or_id, target
+                    )
+                struct.pack_into("<IIII", resource, 0x60, 0x1080, 4, 0, reserved)
+                resource[0x80:0x84] = b"ICON"
+                pe = (
+                    0x8664, {".rsrc": (0x100, 0x1000, 0x100, 0)},
+                    bytes(resource), 0, 0x20B, 2,
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe):
+                    if valid:
+                        self.assertEqual(resource_payloads(Path("fixture.exe"), 3), [b"ICON"])
+                    else:
+                        with self.assertRaisesRegex(ValueError, "reserved"):
+                            resource_payloads(Path("fixture.exe"), 3)
+
+    def test_resource_payload_must_fit_declared_virtual_section_size(self):
+        """Raw-file padding must not disguise resources beyond mapped .rsrc bytes."""
+        for virtual_size, valid in ((0x84, True), (0x83, False), (0x80, False)):
+            with self.subTest(virtual_size=virtual_size):
+                resource = bytearray(0x100)
+                for directory_offset, name_or_id, target in (
+                    (0x00, 3, 0x80000020),
+                    (0x20, 1, 0x80000040),
+                    (0x40, 0x409, 0x60),
+                ):
+                    struct.pack_into("<HH", resource, directory_offset + 12, 0, 1)
+                    struct.pack_into(
+                        "<II", resource, directory_offset + 16, name_or_id, target
+                    )
+                struct.pack_into("<IIII", resource, 0x60, 0x1080, 4, 0, 0)
+                resource[0x80:0x84] = b"ICON"
+                pe = (
+                    0x8664, {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
+                    bytes(resource), 0, 0x20B, 2,
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe):
+                    if valid:
+                        self.assertEqual(resource_payloads(Path("fixture.exe"), 3), [b"ICON"])
+                    else:
+                        with self.assertRaisesRegex(ValueError, "virtual size"):
+                            resource_payloads(Path("fixture.exe"), 3)
+
+    def test_resource_directory_metadata_must_fit_virtual_section_size(self):
+        """Raw .rsrc padding cannot hold directory tables or data-entry metadata."""
+        cases = (
+            ("valid-data-entry", 0xA0, 0x40, 0x90, True),
+            ("data-entry-in-raw-padding", 0x84, 0x40, 0x90, False),
+            ("valid-language-directory", 0xB0, 0x90, 0x60, True),
+            ("language-directory-in-raw-padding", 0x84, 0x90, 0x60, False),
+        )
+        for label, virtual_size, language_offset, entry_offset, valid in cases:
+            with self.subTest(case=label):
+                resource = bytearray(0x100)
+                for directory_offset, name_or_id, target in (
+                    (0, 3, 0x80000020),
+                    (0x20, 1, 0x80000000 | language_offset),
+                    (language_offset, 0x409, entry_offset),
+                ):
+                    struct.pack_into("<HH", resource, directory_offset + 12, 0, 1)
+                    struct.pack_into(
+                        "<II", resource, directory_offset + 16, name_or_id, target
+                    )
+                struct.pack_into("<IIII", resource, entry_offset, 0x1080, 4, 0, 0)
+                resource[0x80:0x84] = b"ICON"
+                pe = (
+                    0x8664, {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
+                    bytes(resource), 0, 0x20B, 2,
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe):
+                    if valid:
+                        self.assertEqual(resource_payloads(Path("fixture.exe"), 3), [b"ICON"])
+                    else:
+                        with self.assertRaisesRegex(ValueError, "resource.*(directory|entry)"):
+                            resource_payloads(Path("fixture.exe"), 3)
+
+    def test_rt_icon_helpers_reject_unmapped_resource_metadata_and_payloads(self):
+        """RT_ICON IDs and sizes must not be inferred from raw .rsrc padding."""
+        resource = bytearray(0x100)
+        for directory_offset, name_or_id, target in (
+            (0, 3, 0x80000020),
+            (0x20, 1, 0x80000040),
+            (0x40, 0x409, 0x60),
+        ):
+            struct.pack_into("<HH", resource, directory_offset + 12, 0, 1)
+            struct.pack_into("<II", resource, directory_offset + 16, name_or_id, target)
+        struct.pack_into("<IIII", resource, 0x60, 0x1080, 4, 0, 0)
+        resource[0x80:0x84] = b"ICON"
+        cases = (
+            ("valid", 0x84, True, True),
+            ("id-directory-in-padding", 0x20, False, False),
+            ("language-directory-in-padding", 0x40, True, False),
+            ("data-entry-in-padding", 0x6F, True, False),
+            ("icon-payload-in-padding", 0x83, True, False),
+        )
+        for label, virtual_size, ids_valid, sizes_valid in cases:
+            with self.subTest(case=label):
+                pe = (
+                    0x8664, {".rsrc": (virtual_size, 0x1000, 0x100, 0)},
+                    bytes(resource), 0, 0x20B, 2,
+                )
+                with patch("verify_windows_resources.parse_pe", return_value=pe):
+                    if ids_valid:
+                        self.assertEqual(resource_icon_ids(Path("fixture.exe")), {1})
+                    else:
+                        with self.assertRaises(ValueError):
+                            resource_icon_ids(Path("fixture.exe"))
+                    if sizes_valid:
+                        self.assertEqual(resource_icon_sizes(Path("fixture.exe")), {1: {4}})
+                    else:
+                        with self.assertRaises(ValueError):
+                            resource_icon_sizes(Path("fixture.exe"))
+
+    def test_resource_directory_rejects_reserved_numeric_id_bits(self):
+        """Numeric PE resource IDs are 16-bit; upper bits must be zero."""
+        import struct
+
+        cases = (
+            ("upper-bit-16", 0x00010010, False),
+            ("upper-bit-30", 0x40000010, False),
+            ("maximum-id", 0x0000FFFF, True),
+            ("ordinary-id", 16, True),
+        )
+        for label, resource_id, valid in cases:
+            with self.subTest(case=label):
+                directory = bytearray(24)
+                struct.pack_into("<HH", directory, 12, 0, 1)
+                struct.pack_into("<II", directory, 16, resource_id, 0x80000040)
+                if valid:
+                    self.assertEqual(
+                        directory_entries(directory, 0, len(directory), 0),
+                        [(resource_id, 0x80000040)],
+                    )
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
+
+    def test_resource_directory_numeric_ids_must_be_sorted(self):
+        """Windows resource ID lookup requires ascending numeric directory keys."""
+        import struct
+
+        cases = (
+            ("numeric-unsorted", False, (24, 16), False),
+            ("mixed-unsorted", True, (24, 16), False),
+            ("numeric-sorted", False, (16, 24), True),
+            ("mixed-sorted", True, (16, 24), True),
+        )
+        for label, has_name, ids, valid in cases:
+            with self.subTest(case=label):
+                directory = bytearray(0x60)
+                keys = ((0x80000040,) if has_name else ()) + ids
+                struct.pack_into("<HH", directory, 12, int(has_name), len(ids))
+                for index, key in enumerate(keys):
+                    struct.pack_into("<II", directory, 16 + index * 8, key, 0x80000050)
+                if has_name:
+                    struct.pack_into("<H", directory, 0x40, 1)
+                    directory[0x42:0x44] = "A".encode("utf-16le")
+                if valid:
+                    self.assertEqual(
+                        [key for key, _ in directory_entries(directory, 0, len(directory), 0)],
+                        list(keys),
+                    )
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
+
+    def test_resource_directory_named_entries_must_be_sorted(self):
+        """PE named resource keys must be in ascending UTF-16 code-unit order."""
+        import struct
+
+        cases = (
+            ("named-unsorted", ("Z", "A"), False, False),
+            ("mixed-unsorted", ("Z", "A"), True, False),
+            ("named-sorted", ("A", "Z"), False, True),
+            ("mixed-sorted", ("A", "Z"), True, True),
+            ("unicode-sorted", ("\u00ff", "\u0100"), False, True),
+            ("unicode-unsorted", ("\u0100", "\u00ff"), False, False),
+            ("prefix-sorted", ("A", "AA"), False, True),
+            ("prefix-unsorted", ("AA", "A"), False, False),
+        )
+        for label, names, has_id, valid in cases:
+            with self.subTest(case=label):
+                directory = bytearray(0xA0)
+                keys = (0x80000050, 0x80000070) + ((16,) if has_id else ())
+                struct.pack_into("<HH", directory, 12, 2, int(has_id))
+                for index, key in enumerate(keys):
+                    struct.pack_into("<II", directory, 16 + index * 8, key, 0x80000040)
+                for offset, name in zip((0x50, 0x70), names):
+                    encoded = name.encode("utf-16le")
+                    struct.pack_into("<H", directory, offset, len(encoded) // 2)
+                    directory[offset + 2 : offset + 2 + len(encoded)] = encoded
+                if valid:
+                    self.assertEqual(
+                        [key for key, _ in directory_entries(directory, 0, len(directory), 0)],
+                        list(keys),
+                    )
+                else:
+                    with self.assertRaises(ValueError):
+                        directory_entries(directory, 0, len(directory), 0)
+
     def test_windows_fixed_version_resource_is_exact(self):
         import struct
 
@@ -145,6 +1256,151 @@ class ReleaseHelperTests(unittest.TestCase):
         struct.pack_into("<I", broken, offset + 8, 0x00030000)
         with self.assertRaises(SystemExit):
             verify_version_resource([bytes(broken)], "2.0.0", "amd64")
+
+    def test_windows_fixed_version_resource_rejects_invalid_structure_revision(self):
+        """VS_FIXEDFILEINFO.dwStrucVersion must be the documented 1.0 value."""
+        fixed = (
+            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
+            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+        )
+        markers = b"".join(
+            value.encode("utf-16le")
+            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+        )
+        for revision, valid in ((0x00010000, True), (0, False), (0x00020000, False)):
+            with self.subTest(revision=revision):
+                values = list(fixed)
+                values[1] = revision
+                payload = markers + struct.pack("<13I", *values)
+                if valid:
+                    verify_version_resource([payload], "2.0.0", "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "VS_FIXEDFILEINFO"):
+                        verify_version_resource([payload], "2.0.0", "amd64")
+
+    def test_windows_fixed_version_resource_requires_application_file_type(self):
+        """Executable version resources must use VFT_APP, not DLL or driver types."""
+        fixed = (
+            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
+            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+        )
+        markers = b"".join(
+            value.encode("utf-16le")
+            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+        )
+        for file_type, valid in ((1, True), (0, False), (2, False), (3, False)):
+            with self.subTest(file_type=file_type):
+                values = list(fixed)
+                values[9] = file_type
+                payload = markers + struct.pack("<13I", *values)
+                if valid:
+                    verify_version_resource([payload], "2.0.0", "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "file type"):
+                        verify_version_resource([payload], "2.0.0", "amd64")
+
+    def test_windows_fixed_version_resource_requires_zero_application_subtype(self):
+        """VFT_APP has no subtype; nonzero dwFileSubtype is malformed EXE metadata."""
+        fixed = (
+            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
+            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+        )
+        markers = b"".join(
+            value.encode("utf-16le")
+            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+        )
+        for subtype, valid in ((0, True), (1, False), (2, False), (0xFFFFFFFF, False)):
+            with self.subTest(subtype=subtype):
+                values = list(fixed)
+                values[10] = subtype
+                payload = markers + struct.pack("<13I", *values)
+                if valid:
+                    verify_version_resource([payload], "2.0.0", "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "subtype"):
+                        verify_version_resource([payload], "2.0.0", "amd64")
+
+    def test_windows_fixed_version_resource_rejects_debug_and_prerelease_flags(self):
+        """Stable Windows release binaries must not declare DEBUG or PRERELEASE."""
+        fixed = (
+            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
+            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+        )
+        markers = b"".join(
+            value.encode("utf-16le")
+            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+        )
+        for label, flags, valid in (
+            ("stable", 0, True),
+            ("patched", 0x04, True),
+            ("debug", 0x01, False),
+            ("prerelease", 0x02, False),
+            ("debug-and-prerelease", 0x03, False),
+        ):
+            with self.subTest(case=label):
+                values = list(fixed)
+                values[7] = flags
+                payload = markers + struct.pack("<13I", *values)
+                if valid:
+                    verify_version_resource([payload], "2.0.0", "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "DEBUG|PRERELEASE"):
+                        verify_version_resource([payload], "2.0.0", "amd64")
+
+    def test_windows_fixed_version_resource_requires_standard_flag_mask(self):
+        """VS_FIXEDFILEINFO must declare the canonical Windows file flag mask."""
+        fixed = (
+            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
+            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+        )
+        markers = b"".join(
+            value.encode("utf-16le")
+            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+        )
+        for mask, valid in (
+            (0x3F, True),
+            (0, False),
+            (0x03, False),
+            (0x3E, False),
+            (0x7F, False),
+        ):
+            with self.subTest(mask=mask):
+                values = list(fixed)
+                values[6] = mask
+                payload = markers + struct.pack("<13I", *values)
+                if valid:
+                    verify_version_resource([payload], "2.0.0", "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "flag mask"):
+                        verify_version_resource([payload], "2.0.0", "amd64")
+
+    def test_windows_fixed_version_resource_rejects_private_and_unknown_flags(self):
+        """Public release metadata must not claim PRIVATEBUILD/SPECIALBUILD or unknown flags."""
+        fixed = (
+            0xFEEF04BD, 0x00010000, 0x00020000, 0, 0x00020000, 0,
+            0x0000003F, 0, 0x00040004, 1, 0, 0, 0,
+        )
+        markers = b"".join(
+            value.encode("utf-16le")
+            for value in ("Iris Online Database", "FileVersion", "ProductVersion", "2.0.0")
+        )
+        for label, flags, valid in (
+            ("stable", 0, True),
+            ("patched", 0x04, True),
+            ("private-build", 0x08, False),
+            ("info-inferred", 0x10, False),
+            ("special-build", 0x20, False),
+            ("unknown-bit", 0x40, False),
+        ):
+            with self.subTest(case=label):
+                values = list(fixed)
+                values[7] = flags
+                payload = markers + struct.pack("<13I", *values)
+                if valid:
+                    verify_version_resource([payload], "2.0.0", "amd64")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "non-release"):
+                        verify_version_resource([payload], "2.0.0", "amd64")
 
     def test_release_build_is_external_and_fingerprint_gated(self):
         launcher = (ROOT / "IrisTools.ps1").read_text(encoding="utf-8")
@@ -202,13 +1458,422 @@ class ReleaseHelperTests(unittest.TestCase):
             assert_clean_tree,
         )
 
+    def test_release_executable_rejects_unpinned_compiler_metadata(self):
+        """A valid Windows binary built with older Go must fail the release gate."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-go-toolchain-gate-") as directory:
+            binary = Path(directory) / "release.exe"
+            binary.write_bytes(b"IrisOnlineRelease/2.0.5/")
+            for case, header, should_pass in (
+                ("older-compiler", "release.exe: go1.23.2", False),
+                ("compiler-suffix", f"release.exe: go{pinned}0", False),
+                ("missing-compiler", "release.exe: unknown", False),
+                (
+                    "wrong-first-line",
+                    "release.exe: go1.23.2\nrelease.exe: go" + pinned,
+                    False,
+                ),
+                ("pinned-compiler", f"release.exe: go{pinned}", True),
+            ):
+                with self.subTest(case=case):
+                    result = SimpleNamespace(
+                        returncode=0, stdout=header + "\n" + markers
+                    )
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=result
+                    ):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaises(SystemExit):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
+    def test_release_executable_rejects_slash_variant_windows_user_paths(self):
+        """Release binaries must not leak developer homes with / or mixed separators."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(returncode=0, stdout=f"release.exe: go{pinned}\n{markers}")
+        with tempfile.TemporaryDirectory(prefix="iris-release-path-gate-") as temporary:
+            binary = Path(temporary) / "release.exe"
+            cases = (
+                ("forward-slashes", b"C:" + b"/Users/" + b"developer/project/", False),
+                (
+                    "mixed-separators",
+                    b"D:" + b"\\Users/" + b"developer\\project\\",
+                    False,
+                ),
+                (
+                    "backslashes",
+                    b"C:" + b"\\Users\\" + b"developer\\project\\",
+                    False,
+                ),
+                ("clean", b"release-build-no-private-paths", True),
+            )
+            for label, payload, should_pass in cases:
+                with self.subTest(label=label):
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/" + payload)
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=metadata
+                    ):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaises(SystemExit):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
+    def test_release_executable_rejects_macos_developer_home_paths(self):
+        """A macOS cross-build must not embed private developer home paths."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("macos-source", b"/" + b"Users/alice/iris/build.go", False),
+            ("macos-terminal", b"/" + b"Users/alice\x00", False),
+            ("macos-case", b"/" + b"USERS/builder/iris\x00", False),
+            ("relative-path", b"docs/Users/alice/iris", True),
+            ("users-root", b"/" + b"Users\x00", True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-macos-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(label=label):
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload)
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
+    def test_release_executable_rejects_terminal_developer_home_paths(self):
+        """Private home roots are leaks even when no child separator follows."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("windows-null", b"C:\\Users\\developer\x00", False),
+            ("windows-forward-null", b"D:/" + b"Users/developer\x00", False),
+            ("unix-home-null", b"/home/developer\x00", False),
+            ("workspace-eof", b"/workspace/developer", False),
+            ("tmp-iris-null", b"/tmp/iris-build\x00", False),
+            ("clean", b"compiled-release-without-private-paths", True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-terminal-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(label=label):
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload)
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
+    def test_release_executable_rejects_utf16le_developer_paths(self):
+        """Windows UTF-16LE resources must not conceal private build paths."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("windows-user", "C:" + r"\Users\alice\project", False),
+            ("unix-home", "/" + "home/alice/project", False),
+            ("temporary-build", "/" + "tmp/iris-build/obj", False),
+            ("system-path", r"C:\Windows\System32", True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-wide-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(case=label):
+                    binary.write_bytes(
+                        b"IrisOnlineRelease/2.0.5/\x00\x00\x00"
+                        + payload.encode("utf-16le")
+                        + b"\x00\x00"
+                    )
+                    with patch(
+                        "verify_executables.subprocess.run", return_value=metadata
+                    ):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
+    def test_release_executable_rejects_file_uri_developer_paths(self):
+        """Absolute file URIs must not hide private paths behind URI slashes."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("unix-home-uri", ("file:///" + "home/builder/project").encode(), False),
+            ("macos-home-uri", ("file:///" + "Users/builder/project").encode(), False),
+            ("tmp-build-uri", ("file:///" + "tmp/iris-build/obj").encode(), False),
+            ("wide-home-uri", ("file:///" + "home/builder/project").encode("utf-16le"), False),
+            ("system-uri", ("file:///" + "etc/hosts").encode(), True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-file-uri-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(case=label):
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload + b"\x00")
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
+    def test_release_executable_rejects_unc_developer_user_paths(self):
+        """UNC user homes are private even without a drive letter."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("unc-user-share", r"\\builder\Users\alice\project", False),
+            ("unc-admin-share", r"\\builder\C$\Users\alice\project", False),
+            ("unc-slash", "//builder/share/Users/alice/project", False),
+            ("unc-wide", r"\\builder\share\Users\alice\project", False),
+            ("unc-clean", r"\\builder\share\assets\icon.ico", True),
+            ("relative-control", r"docs\Users\alice\project", True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-unc-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(case=label):
+                    encoded = payload.encode(
+                        "utf-16le" if label == "unc-wide" else "utf-8"
+                    )
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + encoded + b"\x00")
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
+    def test_release_executable_rejects_legacy_windows_profile_paths(self):
+        """Windows 7-era Documents and Settings homes must not leak in EXEs."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("drive-legacy", r"C:\Documents and Settings\alice\iris\main.go", False),
+            ("drive-spaced-user", r"D:\Documents and Settings\Alice Smith\src", False),
+            ("unc-legacy", r"\\builder\C$\Documents and Settings\alice\src", False),
+            ("wide-legacy", r"C:\Documents and Settings\alice\src", False),
+            ("system-directory", r"C:\Windows\System32\kernel32.dll", True),
+            ("relative-legacy", r"docs\Documents and Settings\alice\readme", True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-legacy-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(case=label):
+                    encoded = payload.encode(
+                        "utf-16le" if label == "wide-legacy" else "utf-8"
+                    )
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + encoded + b"\x00")
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
+    def test_release_executable_rejects_linux_root_home_paths(self):
+        """Linux root-owned build paths must not leak into Windows releases."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("root-build", b"/" + b"root/go/src/iris/main.go", False),
+            ("root-null", b"/" + b"root/build\x00", False),
+            ("root-case", b"/" + b"ROOT/ci/iris\x00", False),
+            ("relative-root", b"docs/root/build", True),
+            ("rooted-path", b"/rooted/build", True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-root-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(label=label):
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload)
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
+    def test_release_executable_rejects_delimited_developer_paths(self):
+        """Quoted, tab-separated, and key/value paths must fail privacy QA."""
+        pinned = (ROOT / ".go-version").read_text(encoding="utf-8").strip()
+        markers = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        metadata = SimpleNamespace(
+            returncode=0, stdout=f"release.exe: go{pinned}\n{markers}"
+        )
+        cases = (
+            ("tab-unix", b"build\t/home/alice/iris/main.go", False),
+            ("quoted-unix", b'path="/root/builder/iris/main.go"', False),
+            ("key-value-tmp", b"source=/tmp/iris-build/src.go", False),
+            ("tab-windows-terminal", b"C:\\Users\\alice\t", False),
+            ("relative-control", b'path="docs/home/alice/iris"', True),
+        )
+        with tempfile.TemporaryDirectory(prefix="iris-delimited-path-gate-") as temp:
+            binary = Path(temp) / "release.exe"
+            for label, payload, should_pass in cases:
+                with self.subTest(label=label):
+                    binary.write_bytes(b"IrisOnlineRelease/2.0.5/\x00" + payload)
+                    with patch("verify_executables.subprocess.run", return_value=metadata):
+                        if should_pass:
+                            verify_executable(binary, "2.0.5", "amd64", "go")
+                        else:
+                            with self.assertRaisesRegex(SystemExit, "developer path"):
+                                verify_executable(binary, "2.0.5", "amd64", "go")
+
+    def test_release_metadata_rejects_conflicting_or_duplicate_records(self):
+        """A valid marker must not mask contradictory Go build metadata."""
+        valid = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        self.assertEqual(missing_metadata_categories(valid), [])
+        conflicts = (
+            ("wrong-os", "\tbuild\tGOOS=linux", "TARGET_OS"),
+            ("wrong-arch", "\tbuild\tGOARCH=arm64", "TARGET_ARCH"),
+            ("enabled-cgo", "\tbuild\tCGO_ENABLED=1", "CGO_DISABLED"),
+            ("no-trimpath", "\tbuild\t-trimpath=false", "TRIMPATH"),
+            ("different-tags", "\tbuild\t-tags=desktop", "PRODUCTION_TAGS"),
+            ("old-wails", "\tdep\tgithub.com/wailsapp/wails/v2\tv2.13.0", "WAILS_VERSION"),
+            ("duplicate-os", "\tbuild\tGOOS=windows", "TARGET_OS"),
+        )
+        for label, extra, category in conflicts:
+            with self.subTest(case=label):
+                self.assertIn(category, missing_metadata_categories(valid + "\n" + extra))
+
+    def test_release_metadata_rejects_replaced_wails_dependency(self):
+        """A pinned dep line cannot conceal a Go module replacement."""
+        valid = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
+        self.assertEqual(missing_metadata_categories(valid), [])
+        for label, replacement in (
+            ("local-replacement", "\t=>\t../wails-fork"),
+            ("older-module", "\t=>\tgithub.com/wailsapp/wails/v2\tv2.13.0"),
+            ("same-version-fork", "\t=>\texample.invalid/fork/wails/v2\tv2.14.0"),
+        ):
+            with self.subTest(case=label):
+                replaced = valid.replace(
+                    "\tdep\tgithub.com/wailsapp/wails/v2\tv2.14.0",
+                    "\tdep\tgithub.com/wailsapp/wails/v2\tv2.14.0\n" + replacement,
+                )
+                self.assertIn("WAILS_VERSION", missing_metadata_categories(replaced))
+        # Replacement of an unrelated module must not be rejected.
+        unrelated = (
+            "\tdep\texample.invalid/other\tv1.0.0\n"
+            "\t=>\texample.invalid/other-fork\tv1.0.1\n"
+        )
+        self.assertEqual(missing_metadata_categories(unrelated + valid), [])
+
     def test_release_metadata_diagnostic_identifies_cgo_without_raw_payload(self):
-        valid = "\n".join(marker for _category, marker in EXPECTED_METADATA_MARKERS)
+        valid = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in EXPECTED_METADATA_MARKERS
+        )
         self.assertEqual(missing_metadata_categories(valid), [])
         cgo_enabled = valid.replace("CGO_ENABLED=0", "CGO_ENABLED=1")
         categories = missing_metadata_categories(cgo_enabled)
         self.assertEqual(categories, ["CGO_DISABLED"])
         self.assertNotIn("CGO_ENABLED=1", " ".join(categories))
+
+    def test_release_metadata_rejects_substring_spoofing(self):
+        # go version -m emits tab-separated build and dependency records.
+        markers = dict(expected_metadata_markers("amd64"))
+        legitimate = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in markers.items()
+        )
+        self.assertEqual(missing_metadata_categories(legitimate), [])
+        self.assertEqual(
+            missing_metadata_categories(
+                legitimate.replace(markers["WAILS_VERSION"], markers["WAILS_VERSION"] + "\th1:checksum")
+            ),
+            [],
+        )
+        wrong_record = legitimate.replace("build\tGOOS=windows", "dep\tGOOS=windows")
+        self.assertEqual(missing_metadata_categories(wrong_record), ["TARGET_OS"])
+
+        forged = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}SPOOF"
+            for category, marker in markers.items()
+        )
+        self.assertEqual(
+            missing_metadata_categories(forged), list(markers),
+            "substring matches must not satisfy Go build metadata requirements",
+        )
+
+    def test_release_metadata_rejects_trailing_whitespace(self):
+        markers = dict(expected_metadata_markers("amd64"))
+        legitimate = "\n".join(
+            f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+            for category, marker in markers.items()
+        )
+        self.assertEqual(missing_metadata_categories(legitimate), [])
+        with self.subTest("trailing space in build value"):
+            forged = legitimate.replace("GOOS=windows", "GOOS=windows ")
+            self.assertEqual(missing_metadata_categories(forged), ["TARGET_OS"])
+        with self.subTest("trailing tab in build record"):
+            forged = legitimate.replace("GOOS=windows", "GOOS=windows\t")
+            self.assertEqual(missing_metadata_categories(forged), ["TARGET_OS"])
+        with self.subTest("empty dependency checksum"):
+            forged = legitimate.replace(
+                markers["WAILS_VERSION"], markers["WAILS_VERSION"] + "\t"
+            )
+            self.assertEqual(missing_metadata_categories(forged), ["WAILS_VERSION"])
 
     def test_release_metadata_matrix_has_exact_architecture_markers(self):
         expected_levels = {
@@ -223,7 +1888,10 @@ class ReleaseHelperTests(unittest.TestCase):
                 self.assertEqual(
                     markers["TARGET_LEVEL"], expected_levels[target.goarch]
                 )
-                metadata = "\n".join(markers.values())
+                metadata = "\n".join(
+                    f"\t{'dep' if category == 'WAILS_VERSION' else 'build'}\t{marker}"
+                    for category, marker in markers.items()
+                )
                 self.assertEqual(
                     missing_metadata_categories(metadata, target.goarch), []
                 )
@@ -280,6 +1948,149 @@ class ReleaseHelperTests(unittest.TestCase):
             self.assertNotEqual(regular_hash, executable_hash)
             with self.assertRaises(FingerprintError):
                 assert_release_tree(root, "main")
+
+    def test_release_fingerprint_rejects_hidden_git_index_flags(self):
+        """Assume-unchanged/skip-worktree must not mask a modified release tree."""
+        with tempfile.TemporaryDirectory(prefix="iris-index-flags-") as temporary:
+            root = Path(temporary)
+            subprocess.run(
+                ["git", "init", "--initial-branch=main", str(root)],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            for key, value in (
+                ("user.name", "Iris test"),
+                ("user.email", "test@example.invalid"),
+            ):
+                subprocess.run(
+                    ["git", "-C", str(root), "config", key, value],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+            tracked = root / "tracked.txt"
+            tracked.write_text("original\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(root), "add", "tracked.txt"],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-m", "fixture"],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(assert_release_tree(root, "main")[1], "main")
+            for flag in ("--assume-unchanged", "--skip-worktree"):
+                with self.subTest(flag=flag):
+                    subprocess.run(
+                        [
+                            "git",
+                            "-C",
+                            str(root),
+                            "update-index",
+                            "--no-assume-unchanged",
+                            "--no-skip-worktree",
+                            "tracked.txt",
+                        ],
+                        check=True,
+                        capture_output=True,
+                        timeout=30,
+                    )
+                    tracked.write_text("original\n", encoding="utf-8")
+                    subprocess.run(
+                        ["git", "-C", str(root), "update-index", flag, "tracked.txt"],
+                        check=True,
+                        capture_output=True,
+                        timeout=30,
+                    )
+                    tracked.write_text("tampered release bytes\n", encoding="utf-8")
+                    status = subprocess.run(
+                        ["git", "-C", str(root), "status", "--porcelain=v1"],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    ).stdout
+                    self.assertEqual(status, "")
+                    with self.assertRaises(FingerprintError):
+                        assert_release_tree(root, "main")
+
+    def test_release_fingerprint_rejects_changed_toolchain(self):
+        """Build cannot reuse a gate fingerprint after Go/security tool drift."""
+        with tempfile.TemporaryDirectory(
+            prefix="iris-fingerprint-toolchain-"
+        ) as temporary:
+            root = Path(temporary)
+            subprocess.run(
+                ["git", "init", "--initial-branch=main", str(root)],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            for key, value in (
+                ("user.name", "Iris test"),
+                ("user.email", "test@example.invalid"),
+            ):
+                subprocess.run(
+                    ["git", "-C", str(root), "config", key, value],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+            (root / "VERSION").write_text("2.0.5\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(root), "add", "VERSION"],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-m", "fixture"],
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+            original = {"go": "go1.26.6", "govulncheck": "v1"}
+            with patch("release_fingerprint.toolchain", return_value=original):
+                write_fingerprint(root, "main")
+                verify_fingerprint(root, "main")
+            for changed in (
+                {"go": "go1.25.0", "govulncheck": "v1"},
+                {"go": "go1.26.6", "govulncheck": "v2"},
+            ):
+                with self.subTest(changed=changed):
+                    with patch("release_fingerprint.toolchain", return_value=changed):
+                        with self.assertRaises(FingerprintError):
+                            verify_fingerprint(root, "main")
+
+    def test_python_requirements_reject_normalized_duplicate_pins(self):
+        """PEP 503-equivalent names must not bypass unique direct pins."""
+        duplicate_pairs = (
+            ("pip-audit", "pip_audit"),
+            ("pip-audit", "pip.audit"),
+            ("pip--audit", "PIP__AUDIT"),
+            ("PlayWright", "playwright"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            requirements = Path(temporary) / "requirements.txt"
+            for first, second in duplicate_pairs:
+                with self.subTest(first=first, second=second):
+                    requirements.write_text(
+                        f"{first}==1.0\n{second}==2.0\n", encoding="utf-8"
+                    )
+                    with self.assertRaises(ValueError):
+                        expected_versions(requirements)
+            requirements.write_text(
+                "pip-audit==2.10.1\nplaywright==1.62.0\n", encoding="utf-8"
+            )
+            self.assertEqual(
+                expected_versions(requirements),
+                {"pip-audit": "2.10.1", "playwright": "1.62.0"},
+            )
 
     def test_python_requirements_are_single_pinned_source(self):
         requirements = (ROOT / "tools" / "requirements-audit.txt").read_text(
@@ -744,6 +2555,139 @@ class ReleaseHelperTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 verify_release_assets(directory, "2.0.0")
 
+    def test_release_assets_require_canonical_checksum_order(self):
+        """Release manifest must match the fixed x64/x86/arm64 build order."""
+        import hashlib
+
+        with tempfile.TemporaryDirectory(prefix="iris-release-order-") as temporary:
+            directory = Path(temporary)
+            lines = []
+            for index, name in enumerate(expected_asset_names("2.0.0")[:-1], 1):
+                payload = b"MZ" + bytes([index])
+                (directory / name).write_bytes(payload)
+                lines.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+            manifest = directory / "SHA256SUMS.txt"
+            manifest.write_text("\n".join(lines) + "\n", encoding="ascii")
+            verify_release_assets(directory, "2.0.0")
+            for label, permuted in (
+                ("reverse", list(reversed(lines))),
+                ("swap", [lines[1], lines[0], lines[2]]),
+            ):
+                with self.subTest(order=label):
+                    manifest.write_text("\n".join(permuted) + "\n", encoding="ascii")
+                    with self.assertRaisesRegex(SystemExit, "canonical order"):
+                        verify_release_assets(directory, "2.0.0")
+
+    def test_release_assets_reject_unexpected_directory_entries(self):
+        # A release staging directory must contain only the four approved files.
+        import hashlib
+
+        with tempfile.TemporaryDirectory(prefix="iris-release-dir-entries-") as temporary:
+            directory = Path(temporary)
+            manifest = []
+            for index, name in enumerate(expected_asset_names("2.0.0")[:-1], 1):
+                payload = b"MZ" + bytes([index])
+                (directory / name).write_bytes(payload)
+                manifest.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+            (directory / "SHA256SUMS.txt").write_text(
+                "\n".join(manifest) + "\n", encoding="ascii"
+            )
+            verify_release_assets(directory, "2.0.0")
+            (directory / "staging").mkdir()
+            with self.assertRaises(SystemExit):
+                verify_release_assets(directory, "2.0.0")
+
+    def test_release_assets_reject_blank_checksum_records(self):
+        """Empty checksum records must not disappear during manifest validation."""
+        import hashlib
+
+        with tempfile.TemporaryDirectory(
+            prefix="iris-release-blank-checksums-"
+        ) as temporary:
+            directory = Path(temporary)
+            lines = []
+            for index, name in enumerate(expected_asset_names("2.0.0")[:-1], 1):
+                payload = b"MZ" + bytes([index])
+                (directory / name).write_bytes(payload)
+                lines.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+            manifest = directory / "SHA256SUMS.txt"
+            manifest.write_text("\n".join(lines) + "\n", encoding="ascii")
+            verify_release_assets(directory, "2.0.0")
+            for label, invalid in (
+                ("leading-blank", "\n" + "\n".join(lines) + "\n"),
+                ("middle-blank", lines[0] + "\n\n" + "\n".join(lines[1:]) + "\n"),
+                ("trailing-blank", "\n".join(lines) + "\n\n"),
+            ):
+                with self.subTest(case=label):
+                    manifest.write_text(invalid, encoding="ascii")
+                    with self.assertRaisesRegex(SystemExit, "exactly three entries"):
+                        verify_release_assets(directory, "2.0.0")
+
+    def test_release_assets_reject_nonstandard_checksum_separators(self):
+        """Only LF/CRLF may delimit checksum records in a release manifest."""
+        import hashlib
+
+        with tempfile.TemporaryDirectory(
+            prefix="iris-release-checksum-separators-"
+        ) as temporary:
+            directory = Path(temporary)
+            lines = []
+            for index, name in enumerate(expected_asset_names("2.0.0")[:-1], 1):
+                payload = b"MZ" + bytes([index])
+                (directory / name).write_bytes(payload)
+                lines.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+            manifest = directory / "SHA256SUMS.txt"
+            for label, valid in (
+                ("LF", "\n".join(lines) + "\n"),
+                ("CRLF", "\r\n".join(lines) + "\r\n"),
+            ):
+                with self.subTest(valid=label):
+                    manifest.write_bytes(valid.encode("ascii"))
+                    verify_release_assets(directory, "2.0.0")
+            for label, separator in (
+                ("CR-only", "\r"),
+                ("vertical-tab", "\v"),
+                ("form-feed", "\f"),
+            ):
+                with self.subTest(invalid=label):
+                    manifest.write_bytes((separator.join(lines) + "\n").encode("ascii"))
+                    with self.assertRaises(SystemExit):
+                        verify_release_assets(directory, "2.0.0")
+
+    def test_release_assets_reject_symlinked_entries(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory(prefix="iris-release-symlink-") as temporary:
+            root = Path(temporary)
+            directory = root / "staging"
+            directory.mkdir()
+            names = expected_asset_names("2.0.0")[:-1]
+            manifest = []
+            for index, name in enumerate(names, start=1):
+                payload = b"MZ" + bytes([index])
+                (directory / name).write_bytes(payload)
+                manifest.append(f"{hashlib.sha256(payload).hexdigest()}  {name}")
+            (directory / "SHA256SUMS.txt").write_text(
+                "\n".join(manifest) + "\n", encoding="ascii"
+            )
+            verify_release_assets(directory, "2.0.0")
+            for index, name in enumerate((*names, "SHA256SUMS.txt")):
+                with self.subTest(name=name):
+                    original = directory / name
+                    outside = root / f"outside-{index}"
+                    original.rename(outside)
+                    try:
+                        original.symlink_to(outside)
+                    except (OSError, NotImplementedError) as error:
+                        outside.rename(original)
+                        self.skipTest(f"Symlinks unavailable: {error}")
+                    try:
+                        with self.assertRaises(SystemExit):
+                            verify_release_assets(directory, "2.0.0")
+                    finally:
+                        original.unlink()
+                        outside.rename(original)
+
     def test_release_uses_explicit_gpg_identity_and_signed_tag_verification(self):
         script = (ROOT / "scripts" / "windows" / "IrisTools.ps1").read_text(
             encoding="utf-8"
@@ -888,6 +2832,49 @@ class ReleaseHelperTests(unittest.TestCase):
             self.assertNotIn(fake_token, output)
             self.assertNotIn("private-user", output)
             self.assertNotIn("artifact.exe", output)
+
+    def test_repository_audit_rejects_forward_slash_windows_user_paths(self):
+        """Developer home paths must not leak through slash-normalized Windows paths."""
+        cases = (
+            ("C", "alice", "source/project.go"),
+            ("D", "builder", "release/bin"),
+        )
+        for drive, username, suffix in cases:
+            with self.subTest(drive=drive):
+                sensitive_path = drive + ":/" + "Users/" + username + "/" + suffix
+                with tempfile.TemporaryDirectory(prefix="iris-path-audit-") as temporary:
+                    root = Path(temporary)
+                    (root / "fixture.txt").write_text(sensitive_path, encoding="utf-8")
+                    result = self.run_audit(root)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("[SEC002]", result.stdout)
+                    self.assertNotIn(sensitive_path, result.stdout)
+        with tempfile.TemporaryDirectory(prefix="iris-path-control-") as temporary:
+            root = Path(temporary)
+            (root / "fixture.txt").write_text(
+                "docs/Users/alice/notes\n", encoding="utf-8"
+            )
+            self.assertEqual(self.run_audit(root).returncode, 0)
+
+    def test_repository_audit_scans_its_own_source_for_sensitive_content(self):
+        fake_token = "ghp_" + "A" * 36
+        sensitive_path = "/" + "home/" + "private-user/work/project"
+        for payload, category in (
+            (fake_token, "SEC001"),
+            (sensitive_path, "SEC002"),
+        ):
+            with self.subTest(category=category):
+                with tempfile.TemporaryDirectory(prefix="iris-self-audit-") as temporary:
+                    root = Path(temporary)
+                    tools = root / "tools"
+                    tools.mkdir()
+                    (tools / "repository_audit.py").write_text(
+                        "# self-audit fixture\n" + payload + "\n", encoding="utf-8"
+                    )
+                    result = self.run_audit(root)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f"[{category}]", result.stdout)
+                    self.assertNotIn(payload, result.stdout)
 
     def test_repository_audit_enforces_python_shebang_mode_coherence(self):
         self.assertTrue(python_mode_violation("#!/usr/bin/env python3\n", 0))

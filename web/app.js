@@ -209,7 +209,9 @@
   function routeHistoryState(index, route) {
     const current = window.history.state;
     const base = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
-    return { ...base, [ROUTE_HISTORY_STATE_KEY]: { index, route } };
+    // Drop selection belongs to the monster history entry, not its destination.
+    const { monsterDropView, ...otherState } = base;
+    return { ...otherState, [ROUTE_HISTORY_STATE_KEY]: { index, route } };
   }
 
   function currentRouteHistoryEntry() {
@@ -317,10 +319,16 @@
     const number = Number(value || 0);
     if (!Number.isFinite(number) || number <= 0) return '—';
     const digits = number < 0.0001
-      ? Math.min(12, Math.max(8, Math.ceil(-Math.log10(number)) + 1))
-      : 4;
+      ? Math.min(12, Math.max(10, Math.ceil(-Math.log10(number)) + 1))
+      : number < 0.001 ? 6 : 4;
     const text = number.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '').replace('.', ',');
     return `${text}%`;
+  }
+
+  // A verified zero probability is not the same as missing chance data.
+  function formatKnownChance(value) {
+    return value !== null && value !== undefined && value !== '' && Number(value) === 0
+      ? '0%' : formatChance(value);
   }
 
   function formatChanceOdds(value) {
@@ -1950,20 +1958,33 @@
     const baseDetails = isWorld ? [worldContext] : isChest ? [chestSourceDetails(drop)] : isQuest ? [drop.context] : [drop.slotTitle];
     if (isQuest && Number(drop.questId) > 0) baseDetails.push(`ID задания: ${formatNumber(drop.questId)}`);
     if (isQuestReward && Number(drop.quantity) > 1) baseDetails.push(`Количество: ×${formatNumber(drop.quantity)}`);
+    if (!isQuest && !isChest && Number(drop.quantity) > 1) baseDetails.push(`Количество: ×${formatNumber(drop.quantity)}`);
     if (!isQuest && !isChest && drop.groupChanceKnown) {
-      baseDetails.push(`Шанс группы: ${formatChance(drop.groupBaseChance ?? drop.groupChance)}`);
-      baseDetails.push(`Если группа выбрана: ${formatChance(drop.itemBaseChance ?? drop.itemChance)}`);
+      baseDetails.push(`Шанс группы: ${formatKnownChance(drop.groupBaseChance ?? drop.groupChance)}`);
+      baseDetails.push(`Если группа выбрана: ${formatKnownChance(drop.itemBaseChance ?? drop.itemChance)}`);
     }
     const sourceLabel = sourceName(drop).trim().toLocaleLowerCase('ru-RU');
     const details = [...new Set(baseDetails.filter(Boolean).map(value => String(value).trim()).filter(value => value && value.toLocaleLowerCase('ru-RU') !== sourceLabel))].join(' · ');
     const chanceLabel = isChest ? 'Шанс при открытии' : isQuest ? 'Шанс при выполнении условий' : 'За одну основную попытку';
     const chanceKnown = !isQuestReward && (!isChest || drop.chanceKnown === true);
     const icon = icons[isWorld ? 'home' : isQuest ? 'info' : isChest ? 'item' : 'monster'];
-    const chance = chanceKnown ? `<span class="source-chance"><small>${chanceLabel}</small><strong>${formatChance(baseAttemptChance(drop))}</strong></span>` : '';
+    const chance = chanceKnown ? `<span class="source-chance"><small>${chanceLabel}</small><strong>${formatKnownChance(baseAttemptChance(drop))}</strong></span>` : '';
     const content = `<span class="source-icon">${icon}</span><span><strong>${escapeHTML(sourceName(drop))}</strong>${details ? `<small>${escapeHTML(details)}</small>` : ''}</span>${chance}`;
     if (isWorld) return `<div class="source-row world-source-compact">${content}</div>`;
     if (isChest && Number(drop.containerId) > 0) return `<a class="source-row" href="#item/${Number(drop.containerId)}">${content}</a>`;
-    return drop.monsterId ? `<a class="source-row" href="#monster/${drop.monsterId}">${content}</a>` : `<div class="source-row">${content}</div>`;
+    if (drop.monsterId) {
+      const monsterId = Number(drop.monsterId);
+      const itemId = Number(drop.itemId);
+      const sourceLine = Number(drop.sourceLine);
+      const choicePosition = Number(drop.choicePosition);
+      const itemPosition = Number(drop.itemPosition);
+      const exactSource = drop.source === 'Выпадение монстра'
+        && [monsterId, itemId, sourceLine, choicePosition].every(value => Number.isSafeInteger(value) && value > 0);
+      const positionQuery = Number.isSafeInteger(itemPosition) && itemPosition > 0 ? `&position=${itemPosition}` : '';
+      const sourceQuery = exactSource ? `?item=${itemId}&line=${sourceLine}&choice=${choicePosition}${positionQuery}` : '';
+      return `<a class="source-row" href="#monster/${monsterId}${sourceQuery}">${content}</a>`;
+    }
+    return `<div class="source-row">${content}</div>`;
   }
 
   function questRewardScopeNote(drops) {
@@ -2003,7 +2024,7 @@
         <button class="favorite-button large ${active ? 'active' : ''}" type="button" data-favorite="${key}" aria-label="${active ? 'Удалить из избранного' : 'Добавить в избранное'}">${icons.star}</button>
       </header>
       ${gameProperties(presentation, 'Характеристики монстра')}
-      ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Предметы с наибольшим шансом</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}" aria-label="${escapeHTML(drop.item)} — ${formatChance(drop.chance)}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small aria-hidden="true">— ${formatChance(drop.chance)}</small></a>`).join('')}</div></section>` : ''}
+      ${topDrops.length ? `<section class="monster-drop-preview"><header><div><span class="eyebrow">Обычная добыча</span><h2>Предметы с наибольшим шансом</h2></div><button class="secondary-button" type="button" data-open-details="monster-drops">Показать всю добычу</button></header><div class="drop-preview-list">${topDrops.map(drop => `<a href="#item/${drop.itemId}" aria-label="${escapeHTML(drop.item)} — ${formatKnownChance(drop.chance)}"><span>${icons.item}</span><strong>${escapeHTML(drop.item)}</strong><small aria-hidden="true">— ${formatKnownChance(drop.chance)}</small></a>`).join('')}</div></section>` : ''}
       <section class="detail-accordions">
         ${slots.length ? accordion('Обычная добыча', formatCount(slots.length, 'вариант', 'варианта', 'вариантов'), `<div data-monster-drops-host><p class="empty-copy">Список загрузится после открытия раздела.</p></div>`, false, 'monster-drops lazy-monster-drops') : ''}
         ${description ? accordion('Описание', '', `<p class="reading-text">${multilineHTML(description)}</p>`, false) : ''}
@@ -2011,15 +2032,121 @@
       </section>
     </section>`;
     positionSearchWidget(false);
+    restoreMonsterDropView(monster.id);
+  }
+
+  function focusMonsterDropSource(itemId, sourceLine, choicePosition, itemPosition) {
+    const model = state.monsterDrops;
+    if (!model || ![itemId, sourceLine, choicePosition].every(value => Number.isSafeInteger(value) && value > 0)) return;
+    let groupIndex = 0;
+    let targetIndex = -1;
+    let foundPosition = -1;
+    for (const slot of model.slots) {
+      for (let index = 0; index < (slot.choices || []).length; index++, groupIndex++) {
+        if (Number(slot.sourceLine) !== sourceLine || index + 1 !== choicePosition) continue;
+        const position = (slot.choices[index].items || []).findIndex((item, rowIndex) =>
+          Number(item.itemId) === itemId && (!Number.isSafeInteger(itemPosition) || itemPosition <= 0 || rowIndex + 1 === itemPosition));
+        if (position >= 0) { targetIndex = groupIndex; foundPosition = position; }
+      }
+    }
+    if (targetIndex < 0) return;
+    const accordion = main.querySelector('.lazy-monster-drops');
+    if (!accordion) return;
+    model.activeItemId = itemId;
+    model.activeGroupIndex = targetIndex;
+    model.activeItemPosition = Number.isSafeInteger(itemPosition) && itemPosition > 0 ? itemPosition : 0;
+    accordion.open = true;
+    renderMonsterDropShell();
+    const group = model.groups[targetIndex];
+    const details = main.querySelector(`[data-drop-group="${targetIndex}"]`);
+    if (!group || !details) return;
+    group.shown = Math.min(group.choice.items.length, Math.max(DROP_BATCH, foundPosition + 1));
+    details.open = true;
+    renderMonsterDropGroup(targetIndex, false, true);
+    requestAnimationFrame(() => {
+      if (state.monsterDrops !== model || !state.route.startsWith('monster/')) return;
+      const selector = itemPosition > 0
+        ? `[data-drop-group-host="${targetIndex}"] a[data-drop-item-position="${itemPosition}"]`
+        : `[data-drop-group-host="${targetIndex}"] a[href="#item/${itemId}"]`;
+      main.querySelector(selector)?.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
+  function rememberMonsterDropSelection(link) {
+    const page = main.querySelector('.detail-page[data-route^="monster/"]');
+    if (!page || !page.contains(link) || !link.closest('.drop-items, .drop-preview-list')) return;
+    const itemId = Number(link.getAttribute('href')?.match(/^#item\/(\d+)$/)?.[1]);
+    if (!Number.isSafeInteger(itemId) || itemId <= 0) return;
+    const groupIndex = Number(link.closest('[data-drop-group]')?.dataset.dropGroup);
+    const itemPosition = Number(link.dataset.dropItemPosition);
+    const dropView = {
+      route: page.dataset.route,
+      server: state.server,
+      itemId,
+      groupIndex: Number.isSafeInteger(groupIndex) && link.closest('[data-drop-group]') ? groupIndex : -1,
+      itemPosition: Number.isSafeInteger(itemPosition) && itemPosition > 0 ? itemPosition : 0,
+      expanded: Boolean(page.querySelector('.lazy-monster-drops')?.open),
+      groups: [...page.querySelectorAll('[data-drop-group][open]')].map(group => ({
+        index: Number(group.dataset.dropGroup),
+        shown: state.monsterDrops?.groups?.[Number(group.dataset.dropGroup)]?.shown || 0,
+      })),
+      scrollY: window.scrollY,
+    };
+    window.history.replaceState({ ...window.history.state, monsterDropView: dropView }, '', location.href);
+  }
+
+  function restoreMonsterDropView(monsterId) {
+    const view = window.history.state?.monsterDropView;
+    if (view?.route !== `monster/${monsterId}` || view.server !== state.server) return;
+    const model = state.monsterDrops;
+    if (!model) return;
+    model.activeItemId = Number(view.itemId) || 0;
+    model.activeGroupIndex = Number.isSafeInteger(view.groupIndex) ? view.groupIndex : -1;
+    model.activeItemPosition = Number.isSafeInteger(view.itemPosition) && view.itemPosition > 0 ? view.itemPosition : 0;
+    main.querySelectorAll('.drop-preview-list a').forEach(link => {
+      if (Number(link.getAttribute('href')?.match(/^#item\/(\d+)$/)?.[1]) === model.activeItemId) {
+        link.classList.add('is-active-drop');
+        link.setAttribute('aria-current', 'true');
+      }
+    });
+    if (!view.expanded) return;
+    const accordion = main.querySelector('.lazy-monster-drops');
+    if (!accordion) return;
+    accordion.open = true;
+    renderMonsterDropShell();
+    (Array.isArray(view.groups) ? view.groups : []).forEach(saved => {
+      const index = Number(saved.index);
+      const group = model.groups[index];
+      const details = main.querySelector(`[data-drop-group="${index}"]`);
+      if (!group || !details) return;
+      group.shown = Math.min((group.choice.items || []).length, Math.max(0, Number(saved.shown) || 0));
+      details.open = true;
+      renderMonsterDropGroup(index, false, true);
+    });
+    requestAnimationFrame(() => {
+      if (state.route.split('?')[0] === view.route && state.server === view.server)
+        window.scrollTo({ top: Math.max(0, Number(view.scrollY) || 0), behavior: 'instant' });
+    });
   }
 
   function topMonsterDrops(slots, limit) {
     const byItem = new Map();
-    slots.forEach(slot => (slot.choices || []).forEach(choice => (choice.items || []).forEach(item => {
-      const chance = Number(item.baseAttemptChance) || 0;
-      const previous = byItem.get(item.itemId);
-      if (!previous || chance > previous.chance) byItem.set(item.itemId, { ...item, chance });
-    })));
+    slots.forEach(slot => {
+      // Choices and item rows within one slot are mutually exclusive.
+      // Independent slots are separate rolls: do not sum across slots.
+      const perSlot = new Map();
+      (slot.choices || []).forEach(choice => (choice.items || []).forEach(item => {
+        const chance = Number(item.baseAttemptChance) || 0;
+        const previous = perSlot.get(item.itemId);
+        if (previous) previous.chance += chance;
+        else perSlot.set(item.itemId, { ...item, chance });
+      }));
+      perSlot.forEach((item, itemId) => {
+        item.chance = Math.min(100, item.chance);
+        const previous = byItem.get(itemId);
+        if (!previous || item.chance > previous.chance) byItem.set(itemId, item);
+      });
+    });
     return [...byItem.values()].sort((a, b) => b.chance - a.chance).slice(0, limit);
   }
 
@@ -2040,7 +2167,7 @@
         const groupIndex = model.groups.length;
         model.groups.push({ choice, shown: 0, rendered: false });
         const count = (choice.items || []).length;
-        return `<details class="drop-choice" data-drop-group="${groupIndex}"><summary><span><strong>${escapeHTML(choice.title || 'Группа предметов')}</strong><small>Шанс группы: ${formatChance(choice.baseSelectionChance)} · ${formatCount(count, 'предмет', 'предмета', 'предметов')}</small></span>${icons.chevron}</summary><div class="drop-items" data-drop-group-host="${groupIndex}"><p class="empty-copy">Откройте группу, чтобы показать предметы.</p></div></details>`;
+        return `<details class="drop-choice" data-drop-group="${groupIndex}"><summary><span><strong>${escapeHTML(choice.title || 'Группа предметов')}</strong><small>Шанс группы: ${formatKnownChance(choice.baseSelectionChance)} · ${count ? formatCount(count, 'предмет', 'предмета', 'предметов') : 'Состав не указан'}</small></span>${icons.chevron}</summary><div class="drop-items" data-drop-group-host="${groupIndex}"><p class="empty-copy">Откройте группу, чтобы показать предметы.</p></div></details>`;
       }).join('');
       const extraAttempts = [
         slot.addAttempt1Count ? `${formatCount(slot.addAttempt1Count, 'дополнительная попытка', 'дополнительные попытки', 'дополнительных попыток')} при ${formatChance(slot.addAttempt1Rate)}` : '',
@@ -2052,20 +2179,28 @@
     model.shellRendered = true;
   }
 
-  function renderMonsterDropGroup(groupIndex, showAll = false) {
+  function renderMonsterDropGroup(groupIndex, showAll = false, preserveShown = false) {
     const group = state.monsterDrops?.groups?.[groupIndex];
     const host = main.querySelector(`[data-drop-group-host="${groupIndex}"]`);
     if (!group || !host) return;
     const items = group.choice.items || [];
-    if (showAll) group.shown = items.length;
+    if (preserveShown) group.shown = Math.min(items.length, group.shown);
+    else if (showAll) group.shown = items.length;
     else if (!group.rendered) group.shown = Math.min(DROP_BATCH, items.length);
     else group.shown = Math.min(items.length, group.shown + DROP_BATCH);
     group.rendered = true;
     if (!items.length) {
-      host.innerHTML = '<p class="empty-copy">Состав группы не найден.</p>';
+      host.innerHTML = '<p class="empty-copy">Состав группы отсутствует в исходных данных.</p>';
       return;
     }
-    const rows = items.slice(0, group.shown).map(item => `<a href="#item/${item.itemId}"><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatChance(item.baseSelectionChance)} · за одну основную попытку: ${formatChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`).join('');
+    const rows = items.slice(0, group.shown).map((item, index) => {
+      const position = index + 1;
+      const model = state.monsterDrops;
+      const selected = Number(item.itemId) === model.activeItemId
+        && model.activeGroupIndex === groupIndex
+        && (!model.activeItemPosition || model.activeItemPosition === position);
+      return `<a href="#item/${item.itemId}" data-drop-item-position="${position}"${selected ? ' class="is-active-drop" aria-current="true"' : ''}><span>${icons.item}</span><strong>${escapeHTML(item.item)}</strong><small>Если группа выбрана: ${formatKnownChance(item.baseSelectionChance)} · за одну основную попытку: ${formatKnownChance(item.baseAttemptChance)}${formatChanceOdds(item.baseAttemptChance)}${item.quantity > 1 ? ` · ×${item.quantity}` : ''}</small></a>`;
+    }).join('');
     const remaining = items.length - group.shown;
     host.innerHTML = `${rows}<div class="lazy-list-status" aria-live="polite">Показано ${formatNumber(group.shown)} из ${formatNumber(items.length)}</div>${remaining > 0 ? `<div class="lazy-list-actions"><button class="secondary-button" type="button" data-drop-more="${groupIndex}">Показать ещё ${formatNumber(Math.min(DROP_BATCH, remaining))}</button><button class="text-button" type="button" data-drop-all="${groupIndex}">Показать всё</button></div>` : ''}`;
   }
@@ -2198,6 +2333,13 @@
         const data = await api(`/api/monsters/${encodeURIComponent(id)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
         if (controller.signal.aborted || requestId !== state.requestId) return;
         monsterDetail(data);
+        const sourceItemId = Number(params.get('item'));
+        const sourceLine = Number(params.get('line'));
+        const choicePosition = Number(params.get('choice'));
+        const itemPosition = Number(params.get('position'));
+        const savedView = window.history.state?.monsterDropView;
+        if (savedView?.route !== `monster/${Number(id)}` || savedView.server !== state.server)
+          focusMonsterDropSource(sourceItemId, sourceLine, choicePosition, itemPosition);
       } else if (path.startsWith('title/')) {
         const index = path.slice(6);
         const data = await api(`/api/titles/${encodeURIComponent(index)}?server=${encodeURIComponent(state.server)}`, { signal: controller.signal });
@@ -2798,7 +2940,8 @@
     const details = event.target;
     if (!(details instanceof HTMLDetailsElement) || !details.open) return;
     if (details.matches('.lazy-monster-drops')) renderMonsterDropShell();
-    if (details.matches('[data-drop-group]')) renderMonsterDropGroup(Number(details.dataset.dropGroup));
+    if (details.matches('[data-drop-group]') && !state.monsterDrops?.groups?.[Number(details.dataset.dropGroup)]?.rendered)
+      renderMonsterDropGroup(Number(details.dataset.dropGroup));
   }, true);
 
   main.addEventListener('input', event => {
@@ -2949,9 +3092,13 @@
       return;
     }
     const internalLink = event.target.closest('a[href^="#"]');
-    if (internalLink && navigateToRoute(internalLink.getAttribute('href'))) {
-      event.preventDefault();
-      return;
+    if (internalLink) {
+      const route = internalLink.getAttribute('href');
+      if (isInternalAppRoute(normalizeRouteValue(route))) rememberMonsterDropSelection(internalLink);
+      if (navigateToRoute(route)) {
+        event.preventDefault();
+        return;
+      }
     }
     if (!event.target.closest('.search-combobox')) closeSuggestions();
     if (!moreMenu.hidden && !event.target.closest('#moreMenu') && !event.target.closest('#moreButton')) closeMoreMenu();

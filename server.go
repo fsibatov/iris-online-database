@@ -12,7 +12,9 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const applicationID = "iris-online-database"
@@ -128,13 +130,16 @@ func (a *application) routes() http.Handler {
 		fileServer.ServeHTTP(w, r)
 	})
 
-	var handler http.Handler = mux
-	handler = a.withResponseCache(handler)
-	handler = a.withLifecycleGuard(handler)
-	handler = withAPIConcurrencyLimit(handler, 32)
-	handler = withSecurityHeaders(handler)
+	return a.withAPIRequestPipeline(mux)
+}
 
-	return handler
+// Cache followers wait outside the backend limiter, so repeated requests do
+// not exhaust its 32 execution slots. Security and shutdown guards run first.
+func (a *application) withAPIRequestPipeline(next http.Handler) http.Handler {
+	next = withAPIConcurrencyLimit(next, 32)
+	next = a.withResponseCache(next)
+	next = a.withLifecycleGuard(next)
+	return withSecurityHeaders(next)
 }
 
 func withAPIConcurrencyLimit(next http.Handler, maximum int) http.Handler {
@@ -150,11 +155,23 @@ func withAPIConcurrencyLimit(next http.Handler, maximum int) http.Handler {
 			return
 		}
 
+		// If cancellation precedes admission, both select cases would be
+		// ready while a slot is free. Do not randomly execute a dead request.
+		if r.Context().Err() != nil {
+			http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+			return
+		}
+
 		select {
 		case slots <- struct{}{}:
 			defer func() {
 				<-slots
 			}()
+			// Cancellation can also race with acquiring the slot.
+			if r.Context().Err() != nil {
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return
+			}
 
 			next.ServeHTTP(w, r)
 
@@ -177,14 +194,20 @@ func withAPIConcurrencyLimit(next http.Handler, maximum int) http.Handler {
 
 func (a *application) withLifecycleGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.closing.Load() && strings.HasPrefix(r.URL.Path, "/api/") {
-
-			http.Error(
-				w,
-				"Приложение завершает работу.\n",
-				http.StatusServiceUnavailable,
-			)
-			return
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			// The application context can already be canceled even before the
+			// closing flag is visible. Reject every API route, including
+			// uncached profile mutations, before it reaches its handler.
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return
+			}
+			// Cached API hits bypass the backend concurrency limiter. Reject
+			// canceled requests here before they can replay a cached response.
+			if r.Context().Err() != nil {
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return
+			}
 		}
 
 		next.ServeHTTP(w, r)
@@ -193,30 +216,6 @@ func (a *application) withLifecycleGuard(next http.Handler) http.Handler {
 
 func withSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !validRequestHost(r.Host) {
-			http.Error(
-				w,
-				"Недопустимый адрес запроса.\n",
-				http.StatusForbidden,
-			)
-			return
-		}
-
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			if strings.EqualFold(
-				r.Header.Get("Sec-Fetch-Site"),
-				"cross-site",
-			) || !validRequestOrigin(r) {
-
-				http.Error(
-					w,
-					"Запрос из другого источника отклонён.\n",
-					http.StatusForbidden,
-				)
-				return
-			}
-		}
-
 		w.Header().Set(
 			"Cache-Control",
 			"no-store",
@@ -249,6 +248,32 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 			"X-Frame-Options",
 			"DENY",
 		)
+
+		// Apply browser protections even when host/origin validation rejects
+		// a request. In particular, forbidden responses must be no-store.
+		if !validRequestHost(r.Host) {
+			http.Error(
+				w,
+				"Недопустимый адрес запроса.\n",
+				http.StatusForbidden,
+			)
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			if strings.EqualFold(
+				r.Header.Get("Sec-Fetch-Site"),
+				"cross-site",
+			) || !validRequestOrigin(r) {
+
+				http.Error(
+					w,
+					"Запрос из другого источника отклонён.\n",
+					http.StatusForbidden,
+				)
+				return
+			}
+		}
 
 		next.ServeHTTP(w, r)
 	})
@@ -327,6 +352,14 @@ func decodeJSONRequest(
 			)
 		}
 
+		return false
+	}
+
+	// Both callers require a JSON object. encoding/json accepts a top-level
+	// null into a struct without error, which could turn a profile update into
+	// a zero-value replacement and erase saved preferences.
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		http.Error(w, "Некорректные данные запроса.\n", http.StatusBadRequest)
 		return false
 	}
 
@@ -479,10 +512,17 @@ func methodNotAllowed(
 }
 
 type captureWriter struct {
-	header      http.Header
-	status      int
-	body        bytes.Buffer
-	wroteHeader bool
+	header       http.Header
+	committed    http.Header
+	status       int
+	body         bytes.Buffer
+	wroteHeader  bool
+	destination  http.ResponseWriter
+	maxBodyBytes int64
+	streaming    bool
+	beforeStream func() error
+	duringStream func() error
+	aborted      error
 }
 
 func newCaptureWriter() *captureWriter {
@@ -492,8 +532,46 @@ func newCaptureWriter() *captureWriter {
 	}
 }
 
+// Oversized responses bypass the cache and stream to the client without
+// buffering the complete response in memory.
+func newStreamingCaptureWriter(destination http.ResponseWriter, maxBodyBytes int64) *captureWriter {
+	writer := newCaptureWriter()
+	writer.destination = destination
+	writer.maxBodyBytes = maxBodyBytes
+	return writer
+}
+
 func (w *captureWriter) Header() http.Header {
 	return w.header
+}
+
+// Match net/http.ResponseWriter: header mutations after WriteHeader do not
+// change the response already committed to the client. Until WriteHeader,
+// an endpoint that writes no body may still set its response headers.
+func (w *captureWriter) responseHeaders() http.Header {
+	if w.wroteHeader {
+		return w.committed
+	}
+	return w.header
+}
+
+// forwardCapturedHeaders keeps explicit endpoint cache policy identical on
+// buffered and streamed responses. The outer security middleware sets a
+// default Cache-Control: no-store; appending the endpoint's explicit policy
+// would create conflicting fields on a miss but not on a cache hit. Other
+// headers are appended to retain the security middleware's protections.
+func forwardCapturedHeaders(destination, captured http.Header) {
+	for name, values := range captured {
+		if len(values) == 0 {
+			continue
+		}
+		if strings.EqualFold(name, "Cache-Control") {
+			destination.Del("Cache-Control")
+		}
+		for _, value := range values {
+			destination.Add(name, value)
+		}
+	}
 }
 
 func (w *captureWriter) WriteHeader(status int) {
@@ -502,20 +580,96 @@ func (w *captureWriter) WriteHeader(status int) {
 	}
 
 	w.status = status
+	w.committed = w.header.Clone()
 	w.wroteHeader = true
 }
 
 func (w *captureWriter) Write(data []byte) (int, error) {
+	if w.aborted != nil {
+		return 0, w.aborted
+	}
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
 
+	if w.destination != nil && !w.streaming &&
+		int64(len(data)) > w.maxBodyBytes-int64(w.body.Len()) {
+		// Streaming commits directly to the client, bypassing the buffered
+		// response's post-backend lifecycle check. Reject a canceled request
+		// before committing any of its pending headers or body bytes.
+		if w.beforeStream != nil {
+			if err := w.beforeStream(); err != nil {
+				w.aborted = err
+				w.body.Reset()
+				return 0, err
+			}
+		}
+		forwardCapturedHeaders(w.destination.Header(), w.responseHeaders())
+		w.destination.WriteHeader(w.status)
+		w.streaming = true
+		if w.body.Len() > 0 {
+			// The destination can initiate shutdown while committing headers.
+			// Recheck before releasing a prefix buffered before WriteHeader.
+			if w.duringStream != nil {
+				if err := w.duringStream(); err != nil {
+					w.aborted = err
+					w.body.Reset()
+					return 0, err
+				}
+			}
+			// The destination may report a short write without an error.
+			// Never silently discard the missing prefix and append later data.
+			n, err := w.destination.Write(w.body.Bytes())
+			if err == nil && n != w.body.Len() {
+				err = io.ErrShortWrite
+			}
+			w.body.Reset()
+			if err != nil {
+				w.aborted = err
+				return 0, err
+			}
+		}
+	}
+	if w.streaming {
+		// After headers have been committed, an HTTP error response is no
+		// longer possible. Stop writing further body chunks on cancellation
+		// or shutdown without appending an error page to the partial stream.
+		if w.duringStream != nil {
+			if err := w.duringStream(); err != nil {
+				w.aborted = err
+				return 0, err
+			}
+		}
+		n, err := w.destination.Write(data)
+		if err == nil && n != len(data) {
+			err = io.ErrShortWrite
+		}
+		if err != nil {
+			// Once the stream is committed, a failed write cannot be
+			// repaired. Reject subsequent writes instead of appending a
+			// misleading continuation to the truncated representation.
+			w.aborted = err
+		}
+		return n, err
+	}
 	return w.body.Write(data)
 }
 
 func isCacheableResponseRequest(r *http.Request) bool {
 	if r == nil || r.Method != http.MethodGet {
 		return false
+	}
+
+	// Never reuse a response for credentialed, ranged, conditional or
+	// explicitly uncached requests. Credentials must not enter the cache key.
+	for _, name := range []string{
+		"Authorization", "Cookie", "Range", "If-Match", "If-None-Match",
+		"If-Modified-Since", "If-Unmodified-Since", "If-Range",
+		"Cache-Control", "Pragma",
+	} {
+		if len(r.Header.Values(name)) != 0 {
+			return false
+		}
 	}
 
 	path := r.URL.Path
@@ -525,6 +679,11 @@ func isCacheableResponseRequest(r *http.Request) bool {
 		path == "/api/items" ||
 		strings.HasPrefix(path, "/api/items/") ||
 		path == "/api/recipes" ||
+		path == "/api/titles" ||
+		strings.HasPrefix(path, "/api/titles/") ||
+		path == "/api/transformations" ||
+		strings.HasPrefix(path, "/api/transformations/") ||
+		path == "/api/world-source-monsters" ||
 		path == "/api/monster-world-drops" ||
 		path == "/api/monsters" ||
 		strings.HasPrefix(path, "/api/monsters/")
@@ -537,53 +696,287 @@ func (a *application) withResponseCache(next http.Handler) http.Handler {
 			return
 		}
 
-		key := r.URL.RequestURI()
-
-		if entry, ok := a.cache.Get(key); ok {
-			for name, value := range entry.header {
-				w.Header().Set(
-					name,
-					value,
-				)
-			}
-
-			w.WriteHeader(entry.status)
-			_, _ = w.Write(entry.body)
+		key := cacheKeyForRequest(r)
+		if len(key) > maxCacheKeyBytes {
+			next.ServeHTTP(w, r)
 			return
 		}
 
-		captured := newCaptureWriter()
+		writeCached := func(entry cacheEntry) {
+			// A lookup or singleflight wake-up can outlive the initial lifecycle
+			// check. Never replay a cached body after cancellation or shutdown.
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return
+			}
+			if r.Context().Err() != nil {
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return
+			}
+			for name, value := range entry.header {
+				w.Header().Set(name, value)
+			}
+			// A cache hit must not reset the client's max-age freshness clock.
+			// Age is generated at replay time, not copied from the origin.
+			elapsed := entry.ttl - time.Until(entry.expiresAt)
+			if elapsed < 0 {
+				elapsed = 0
+			}
+			w.Header().Set("Age", strconv.FormatInt(int64(elapsed/time.Second), 10))
+			w.WriteHeader(entry.status)
+			// Shutdown can begin inside the destination's WriteHeader call.
+			// HTTP status is committed, but the cached body is not yet sent.
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) || r.Context().Err() != nil {
+				return
+			}
+			_, _ = w.Write(entry.body)
+		}
+		if entry, ok := a.cache.Get(key); ok {
+			writeCached(entry)
+			return
+		}
+
+		var appDone <-chan struct{}
+		if a.ctx != nil {
+			appDone = a.ctx.Done()
+		}
+		// A response can be private, oversized or otherwise uncacheable.
+		// Retry leadership rather than allowing all waiters to flood the
+		// backend after the first response fails to populate the cache.
+		for {
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return
+			}
+			if r.Context().Err() != nil {
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return
+			}
+			ready, release := a.cache.beginLoad(key)
+			if ready == nil {
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return
+			}
+			if release != nil {
+				defer release()
+				// Recheck after acquiring leadership; shutdown can race.
+				if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+					http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+					return
+				}
+				// Another producer might have populated the cache since Get.
+				if entry, ok := a.cache.Get(key); ok {
+					writeCached(entry)
+					return
+				}
+				break
+			}
+			select {
+			case <-ready:
+				if entry, ok := a.cache.Get(key); ok {
+					writeCached(entry)
+					return
+				}
+			case <-r.Context().Done():
+				// Request cancellation and application shutdown may both
+				// become ready while a follower waits. Preserve the 503
+				// shutdown priority regardless of which select arm wins.
+				if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+					http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+					return
+				}
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return
+			case <-appDone:
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return
+			}
+		}
+
+		captured := newStreamingCaptureWriter(w, a.cache.maxEntryBytes)
+		captured.duringStream = func() error {
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+				return context.Canceled
+			}
+			return r.Context().Err()
+		}
+		captured.beforeStream = func() error {
+			if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+				http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+				return context.Canceled
+			}
+			if err := r.Context().Err(); err != nil {
+				http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+				return err
+			}
+			return nil
+		}
 		next.ServeHTTP(captured, r)
+		if captured.streaming || captured.aborted != nil {
+			return
+		}
+		// The backend may finish after the request was canceled or shutdown
+		// started. A buffered response has not been committed yet: discard it
+		// rather than publishing its body or storing it in the cache.
+		if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) {
+			http.Error(w, "Приложение завершает работу.\n", http.StatusServiceUnavailable)
+			return
+		}
+		if r.Context().Err() != nil {
+			http.Error(w, "Запрос отменён.\n", http.StatusRequestTimeout)
+			return
+		}
 
 		body := captured.body.Bytes()
 
-		for name, values := range captured.header {
-			for _, value := range values {
-				w.Header().Add(
-					name,
-					value,
-				)
-			}
-		}
+		forwardCapturedHeaders(w.Header(), captured.responseHeaders())
 
 		w.WriteHeader(captured.status)
-		_, _ = w.Write(body)
-
-		headers := map[string]string{}
-
-		for _, name := range []string{
-			"Content-Type",
-		} {
-			if value := captured.header.Get(name); value != "" {
-				headers[name] = value
-			}
+		// A request may be canceled while WriteHeader commits the response.
+		// Never start sending the buffered body after that cancellation.
+		if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) || r.Context().Err() != nil {
+			return
+		}
+		written, writeErr := w.Write(body)
+		// A failed or short destination write cannot be treated as a
+		// successfully delivered representation. The status is already
+		// committed, but the incomplete response must not seed the cache.
+		if writeErr != nil || written != len(body) {
+			return
 		}
 
-		a.cache.Put(
-			key,
-			captured.status,
-			headers,
-			body,
-		)
+		// Cancellation or shutdown may begin while the destination commits
+		// the buffered body. The response is already visible and cannot be
+		// replaced with an error, but it must not populate the shared cache.
+		if a.closing.Load() || (a.ctx != nil && a.ctx.Err() != nil) || r.Context().Err() != nil {
+			return
+		}
+
+		headers, ok := cacheableResponseHeaders(captured.responseHeaders())
+		if !ok {
+			return
+		}
+
+		lifetime, ok := responseCacheLifetime(captured.responseHeaders(), a.cache.ttl)
+		if !ok {
+			return
+		}
+		a.cache.PutWithTTL(key, captured.status, headers, body, lifetime)
 	})
+}
+
+// responseCacheLifetime caps internal freshness to both max-age and s-maxage.
+// This in-process cache is shared across HTTP requests, so s-maxage=0 must
+// disable reuse even when max-age is positive. Invalid or duplicate freshness
+// directives fail closed rather than silently extending the cached lifetime.
+// The caller has already rejected multi-valued Cache-Control headers.
+func responseCacheLifetime(header http.Header, configured time.Duration) (time.Duration, bool) {
+	value := header.Get("Cache-Control")
+	if value == "" {
+		return configured, configured > 0
+	}
+	seenMaxAge, seenSharedMaxAge := false, false
+	lifetime := configured
+	for _, directive := range strings.Split(value, ",") {
+		parts := strings.SplitN(strings.TrimSpace(directive), "=", 2)
+		name := strings.ToLower(strings.TrimSpace(parts[0]))
+		if name != "max-age" && name != "s-maxage" {
+			continue
+		}
+		if len(parts) != 2 || (name == "max-age" && seenMaxAge) || (name == "s-maxage" && seenSharedMaxAge) {
+			return 0, false
+		}
+		if name == "max-age" {
+			seenMaxAge = true
+		} else {
+			seenSharedMaxAge = true
+		}
+		age := strings.TrimSpace(parts[1])
+		if len(age) >= 2 && age[0] == '"' && age[len(age)-1] == '"' {
+			age = age[1 : len(age)-1]
+		}
+		if age == "" {
+			return 0, false
+		}
+		for _, digit := range age {
+			if digit < '0' || digit > '9' {
+				return 0, false
+			}
+		}
+		seconds, err := strconv.ParseUint(age, 10, 64)
+		if err != nil || seconds == 0 {
+			return 0, false
+		}
+		// Compare before multiplying to avoid time.Duration overflow.
+		if seconds <= uint64(lifetime/time.Second) {
+			lifetime = time.Duration(seconds) * time.Second
+		}
+	}
+	return lifetime, lifetime > 0
+}
+
+// cacheableResponseHeaders retains only metadata that the cache can reproduce
+// byte-for-byte. An unknown or repeated field must bypass the cache: silently
+// dropping it on replay can change response semantics or privacy guarantees.
+func cacheableResponseHeaders(header http.Header) (map[string]string, bool) {
+	cached := make(map[string]string, len(header))
+	for rawName, values := range header {
+		name := http.CanonicalHeaderKey(rawName)
+		switch name {
+		case "Content-Type", "Content-Language", "Cache-Control", "Etag", "Last-Modified":
+		default:
+			return nil, false
+		}
+		if len(values) != 1 || values[0] == "" {
+			return nil, false
+		}
+		if _, exists := cached[name]; exists {
+			return nil, false
+		}
+		if name == "Cache-Control" && hasPrivateCacheDirective(values[0]) {
+			return nil, false
+		}
+		cached[name] = values[0]
+	}
+	return cached, true
+}
+
+// cacheKeyForRequest distinguishes representations without caching credentials.
+// Length-prefixed fields avoid delimiter collisions between different headers.
+func cacheKeyForRequest(r *http.Request) string {
+	var key strings.Builder
+	key.WriteString(r.URL.RequestURI())
+	for _, name := range []string{"Accept", "Accept-Language", "Accept-Encoding", "Accept-Charset"} {
+		values := r.Header.Values(name)
+		key.WriteByte(0)
+		key.WriteString(name)
+		for _, value := range values {
+			key.WriteByte(0)
+			key.WriteString(strconv.Itoa(len(value)))
+			key.WriteByte(':')
+			key.WriteString(value)
+		}
+	}
+	return key.String()
+}
+
+// hasPrivateCacheDirective implements conservative caching: do not retain
+// representations explicitly marked private, non-cacheable or immediately stale.
+func hasPrivateCacheDirective(value string) bool {
+	for _, directive := range strings.Split(value, ",") {
+		parts := strings.SplitN(strings.TrimSpace(directive), "=", 2)
+		name := strings.ToLower(strings.TrimSpace(parts[0]))
+		switch name {
+		case "private", "no-store", "no-cache":
+			return true
+		case "max-age":
+			if len(parts) == 2 {
+				age := strings.Trim(strings.TrimSpace(parts[1]), `"`)
+				if parsed, err := strconv.ParseUint(age, 10, 64); err == nil && parsed == 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

@@ -39,11 +39,53 @@ def expected_metadata_markers(goarch: str) -> tuple[tuple[str, str], ...]:
 
 
 def missing_metadata_categories(metadata: str, goarch: str = "amd64") -> list[str]:
-    return [
-        category
-        for category, marker in expected_metadata_markers(goarch)
-        if marker not in metadata
-    ]
+    records = [line.lstrip(" \t").split("\t") for line in metadata.splitlines()]
+    missing = []
+    for category, marker in expected_metadata_markers(goarch):
+        if category == "WAILS_VERSION":
+            expected = ["dep", *marker.split("\t")]
+            candidates = [
+                (index, record) for index, record in enumerate(records)
+                if len(record) >= 2 and record[:2] == expected[:2]
+            ]
+            present = len(candidates) == 1 and (
+                candidates[0][1][:3] == expected
+                and (
+                    len(candidates[0][1]) == 3
+                    or (
+                        len(candidates[0][1]) == 4
+                        and re.fullmatch(r"h1:[A-Za-z0-9+/=]+", candidates[0][1][3])
+                        is not None
+                    )
+                )
+                and not (
+                    candidates[0][0] + 1 < len(records)
+                    and records[candidates[0][0] + 1][:1] == ["=>"]
+                )
+            )
+        else:
+            key = marker.split("=", 1)[0] + "="
+            candidates = [
+                record for record in records
+                if len(record) >= 2
+                and record[0] == "build"
+                and record[1].startswith(key)
+            ]
+            present = candidates == [["build", marker]]
+        if not present:
+            missing.append(category)
+    return missing
+
+
+def pinned_go_compiler_matches(metadata: str) -> bool:
+    """The first `go version -m` line identifies the actual compiler."""
+    pinned = (Path(__file__).resolve().parents[1] / ".go-version").read_text(
+        encoding="utf-8"
+    ).strip()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", pinned):
+        return False
+    header = metadata.splitlines()[0] if metadata else ""
+    return re.fullmatch(r".+: go" + re.escape(pinned), header) is not None
 
 
 def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
@@ -59,6 +101,8 @@ def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
     if result.returncode:
         raise SystemExit(f"could not read Go build metadata ({goarch})")
     metadata = result.stdout
+    if not pinned_go_compiler_matches(metadata):
+        raise SystemExit(f"release Go compiler version mismatch ({goarch})")
     missing = missing_metadata_categories(metadata, goarch)
     if missing:
         raise SystemExit(
@@ -72,11 +116,25 @@ def verify_executable(path: Path, version: str, goarch: str, go: str) -> None:
         raise SystemExit(f"development marker found in release executable ({goarch})")
     lowered = binary.lower()
     absolute_path_patterns = (
-        rb"(?:^|[\x00\r\n ])/(?:home|workspace)/[^/\x00\r\n ]+/",
-        rb"[a-z]:\\users\\[^\\\x00\r\n ]+\\",
-        rb"(?:^|[\x00\r\n ])/tmp/iris[^/\x00\r\n ]*/",
+        rb"(?:^|[\x00\r\n\t \"'=]|file://)/(?:home|workspace|users|root)/[^/\x00\r\n\t \"'=]+(?:/|[\x00\r\n\t \"'=]|$)",
+        rb"[a-z]:[\\/]+users[\\/]+[^\\/\x00\r\n\t \"'=]+(?:[\\/]|[\x00\r\n\t \"'=]|$)",
+        rb"(?:^|[\x00\r\n\t \"'=]|file://)/tmp/iris[^/\x00\r\n\t \"'=]*(?:/|[\x00\r\n\t \"'=]|$)",
+        rb"(?:\\\\|//)[a-z0-9_.-]+[\\/](?:[a-z0-9_$.-]+[\\/])?users[\\/][^\\/\x00\r\n\t \"'=]+(?:[\\/]|[\x00\r\n\t \"'=]|$)",
+        # Legacy Windows profiles can still appear through junctions or UNC shares.
+        rb"""[a-z]:[\\/]+documents and settings[\\/]+[^\\/\x00\r\n\t"\'=]+(?:[\\/]|[\x00\r\n\t "\'=]|$)""",
+        rb"""(?:\\\\|//)[a-z0-9_.-]+[\\/](?:[a-z0-9_$.-]+[\\/])?documents and settings[\\/]+[^\\/\x00\r\n\t"\'=]+(?:[\\/]|[\x00\r\n\t "\'=]|$)""",
     )
-    if any(re.search(pattern, lowered) for pattern in absolute_path_patterns):
+    # Windows resources can store paths as UTF-16LE rather than UTF-8/ASCII.
+    # Check both byte alignments because a PE string may start at an odd offset.
+    wide_patterns = tuple(pattern.decode("ascii") for pattern in absolute_path_patterns)
+    wide_texts = (
+        binary.decode("utf-16le", errors="ignore").lower(),
+        binary[1:].decode("utf-16le", errors="ignore").lower(),
+    )
+    if (
+        any(re.search(pattern, lowered) for pattern in absolute_path_patterns)
+        or any(re.search(pattern, text) for text in wide_texts for pattern in wide_patterns)
+    ):
         raise SystemExit(
             f"absolute developer path found in release executable ({goarch})"
         )

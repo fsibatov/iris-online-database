@@ -22,7 +22,7 @@ def verify_release_assets(directory: Path, version: str) -> None:
         raise SystemExit("release asset directory is missing")
 
     expected = set(expected_asset_names(version))
-    actual = {entry.name for entry in directory.iterdir() if entry.is_file()}
+    actual = {entry.name for entry in directory.iterdir()}
     if actual != expected:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
@@ -32,6 +32,11 @@ def verify_release_assets(directory: Path, version: str) -> None:
         if extra:
             categories.append(f"extra={len(extra)}")
         raise SystemExit("release asset set mismatch (" + ",".join(categories) + ")")
+
+    for name in expected:
+        path = directory / name
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit(f"release asset must be a regular file: {name}")
 
     executable_names = [target.filename(version) for target in RELEASE_TARGETS]
     for name in executable_names:
@@ -47,7 +52,7 @@ def verify_release_assets(directory: Path, version: str) -> None:
         text = raw.decode("ascii")
     except UnicodeDecodeError as error:
         raise SystemExit("SHA256SUMS.txt must be ASCII") from error
-    lines = [line for line in text.splitlines() if line]
+    lines = text.replace("\r\n", "\n").removesuffix("\n").split("\n")
     if len(lines) != len(executable_names):
         raise SystemExit("SHA256SUMS.txt must contain exactly three entries")
 
@@ -63,6 +68,9 @@ def verify_release_assets(directory: Path, version: str) -> None:
 
     if set(manifest) != set(executable_names):
         raise SystemExit("SHA256SUMS.txt asset names do not match release policy")
+
+    if list(manifest) != executable_names:
+        raise SystemExit("SHA256SUMS.txt entries are not in canonical order")
 
     for name in executable_names:
         actual_digest = hashlib.sha256((directory / name).read_bytes()).hexdigest()

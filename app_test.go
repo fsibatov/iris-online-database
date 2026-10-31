@@ -581,8 +581,12 @@ func TestMonster10042PreservesSevenDirectSlots(t *testing.T) {
 		}
 	}
 	last := direct[6]
-	if last.ChanceOverflow || last.ChanceTotal != 100 || len(last.Choices) != 1 || last.Choices[0].GroupID != 6000501 {
-		t.Fatalf("last slot was not reduced to one guaranteed group: %#v", last)
+	if last.SourceLine != 2483 || !last.ChanceOverflow || last.ChanceTotal != 150 || len(last.Choices) != 2 {
+		t.Fatalf("last slot did not preserve both source group entries: %#v", last)
+	}
+	if last.Choices[0].GroupID != 6000501 || last.Choices[0].Chance != 100 || last.Choices[0].BaseSelectionChance != 100 ||
+		last.Choices[1].GroupID != 6000501 || last.Choices[1].Chance != 50 || last.Choices[1].BaseSelectionChance != 0 {
+		t.Fatalf("last slot source weights or effective chances changed: %#v", last.Choices)
 	}
 }
 
@@ -1420,7 +1424,7 @@ func TestDropProbabilitiesAreAlwaysVisibleWithoutHiddenMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(data)
-	for _, expected := range []string{"formatChance(choice.baseSelectionChance)", "Шанс группы", "за одну основную попытку", "Как рассчитывается шанс"} {
+	for _, expected := range []string{"formatKnownChance(choice.baseSelectionChance)", "formatKnownChance(item.baseAttemptChance)", "Шанс группы", "за одну основную попытку", "Как рассчитывается шанс"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("probability marker is missing: %s", expected)
 		}
@@ -2087,7 +2091,8 @@ func TestEmbeddedGameDatabaseMatchesConfirmedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := fmt.Sprintf("%x", sha256.Sum256(data))
-	const want = "7c3698494233696f2f5728ef17f7e13953159191f966d77b90742dbced23875e"
+	// Kiss source line 2483 includes both ordered group 6000501 entries.
+	const want = "9ad89a2fabff0f3a8375277545ee068e093f3935d09ea746508148ca1a79004b"
 	if got != want {
 		t.Fatalf("embedded game database changed: got %s want %s", got, want)
 	}
@@ -2639,7 +2644,8 @@ func TestDesktopFrontendPersistenceHasNoBrowserHeartbeat(t *testing.T) {
 		"clearTimeout(profileTimer)",
 		"data-monster-drops-host",
 		"renderMonsterDropShell()",
-		"renderMonsterDropGroup(groupIndex, showAll = false)",
+		"renderMonsterDropGroup(groupIndex, showAll = false, preserveShown = false)",
+		"renderMonsterDropGroup(targetIndex, false, true)",
 		"DROP_BATCH",
 		"data-drop-more",
 		"data-drop-all",
