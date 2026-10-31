@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import pathlib
 import struct
-from xml.etree import ElementTree
+from xml.etree import (
+    ElementTree,  # nosec B405 - bounded manifest; DTD/entities rejected
+)
 
 from release_targets import RELEASE_TARGETS
 
@@ -327,7 +329,7 @@ def verify_manifest(manifest: str, goarch: str) -> None:
     ):
         raise SystemExit(f"application manifest XML is unsafe ({goarch})")
     try:
-        root = ElementTree.fromstring(manifest)
+        root = ElementTree.fromstring(manifest)  # nosec B314 - 128 KiB bound; DTD/entities blocked
     except ElementTree.ParseError as error:
         raise SystemExit(f"application manifest XML is invalid ({goarch})") from error
 

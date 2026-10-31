@@ -636,79 +636,84 @@ def main() -> int:
             page.locator('[data-drop-group="0"] summary').click()
             page.locator('[data-drop-group="1"] summary').click()
             # Distinct source positions must remain distinct even when group IDs repeat.
-            assert page.locator("[data-drop-group]").count() == 2, (
-                "duplicate source group collapsed"
-            )
-            assert (
+            if not (page.locator("[data-drop-group]").count() == 2):
+                raise AssertionError("duplicate source group collapsed")
+            if not (
                 page.locator('[data-drop-group="0"] summary strong').inner_text()
                 == page.locator('[data-drop-group="1"] summary strong').inner_text()
-            )
+            ):
+                raise AssertionError()
             page.locator('[data-drop-more="0"]').click()
-            assert page.locator('[data-drop-group-host="0"] a').count() == 36, (
-                "expanded before click"
-            )
+            if not (page.locator('[data-drop-group-host="0"] a').count() == 36):
+                raise AssertionError("expanded before click")
             page.locator('[data-drop-group-host="0"] a[href="#item/1002"]').click()
             page.locator('.detail-page[data-route="item/1002"]').wait_for(timeout=8000)
             page.locator(".detail-page [data-route-back]").click()
             page.locator('.detail-page[data-route="monster/42"]').wait_for(timeout=8000)
             page.wait_for_timeout(220)
-            assert (
+            if not (
                 page.locator(".lazy-monster-drops").get_attribute("open") is not None
-            ), "monster drops collapsed on return"
-            assert (
+            ):
+                raise AssertionError("monster drops collapsed on return")
+            if not (
                 page.locator('[data-drop-group="0"]').get_attribute("open") is not None
-            ), "selected drop group collapsed on return"
-            assert (
+            ):
+                raise AssertionError("selected drop group collapsed on return")
+            if not (
                 page.locator('[data-drop-group="1"]').get_attribute("open") is not None
-            ), "other expanded group collapsed on return"
-            assert page.locator('[data-drop-group-host="0"] a').count() == 36, (
-                "loaded drop items reset on return"
-            )
+            ):
+                raise AssertionError("other expanded group collapsed on return")
+            if not (page.locator('[data-drop-group-host="0"] a').count() == 36):
+                raise AssertionError("loaded drop items reset on return")
             selected = page.locator('[data-drop-group-host="0"] a[href="#item/1002"]')
-            assert (
-                "is-active-drop" in (selected.get_attribute("class") or "").split()
-            ), "active item not highlighted"
-            assert selected.get_attribute("aria-current") == "true", (
-                "active item has no accessible indication"
-            )
-            assert (
+            if "is-active-drop" not in (selected.get_attribute("class") or "").split():
+                raise AssertionError("active item not highlighted")
+            if not (selected.get_attribute("aria-current") == "true"):
+                raise AssertionError("active item has no accessible indication")
+            if not (
                 selected.evaluate("(node) => getComputedStyle(node).boxShadow")
                 != "none"
-            ), "active item has no visible accent"
+            ):
+                raise AssertionError("active item has no visible accent")
             saved_scroll, current_scroll = page.evaluate(
                 """() => [history.state.monsterDropView.scrollY, window.scrollY]"""
             )
-            assert abs(saved_scroll - current_scroll) < 24, (
-                f"drop scroll position not restored: {saved_scroll} -> {current_scroll}"
-            )
-            assert (
+            if not (abs(saved_scroll - current_scroll) < 24):
+                raise AssertionError(
+                    f"drop scroll position not restored: {saved_scroll} -> {current_scroll}"
+                )
+            if (
                 page.locator(
                     '[data-drop-group-host="1"] a[href="#item/1002"]'
                 ).get_attribute("aria-current")
-                is None
-            ), "unselected source group incorrectly highlighted"
-            assert (
+                is not None
+            ):
+                raise AssertionError("unselected source group incorrectly highlighted")
+            if (
                 page.locator(
                     '[data-drop-group-host="0"] a[href="#item/1003"]'
                 ).get_attribute("aria-current")
-                is None
-            ), "unselected row highlighted"
+                is not None
+            ):
+                raise AssertionError("unselected row highlighted")
             page.locator('[data-drop-group-host="0"] a[href="#item/1003"]').click()
             page.locator('.detail-page[data-route="item/1003"]').wait_for(timeout=8000)
             page.locator(".detail-page [data-route-back]").click()
             page.locator('.detail-page[data-route="monster/42"]').wait_for(timeout=8000)
-            assert (
+            if not (
                 page.locator(
                     '[data-drop-group-host="0"] a[href="#item/1003"]'
                 ).get_attribute("aria-current")
                 == "true"
-            ), "subsequently viewed item not selected"
-            assert (
+            ):
+                raise AssertionError("subsequently viewed item not selected")
+            if (
                 page.locator(
                     '[data-drop-group-host="0"] a[href="#item/1002"]'
                 ).get_attribute("aria-current")
-                is None
-            ), "previous selection persisted"
+                is not None
+            ):
+                raise AssertionError("previous selection persisted")
             page.locator(
                 ".lazy-monster-drops > summary"
             ).click()  # Closed at selection time.
@@ -716,22 +721,23 @@ def main() -> int:
             page.locator('.detail-page[data-route="item/1001"]').wait_for(timeout=8000)
             page.locator(".detail-page [data-route-back]").click()
             page.locator('.detail-page[data-route="monster/42"]').wait_for(timeout=8000)
-            assert page.locator(".lazy-monster-drops").get_attribute("open") is None, (
-                "intentionally closed drop section reopened"
-            )
-            assert (
+            if page.locator(".lazy-monster-drops").get_attribute("open") is not None:
+                raise AssertionError("intentionally closed drop section reopened")
+            if not (
                 page.locator('.drop-preview-list a[href="#item/1001"]').get_attribute(
                     "aria-current"
                 )
                 == "true"
-            ), "preview selection not highlighted"
+            ):
+                raise AssertionError("preview selection not highlighted")
             page.evaluate("document.documentElement.dataset.theme = 'light'")
-            assert (
+            if not (
                 page.locator('.drop-preview-list a[href="#item/1001"]').evaluate(
                     "(node) => getComputedStyle(node).boxShadow"
                 )
                 != "none"
-            ), "active preview not visible in light theme"
+            ):
+                raise AssertionError("active preview not visible in light theme")
             # Item source must navigate to its exact source slot and choice, not
             # merely to the monster header. This is an actual primary-source ID.
             page.evaluate("window.location.hash = '#item/809022'")
@@ -742,30 +748,33 @@ def main() -> int:
             # Primary RAR: line 2483 selects group 6000501 at 100% then 50%.
             # The second choice has a known 0% effective chance, not unknown odds.
             zero_source = page.locator('.source-list a[href^="#monster/10042"]')
-            assert zero_source.locator(".source-chance strong").inner_text() == "0%", (
-                "known-zero source chance rendered as missing"
-            )
+            if not (zero_source.locator(".source-chance strong").inner_text() == "0%"):
+                raise AssertionError("known-zero source chance rendered as missing")
             page.locator('.source-list a[href^="#monster/10042"]').click()
             page.locator('.detail-page[data-route="monster/10042"]').wait_for(
                 timeout=8000
             )
-            assert (
+            if not (
                 page.locator('[data-drop-group="1"]').get_attribute("open") is not None
-            ), "exact primary-source choice not expanded"
-            assert (
+            ):
+                raise AssertionError("exact primary-source choice not expanded")
+            if (
                 "Шанс группы: 0%"
-                in page.locator('[data-drop-group="1"] summary small').inner_text()
-            ), "known-zero group chance rendered as missing"
-            assert (
+                not in page.locator('[data-drop-group="1"] summary small').inner_text()
+            ):
+                raise AssertionError("known-zero group chance rendered as missing")
+            if (
                 "за одну основную попытку: 0%"
-                in page.locator('[data-drop-group-host="1"] a small').inner_text()
-            ), "known-zero item chance rendered as missing"
-            assert (
+                not in page.locator('[data-drop-group-host="1"] a small').inner_text()
+            ):
+                raise AssertionError("known-zero item chance rendered as missing")
+            if not (
                 page.locator(
                     '[data-drop-group-host="1"] a[href="#item/809022"]'
                 ).get_attribute("aria-current")
                 == "true"
-            ), "source item not selected"
+            ):
+                raise AssertionError("source item not selected")
             page.locator('[data-drop-group-host="1"] a[href="#item/809022"]').click()
             page.locator('.detail-page[data-route="item/809022"]').wait_for(
                 timeout=8000
@@ -774,15 +783,17 @@ def main() -> int:
             page.locator('.detail-page[data-route="monster/10042"]').wait_for(
                 timeout=8000
             )
-            assert (
+            if not (
                 page.locator('[data-drop-group="1"]').get_attribute("open") is not None
-            ), "source group collapsed after return"
-            assert (
+            ):
+                raise AssertionError("source group collapsed after return")
+            if not (
                 page.locator(
                     '[data-drop-group-host="1"] a[href="#item/809022"]'
                 ).get_attribute("aria-current")
                 == "true"
-            ), "source item highlight lost after return"
+            ):
+                raise AssertionError("source item highlight lost after return")
             # Duplicate item rows must navigate to their exact primary-source
             # position, not silently select the first identical item ID.
             page.evaluate("window.location.hash = '#item/180201'")
@@ -791,18 +802,20 @@ def main() -> int:
             )
             page.locator('[data-open-details="item-sources"]').click()
             links = page.locator('.source-list a[href^="#monster/8?"]')
-            assert links.count() == 2, "primary-source duplicate rows collapsed"
-            assert (
+            if not (links.count() == 2):
+                raise AssertionError("primary-source duplicate rows collapsed")
+            if not (
                 links.nth(1).get_attribute("href")
                 == "#monster/8?item=180201&line=42&choice=3&position=6"
-            ), "duplicate row source position lost"
+            ):
+                raise AssertionError("duplicate row source position lost")
             links.nth(1).click()
             page.locator('.detail-page[data-route="monster/8"]').wait_for(timeout=8000)
             selected = page.locator('[data-drop-group-host="2"] a[aria-current="true"]')
-            assert selected.count() == 1, "duplicate item rows both highlighted"
-            assert selected.get_attribute("data-drop-item-position") == "6", (
-                "wrong duplicate item row selected"
-            )
+            if not (selected.count() == 1):
+                raise AssertionError("duplicate item rows both highlighted")
+            if not (selected.get_attribute("data-drop-item-position") == "6"):
+                raise AssertionError("wrong duplicate item row selected")
             selected.click()
             page.locator('.detail-page[data-route="item/180201"]').wait_for(
                 timeout=8000
@@ -810,10 +823,11 @@ def main() -> int:
             page.locator(".detail-page [data-route-back]").click()
             page.locator('.detail-page[data-route="monster/8"]').wait_for(timeout=8000)
             selected = page.locator('[data-drop-group-host="2"] a[aria-current="true"]')
-            assert (
+            if not (
                 selected.count() == 1
                 and selected.get_attribute("data-drop-item-position") == "6"
-            ), "duplicate selection not restored"
+            ):
+                raise AssertionError("duplicate selection not restored")
             page.evaluate("window.location.hash = '#monster/135'")
             page.locator('.detail-page[data-route="monster/135"]').wait_for(
                 timeout=8000
@@ -823,24 +837,27 @@ def main() -> int:
             chance_text = page.locator(
                 '[data-drop-group-host="0"] a[href="#item/2406"] small'
             ).inner_text()
-            assert "0,000125%" in chance_text, (
-                f"primary-source rare chance rounded inaccurately: {chance_text}"
-            )
+            if "0,000125%" not in chance_text:
+                raise AssertionError(
+                    f"primary-source rare chance rounded inaccurately: {chance_text}"
+                )
             page.locator('[data-drop-group-host="0"] a[href="#item/2406"]').click()
             page.locator('.detail-page[data-route="item/2406"]').wait_for(timeout=8000)
             page.locator(".detail-page [data-route-back]").click()
             page.locator('.detail-page[data-route="monster/135"]').wait_for(
                 timeout=8000
             )
-            assert (
+            if not (
                 page.locator('[data-drop-group="0"]').get_attribute("open") is not None
-            )
-            assert (
+            ):
+                raise AssertionError()
+            if not (
                 page.locator(
                     '[data-drop-group-host="0"] a[href="#item/2406"]'
                 ).get_attribute("aria-current")
                 == "true"
-            )
+            ):
+                raise AssertionError()
             page.evaluate("window.location.hash = '#monster/104'")
             page.locator('.detail-page[data-route="monster/104"]').wait_for(
                 timeout=8000
@@ -850,9 +867,10 @@ def main() -> int:
             tiny_chance = page.locator(
                 '[data-drop-group-host="0"] a[href="#item/131651"] small'
             ).inner_text()
-            assert "0,0000034986%" in tiny_chance, (
-                f"primary-source tiny chance truncated: {tiny_chance}"
-            )
+            if "0,0000034986%" not in tiny_chance:
+                raise AssertionError(
+                    f"primary-source tiny chance truncated: {tiny_chance}"
+                )
             page.locator('[data-drop-group-host="0"] a[href="#item/131651"]').click()
             page.locator('.detail-page[data-route="item/131651"]').wait_for(
                 timeout=8000
@@ -861,25 +879,28 @@ def main() -> int:
             page.locator('.detail-page[data-route="monster/104"]').wait_for(
                 timeout=8000
             )
-            assert (
+            if not (
                 page.locator('[data-drop-group="0"]').get_attribute("open") is not None
-            )
-            assert (
+            ):
+                raise AssertionError()
+            if not (
                 page.locator(
                     '[data-drop-group-host="0"] a[href="#item/131651"]'
                 ).get_attribute("aria-current")
                 == "true"
-            )
+            ):
+                raise AssertionError()
             page.evaluate("window.location.hash = '#monster/10026'")
             page.locator('.detail-page[data-route="monster/10026"]').wait_for(
                 timeout=8000
             )
-            assert (
+            if (
                 "80%"
-                in page.locator(
+                not in page.locator(
                     '.drop-preview-list a[href="#item/868026"]'
                 ).inner_text()
-            ), "independent slots were summed"
+            ):
+                raise AssertionError("independent slots were summed")
             page.locator(".lazy-monster-drops > summary").click()
             page.locator('[data-drop-group="0"] summary').click()
             page.locator('[data-drop-group="1"] summary').click()
@@ -891,61 +912,67 @@ def main() -> int:
             page.locator('.detail-page[data-route="monster/10026"]').wait_for(
                 timeout=8000
             )
-            assert (
+            if not (
                 page.locator('[data-drop-group="0"]').get_attribute("open") is not None
-            )
-            assert (
+            ):
+                raise AssertionError()
+            if not (
                 page.locator('[data-drop-group="1"]').get_attribute("open") is not None
-            )
-            assert (
+            ):
+                raise AssertionError()
+            if not (
                 page.locator(
                     '[data-drop-group-host="1"] a[aria-current="true"]'
                 ).count()
                 == 1
-            ), "chosen primary source not highlighted"
-            assert (
+            ):
+                raise AssertionError("chosen primary source not highlighted")
+            if not (
                 page.locator(
                     '[data-drop-group-host="0"] a[aria-current="true"]'
                 ).count()
                 == 0
-            ), "unselected primary source highlighted"
+            ):
+                raise AssertionError("unselected primary source highlighted")
             page.evaluate("window.location.hash = '#item/835243'")
             page.locator('.detail-page[data-route="item/835243"]').wait_for(
                 timeout=8000
             )
             page.locator('[data-open-details="item-sources"]').click()
             quantity_sources = page.locator('.source-list a[href^="#monster/148?"]')
-            assert quantity_sources.count() == 2, "source quantity variants collapsed"
-            assert "Количество: ×5" not in quantity_sources.nth(0).inner_text(), (
-                "single quantity mislabelled"
-            )
-            assert "Количество: ×5" in quantity_sources.nth(1).inner_text(), (
-                "five-unit primary source quantity omitted"
-            )
-            assert (
+            if not (quantity_sources.count() == 2):
+                raise AssertionError("source quantity variants collapsed")
+            if not ("Количество: ×5" not in quantity_sources.nth(0).inner_text()):
+                raise AssertionError("single quantity mislabelled")
+            if "Количество: ×5" not in quantity_sources.nth(1).inner_text():
+                raise AssertionError("five-unit primary source quantity omitted")
+            if not (
                 quantity_sources.nth(1).get_attribute("href").endswith("&position=3")
-            ), "quantity source position lost"
+            ):
+                raise AssertionError("quantity source position lost")
             quantity_sources.nth(1).click()
             page.locator('.detail-page[data-route="monster/148"]').wait_for(
                 timeout=8000
             )
-            assert (
+            if (
                 "1,1%"
-                in page.locator(
+                not in page.locator(
                     '.drop-preview-list a[href="#item/835243"]'
                 ).inner_text()
-            ), "same-group duplicate rows were not summed"
-            assert (
+            ):
+                raise AssertionError("same-group duplicate rows were not summed")
+            if not (
                 page.locator('[data-drop-group="0"]').get_attribute("open") is not None
-            ), "quantity source group not expanded"
+            ):
+                raise AssertionError("quantity source group not expanded")
             selected = page.locator('[data-drop-group-host="0"] a[aria-current="true"]')
-            assert (
+            if not (
                 selected.count() == 1
                 and selected.get_attribute("data-drop-item-position") == "3"
-            ), "wrong quantity source selected"
-            assert "×5" in selected.inner_text(), (
-                "quantity missing on monster group row"
-            )
+            ):
+                raise AssertionError("wrong quantity source selected")
+            if "×5" not in selected.inner_text():
+                raise AssertionError("quantity missing on monster group row")
             selected.click()
             page.locator('.detail-page[data-route="item/835243"]').wait_for(
                 timeout=8000
@@ -954,21 +981,24 @@ def main() -> int:
             page.locator('.detail-page[data-route="monster/148"]').wait_for(
                 timeout=8000
             )
-            assert (
+            if not (
                 page.locator(
                     '[data-drop-group-host="0"] a[data-drop-item-position="3"]'
                 ).get_attribute("aria-current")
                 == "true"
-            ), "quantity branch lost on return"
+            ):
+                raise AssertionError("quantity branch lost on return")
             page.evaluate("window.location.hash = '#monster/10052'")
             page.locator('.detail-page[data-route="monster/10052"]').wait_for(
                 timeout=8000
             )
             preview = page.locator('.drop-preview-list a[href="#item/144001001"]')
-            assert preview.count() == 1, "primary item duplicated in preview"
-            assert "3,225%" in preview.inner_text(), (
-                f"primary same-item group probabilities not summed: {preview.inner_text()}"
-            )
+            if not (preview.count() == 1):
+                raise AssertionError("primary item duplicated in preview")
+            if "3,225%" not in preview.inner_text():
+                raise AssertionError(
+                    f"primary same-item group probabilities not summed: {preview.inner_text()}"
+                )
             preview.click()
             page.locator('.detail-page[data-route="item/144001001"]').wait_for(
                 timeout=8000
@@ -977,43 +1007,49 @@ def main() -> int:
             page.locator('.detail-page[data-route="monster/10052"]').wait_for(
                 timeout=8000
             )
-            assert (
+            if not (
                 page.locator(
                     '.drop-preview-list a[href="#item/144001001"]'
                 ).get_attribute("aria-current")
                 == "true"
-            )
+            ):
+                raise AssertionError()
             # Preview selection identifies an item, not a specific source group.
             # Primary monster 10052 lists this item in groups 1005201 and 1005221;
             # neither group should claim an active source until one is chosen.
             page.locator(".lazy-monster-drops > summary").click()
             page.locator('[data-drop-group="0"] summary').click()
             page.locator('[data-drop-group="2"] summary').click()
-            assert (
+            if not (
                 page.locator('[data-drop-group="0"] a[aria-current="true"]').count()
                 == 0
-            ), "preview falsely selected first source group"
-            assert (
+            ):
+                raise AssertionError("preview falsely selected first source group")
+            if not (
                 page.locator('[data-drop-group="2"] a[aria-current="true"]').count()
                 == 0
-            ), "preview falsely selected second source group"
+            ):
+                raise AssertionError("preview falsely selected second source group")
             page.evaluate("window.location.hash = '#monster/10029'")
             page.locator('.detail-page[data-route="monster/10029"]').wait_for(
                 timeout=8000
             )
             page.locator(".lazy-monster-drops summary").click()
             group = page.locator('[data-drop-group="0"]')
-            assert "Состав не указан" in group.locator("summary small").inner_text(), (
-                "unknown primary group composition incorrectly reported as zero items"
-            )
+            if "Состав не указан" not in group.locator("summary small").inner_text():
+                raise AssertionError(
+                    "unknown primary group composition incorrectly reported as zero items"
+                )
             group.locator("summary").click()
             group.get_by_text("Состав группы отсутствует в исходных данных.").wait_for(
                 timeout=5000
             )
-            assert (
-                "Состав группы отсутствует в исходных данных." in group.inner_text()
-            ), "unknown primary drop list incorrectly presented as a known empty list"
-            assert not errors, f"frontend JavaScript exceptions: {errors}"
+            if "Состав группы отсутствует в исходных данных." not in group.inner_text():
+                raise AssertionError(
+                    "unknown primary drop list incorrectly presented as a known empty list"
+                )
+            if errors:
+                raise AssertionError(f"frontend JavaScript exceptions: {errors}")
         finally:
             browser.close()
     print("Monster drop navigation smoke: PASS")

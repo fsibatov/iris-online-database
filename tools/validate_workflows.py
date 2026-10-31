@@ -59,6 +59,16 @@ class UniqueKeySafeLoader(yaml.SafeLoader):
         return super().construct_mapping(node, deep=deep)
 
 
+def _load_workflow_yaml(source: str, *, preserve_literal_keys: bool = False) -> object:
+    """Parse one YAML document with a safe constructor and free parser resources."""
+    loader_type = yaml.BaseLoader if preserve_literal_keys else UniqueKeySafeLoader
+    loader = loader_type(source)
+    try:
+        return loader.get_single_data()
+    finally:
+        loader.dispose()
+
+
 def invalid_job_env_contexts(document: dict[object, object]) -> int:
     jobs = document.get("jobs")
     if not isinstance(jobs, dict):
@@ -235,7 +245,7 @@ def ci_trigger_failures(ci: str, *, require_dispatch: bool = True) -> int:
     """Require unfiltered main push/PR; CI also requires manual dispatch."""
     try:
         # BaseLoader preserves the literal `on` key (SafeLoader treats it as True).
-        document = yaml.load(ci, Loader=yaml.BaseLoader)
+        document = _load_workflow_yaml(ci, preserve_literal_keys=True)
     except yaml.YAMLError:
         return 1
     if not isinstance(document, dict):
@@ -357,7 +367,7 @@ def release_policy_failures() -> int:
     # Dependency review must run on every pull request. A present action/job
     # is not a security gate if its workflow is manual-only or PR-filtered.
     try:
-        dependency_events = yaml.load(dependency, Loader=yaml.BaseLoader)
+        dependency_events = _load_workflow_yaml(dependency, preserve_literal_keys=True)
     except yaml.YAMLError:
         dependency_events = None
     triggers = (
@@ -376,9 +386,9 @@ def release_policy_failures() -> int:
         "Native Windows Wails release matrix",
     }
     try:
-        ci_document = yaml.load(ci, Loader=UniqueKeySafeLoader)
-        codeql_document = yaml.load(codeql, Loader=UniqueKeySafeLoader)
-        dependency_document = yaml.load(dependency, Loader=UniqueKeySafeLoader)
+        ci_document = _load_workflow_yaml(ci)
+        codeql_document = _load_workflow_yaml(codeql)
+        dependency_document = _load_workflow_yaml(dependency)
     except yaml.YAMLError:
         ci_document = codeql_document = dependency_document = None
     jobs = ci_document.get("jobs") if isinstance(ci_document, dict) else None
@@ -836,7 +846,7 @@ def main() -> int:
     for path in workflows:
         text = path.read_text(encoding="utf-8")
         try:
-            document = yaml.load(text, Loader=UniqueKeySafeLoader)
+            document = _load_workflow_yaml(text)
         except yaml.YAMLError:
             failures += 1
             continue
