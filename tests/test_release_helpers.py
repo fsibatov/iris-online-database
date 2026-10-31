@@ -295,7 +295,16 @@ class ReleaseHelperTests(unittest.TestCase):
             packages[package] = version
         self.assertEqual(
             set(packages),
-            {"bandit", "pip", "pip-audit", "playwright", "pyyaml", "ruff"},
+            {
+                "bandit",
+                "certifi",
+                "filelock",
+                "pip",
+                "pip-audit",
+                "playwright",
+                "pyyaml",
+                "ruff",
+            },
         )
         for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
             text = workflow.read_text(encoding="utf-8")
