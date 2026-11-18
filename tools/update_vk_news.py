@@ -651,7 +651,9 @@ def update_file(output: Path, payload: dict[str, object]) -> bool:
         try:
             old = json.loads(output.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError("Existing VK news data cannot be read; file preserved") from exc
+            raise RuntimeError(
+                "Existing VK news data cannot be read; file preserved"
+            ) from exc
     old_id = old.get("post_id")
     new_id = persisted.get("post_id")
     if isinstance(old_id, int) and isinstance(new_id, int) and new_id < old_id:
@@ -669,7 +671,9 @@ def update_file(output: Path, payload: dict[str, object]) -> bool:
         print(f"VK: без изменений, последняя запись #{persisted['post_id']}")
         return False
     output.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".tmp", dir=output.parent)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             stream.write(json.dumps(persisted, ensure_ascii=False, indent=2) + "\n")

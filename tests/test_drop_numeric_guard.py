@@ -10,8 +10,7 @@ class DirectDropNumericGuardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "synthetic_dropn.txt"
             path.write_text(
-                "header\n"
-                f"monster\t123\t0\t0\t0\t0\t{group_text}\t{chance_text}\n",
+                f"header\nmonster\t123\t0\t0\t0\t0\t{group_text}\t{chance_text}\n",
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(

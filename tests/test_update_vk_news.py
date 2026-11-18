@@ -244,7 +244,9 @@ class VKNewsUpdaterTests(unittest.TestCase):
                 self.skipTest("symlinks unavailable")
             self.assertTrue(module.update_file(output, payload))
             self.assertEqual(protected.read_text(encoding="utf-8"), "DO NOT CHANGE")
-            self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["post_id"], 62336)
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8"))["post_id"], 62336
+            )
 
     def test_update_file_does_not_rewrite_unchanged_post(self):
         payload = {
