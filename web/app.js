@@ -96,8 +96,6 @@
   const suggestions = document.getElementById('searchSuggestions');
   const serverSelect = document.getElementById('serverSelect');
   const battlegroundStatus = document.getElementById('battlegroundStatus');
-  const battlegroundName = document.getElementById('battlegroundName');
-  const battlegroundStart = document.getElementById('battlegroundStart');
   const battlegroundCountdown = document.getElementById('battlegroundCountdown');
   const versionStatus = document.getElementById('versionStatus');
   const versionStatusText = document.getElementById('versionStatusText');
@@ -369,10 +367,8 @@
   }
 
   function renderBattlegroundStatus() {
-    if (!battlegroundStatus || !battlegroundName || !battlegroundStart || !battlegroundCountdown) return;
+    if (!battlegroundStatus || !battlegroundCountdown) return;
     const next = battlegroundState();
-    battlegroundName.textContent = next.name;
-    battlegroundStart.textContent = next.start;
     battlegroundCountdown.textContent = next.countdown;
     const label = `Ближайшее состязание: ${next.name} в ${next.start} по времени сервера, через ${next.countdown}`;
     battlegroundStatus.setAttribute('aria-label', label);

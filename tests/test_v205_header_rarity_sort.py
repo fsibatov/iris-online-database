@@ -213,17 +213,13 @@ class Version205HeaderRaritySortTests(unittest.TestCase):
         )
 
     def test_header_statuses_remain_compact_without_clipping_primary_text(self):
-        self.assertIn(
-            ".battleground-status strong { color: var(--text); font-weight: 700; }",
-            self.styles,
-        )
-        self.assertNotIn(".battleground-status strong { max-width:", self.styles)
-        self.assertNotIn(".battleground-status strong { display: none; }", self.styles)
+        self.assertIn(".battleground-status { justify-content: center; }", self.styles)
+        self.assertIn(".battleground-countdown { min-width:", self.styles)
+        self.assertNotIn('id="battlegroundName"', self.html)
+        self.assertNotIn('id="battlegroundStart"', self.html)
+        self.assertNotIn(".battleground-status strong", self.styles)
         self.assertNotIn(".version-status-text { max-width:", self.styles)
-        self.assertIn(
-            ".battleground-status time, .version-status-text { display: none; }",
-            self.styles,
-        )
+        self.assertIn(".version-status-text { display: none; }", self.styles)
         self.assertIn("grid-template-columns: minmax(0, 1fr) auto;", self.styles)
         self.assertIn(".version-status-prefix { display: none; }", self.styles)
         self.assertIn(".version-status-prefix-short { display: inline; }", self.styles)

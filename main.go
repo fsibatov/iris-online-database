@@ -694,6 +694,12 @@ func itemForPresentation(item *Item) Item {
 		return Item{}
 	}
 	presented := *item
+	if strings.TrimSpace(presented.Subcategory) == "---------" {
+		presented.Subcategory = ""
+	}
+	if strings.TrimSpace(presented.SubCategory) == "---------" {
+		presented.SubCategory = ""
+	}
 	if item.Category != "Оружие/щит" || item.MainCategoryID != 1 || item.MiddleCategoryID == 602 {
 		return presented
 	}
@@ -2712,7 +2718,9 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		presented := itemForPresentation(item)
-		subcategories[presented.Subcategory] = true
+		if presented.Subcategory != "" {
+			subcategories[presented.Subcategory] = true
+		}
 		if qualityName := strings.TrimSpace(item.Quality); qualityName != "" {
 			if qualityID, ok := qualities[qualityName]; !ok || item.QualityID < qualityID {
 				qualities[qualityName] = item.QualityID
