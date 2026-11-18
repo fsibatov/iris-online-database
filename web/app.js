@@ -24,6 +24,18 @@
     try { return JSON.parse(value); } catch (_) { return fallback; }
   }
 
+  function readLocalSetting(key, fallback = null) {
+    try { return localStorage.getItem(key) ?? fallback; } catch (_) { return fallback; }
+  }
+
+  function writeLocalSetting(key, value) {
+    try { localStorage.setItem(key, value); } catch (_) {}
+  }
+
+  function removeLocalSetting(key) {
+    try { localStorage.removeItem(key); } catch (_) {}
+  }
+
   function defaultItemFilters() {
     return { q: '', category: '', subcategory: '', quality: '', knownSource: '', minLevel: '', maxLevel: '', sort: 'name', order: 'asc', page: 1 };
   }
@@ -50,21 +62,21 @@
     state.recipeFilters = defaultRecipeFilters();
     state.titleFilters = defaultTitleFilters();
     state.transformationFilters = defaultTransformationFilters();
-    localStorage.removeItem('iris-item-filters');
-    localStorage.removeItem('iris-monster-filters');
+    removeLocalSetting('iris-item-filters');
+    removeLocalSetting('iris-monster-filters');
   }
 
-  const legacyFavorites = safeJSON(localStorage.getItem('iris-favorites') || '[]', []);
+  const legacyFavorites = safeJSON(readLocalSetting('iris-favorites') || '[]', []);
   const state = {
     meta: null,
     effectSpecs: {},
     route: 'home',
-    server: localStorage.getItem('iris-server') || 'kiss',
-    theme: localStorage.getItem('iris-theme') || 'dark',
-    view: localStorage.getItem('iris-view') || 'list',
+    server: readLocalSetting('iris-server') || 'kiss',
+    theme: readLocalSetting('iris-theme') || 'dark',
+    view: readLocalSetting('iris-view') || 'list',
     favorites: new Set(Array.isArray(legacyFavorites) ? legacyFavorites : []),
     history: [],
-    recentlyViewed: safeJSON(localStorage.getItem(RECENT_VIEWED_KEY) || '[]', []),
+    recentlyViewed: safeJSON(readLocalSetting(RECENT_VIEWED_KEY) || '[]', []),
     profileLoaded: false,
     itemFilters: defaultItemFilters(),
     monsterFilters: defaultMonsterFilters(),
@@ -2314,7 +2326,7 @@
       favoritesMigrated = true;
     });
     if (favoritesMigrated) {
-      localStorage.setItem('iris-favorites', JSON.stringify([...state.favorites]));
+      writeLocalSetting('iris-favorites', JSON.stringify([...state.favorites]));
       scheduleProfileSave(0);
     }
     state.favoritePage = Math.max(1, Number(data.page || 1));
@@ -2487,7 +2499,7 @@
   function toggleTheme() {
     state.theme = state.theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = state.theme;
-    localStorage.setItem('iris-theme', state.theme);
+    writeLocalSetting('iris-theme', state.theme);
     updateThemeChrome();
     if (routeBase() === 'home' && state.vkNews.available) {
       state.vkNews.refreshToken += 1;
@@ -2850,7 +2862,7 @@
       await api('/api/user-data', { method: 'PUT', signal: profileController.signal, body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' } });
       if (revision === profileRevision) {
         profileDirty = false;
-        localStorage.removeItem(PROFILE_PENDING_KEY);
+        removeLocalSetting(PROFILE_PENDING_KEY);
       }
     } catch (_) {
       profileDirty = true;
@@ -2888,14 +2900,14 @@
   }
 
   function persistFavorites() {
-    localStorage.setItem('iris-favorites', JSON.stringify([...state.favorites]));
+    writeLocalSetting('iris-favorites', JSON.stringify([...state.favorites]));
     scheduleProfileSave(0);
   }
 
   async function loadUserProfile() {
-    const localRecentlyViewed = safeJSON(localStorage.getItem(RECENT_VIEWED_KEY) || '[]', []);
+    const localRecentlyViewed = safeJSON(readLocalSetting(RECENT_VIEWED_KEY) || '[]', []);
     const serverProfile = await api('/api/user-data');
-    const pending = safeJSON(localStorage.getItem(PROFILE_PENDING_KEY) || 'null', null);
+    const pending = safeJSON(readLocalSetting(PROFILE_PENDING_KEY) || 'null', null);
     const pendingProfile = pending && pending.profile && pending.profile.schemaVersion === 1 ? pending.profile : null;
     const profile = pendingProfile || serverProfile;
     if (profile.migrated) {
@@ -2907,7 +2919,7 @@
       if (Array.isArray(profile.recentlyViewed) && profile.recentlyViewed.length) state.recentlyViewed = profile.recentlyViewed;
       else if (Array.isArray(localRecentlyViewed)) state.recentlyViewed = localRecentlyViewed;
     } else {
-      state.history = safeJSON(localStorage.getItem('iris-history') || '[]', []);
+      state.history = safeJSON(readLocalSetting('iris-history') || '[]', []);
     }
     resetTransientCatalogFilters();
     globalSearch.value = '';
@@ -2919,12 +2931,12 @@
     normalizeDependentFilters('titles');
     document.documentElement.dataset.theme = state.theme;
     updateThemeChrome();
-    localStorage.setItem('iris-server', state.server);
-    localStorage.setItem('iris-theme', state.theme);
-    localStorage.setItem('iris-view', state.view);
-    localStorage.setItem('iris-favorites', JSON.stringify([...state.favorites]));
+    writeLocalSetting('iris-server', state.server);
+    writeLocalSetting('iris-theme', state.theme);
+    writeLocalSetting('iris-view', state.view);
+    writeLocalSetting('iris-favorites', JSON.stringify([...state.favorites]));
     state.recentlyViewed = normalizedRecentViewedEntries();
-    localStorage.setItem(RECENT_VIEWED_KEY, JSON.stringify(state.recentlyViewed));
+    writeLocalSetting(RECENT_VIEWED_KEY, JSON.stringify(state.recentlyViewed));
     state.profileLoaded = true;
     const migratedLocalRecentlyViewed = state.recentlyViewed.length > 0 && !(Array.isArray(profile.recentlyViewed) && profile.recentlyViewed.length);
     if (pendingProfile || !profile.migrated || migratedLocalRecentlyViewed) scheduleProfileSave(0);
@@ -2981,7 +2993,7 @@
     const viewButton = event.target.closest('[data-view]');
     if (viewButton) {
       state.view = viewButton.dataset.view;
-      localStorage.setItem('iris-view', state.view);
+      writeLocalSetting('iris-view', state.view);
       main.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button === viewButton));
       const data = state.catalog?.data;
       const results = main.querySelector('[data-catalog-results]');
@@ -3146,7 +3158,7 @@
   serverSelect.addEventListener('change', () => {
     const previous = state.server;
     state.server = serverSelect.value;
-    localStorage.setItem('iris-server', state.server);
+    writeLocalSetting('iris-server', state.server);
     scheduleProfileSave(0);
     if (previous !== state.server) {
       const serverLabel = serverSelect.options[serverSelect.selectedIndex]?.text || state.server;
