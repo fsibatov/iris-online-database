@@ -700,6 +700,16 @@ func itemForPresentation(item *Item) Item {
 	if strings.TrimSpace(presented.SubCategory) == "---------" {
 		presented.SubCategory = ""
 	}
+	if strings.TrimSpace(presented.MiddleCategory) == "---------" {
+		presented.MiddleCategory = ""
+	}
+	// Raw item tables may encode the missing middle category as a suffix of
+	// TypeLine (e.g. "[Расходники] ---------"). Keep the real category.
+	if strings.HasSuffix(strings.TrimSpace(presented.TypeLine), " ---------") {
+		presented.TypeLine = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(presented.TypeLine), " ---------"))
+	} else if strings.TrimSpace(presented.TypeLine) == "---------" {
+		presented.TypeLine = ""
+	}
 	if item.Category != "Оружие/щит" || item.MainCategoryID != 1 || item.MiddleCategoryID == 602 {
 		return presented
 	}

@@ -770,7 +770,7 @@ if (!formatChanceOdds(0.0000034986).includes('28,6')) process.exit(5);
                 "} else if (type === 'data')"
             )
         ]
-        self.assertIn("Хоуп (Original)", about)
+        self.assertIn("Xoyn (The Original)", about)
         self.assertIn("https://github.com/fsibatov/iris-online-database", about)
 
     def test_descriptions_remain_conditional(self):

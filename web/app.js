@@ -108,6 +108,7 @@
   const suggestions = document.getElementById('searchSuggestions');
   const serverSelect = document.getElementById('serverSelect');
   const battlegroundStatus = document.getElementById('battlegroundStatus');
+  const battlegroundName = document.getElementById('battlegroundName');
   const battlegroundCountdown = document.getElementById('battlegroundCountdown');
   const versionStatus = document.getElementById('versionStatus');
   const versionStatusText = document.getElementById('versionStatusText');
@@ -379,8 +380,9 @@
   }
 
   function renderBattlegroundStatus() {
-    if (!battlegroundStatus || !battlegroundCountdown) return;
+    if (!battlegroundStatus || !battlegroundName || !battlegroundCountdown) return;
     const next = battlegroundState();
+    battlegroundName.textContent = next.name;
     battlegroundCountdown.textContent = next.countdown;
     const label = `Ближайшее состязание: ${next.name} в ${next.start} по времени сервера, через ${next.countdown}`;
     battlegroundStatus.setAttribute('aria-label', label);
@@ -2809,7 +2811,7 @@
     closeMoreMenu();
     if (type === 'about') {
       infoDialogTitle.textContent = 'О приложении';
-      infoDialogBody.innerHTML = `<p>Iris Online Database — локальная база данных о предметах, монстрах, титулах, рецептах и источниках получения.</p><dl class="kv-list"><div><dt>Версия</dt><dd>${APP_VERSION}</dd></div><div><dt>Автор</dt><dd>Хоуп (Original)</dd></div><div><dt>Данные</dt><dd>Хранятся и обрабатываются локально на этом компьютере</dd></div><div><dt>Проверка обновлений</dt><dd>${updateStatusHTML()}</dd></div></dl><p class="muted-copy">Приложение обращается к GitHub, чтобы проверить версию и загрузить сохранённую копию последней публичной записи ВКонтакте. Напрямую к ВКонтакте оно не подключается. Профиль, история, избранное и поисковые запросы в GitHub не отправляются.</p><div class="legal-notice"><p><strong>© 2026 Iris Online Database</strong></p><p>Iris Online Database — неофициальное фанатское приложение для Iris Online. Проект не связан с разработчиками, издателями или правообладателями игры. Все игровые материалы, названия, логотипы и товарные знаки принадлежат их соответствующим правообладателям.</p><p><a class="external-link" href="https://irisonline.ru/" target="_blank" rel="noopener noreferrer" aria-label="Официальный сайт игры Iris Online — открыть в новой вкладке">Официальный сайт игры: irisonline.ru ${icons.external}</a></p><p><a class="external-link" href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external" aria-label="GitHub проекта Iris Online Database — открыть в новой вкладке">GitHub проекта ${icons.external}</a></p></div>`;
+      infoDialogBody.innerHTML = `<p>Iris Online Database — локальная база данных о предметах, монстрах, титулах, рецептах и источниках получения.</p><dl class="kv-list"><div><dt>Версия</dt><dd>${APP_VERSION}</dd></div><div><dt>Автор</dt><dd>Xoyn (The Original)</dd></div><div><dt>Данные</dt><dd>Хранятся и обрабатываются локально на этом компьютере</dd></div><div><dt>Проверка обновлений</dt><dd>${updateStatusHTML()}</dd></div></dl><p class="muted-copy">Приложение обращается к GitHub, чтобы проверить версию и загрузить сохранённую копию последней публичной записи ВКонтакте. Напрямую к ВКонтакте оно не подключается. Профиль, история, избранное и поисковые запросы в GitHub не отправляются.</p><div class="legal-notice"><p><strong>© 2026 Iris Online Database</strong></p><p>Iris Online Database — неофициальное фанатское приложение для Iris Online. Проект не связан с разработчиками, издателями или правообладателями игры. Все игровые материалы, названия, логотипы и товарные знаки принадлежат их соответствующим правообладателям.</p><p><a class="external-link" href="https://irisonline.ru/" target="_blank" rel="noopener noreferrer" aria-label="Официальный сайт игры Iris Online — открыть в новой вкладке">Официальный сайт игры: irisonline.ru ${icons.external}</a></p><p><a class="external-link" href="https://github.com/fsibatov/iris-online-database" target="_blank" rel="noopener noreferrer external" aria-label="GitHub проекта Iris Online Database — открыть в новой вкладке">GitHub проекта ${icons.external}</a></p></div>`;
     } else if (type === 'data') {
       const meta = state.meta?.meta || {};
       const server = activeServerMeta();

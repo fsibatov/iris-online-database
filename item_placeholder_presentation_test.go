@@ -5,17 +5,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestPlaceholderSubcategoryPresentation(t *testing.T) {
-	source := &Item{Category: "Расходники", Subcategory: "---------", SubCategory: "---------"}
+	source := &Item{Category: "Расходники", Subcategory: "---------", SubCategory: "---------", MiddleCategory: "---------", TypeLine: "[Расходники] ---------"}
 	result := itemForPresentation(source)
 	if result.Subcategory != "" || result.SubCategory != "" {
 		t.Fatalf("placeholder leaked into item presentation: catalog=%q, source=%q", result.Subcategory, result.SubCategory)
 	}
-	if source.Subcategory != "---------" || source.SubCategory != "---------" {
+	if result.TypeLine != "[Расходники]" || result.MiddleCategory != "" {
+		t.Fatalf("placeholder leaked into item type/category: type=%q, middle=%q", result.TypeLine, result.MiddleCategory)
+	}
+	if source.Subcategory != "---------" || source.SubCategory != "---------" || source.MiddleCategory != "---------" || source.TypeLine != "[Расходники] ---------" {
 		t.Fatal("presentation mutated the source item")
 	}
 	named := itemForPresentation(&Item{Category: "Расходники", Subcategory: "Материалы", SubCategory: "Материалы"})
@@ -59,5 +63,43 @@ func TestPlaceholderSubcategoryNotReturnedByFilters(t *testing.T) {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) == "---------" {
 			t.Fatalf("placeholder leaked into filter options: %q", value)
 		}
+	}
+}
+
+func TestPlaceholderIsNotVisibleInItemSummaryAndDetail(t *testing.T) {
+	if err := ensureLoaded(); err != nil {
+		t.Fatal(err)
+	}
+	var selected *Item
+	for i := range store.data.Items {
+		item := &store.data.Items[i]
+		if item.Subcategory == "---------" && strings.Contains(item.TypeLine, "---------") {
+			selected = item
+			break
+		}
+	}
+	if selected == nil {
+		t.Skip("no placeholder item in bundled data")
+	}
+	summary := itemSummary(selected)
+	for _, field := range []string{"typeLine", "subcategory"} {
+		if strings.Contains(summary[field].(string), "---------") {
+			t.Fatalf("placeholder in item summary %s: %v", field, summary[field])
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/items/"+strconv.Itoa(selected.ID)+"?server=original", nil)
+	recorder := httptest.NewRecorder()
+	handleItem(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("item detail status %d", recorder.Code)
+	}
+	var payload struct {
+		Item Item `json:"item"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(payload.Item.TypeLine, "---------") || payload.Item.Subcategory == "---------" || payload.Item.SubCategory == "---------" || payload.Item.MiddleCategory == "---------" {
+		t.Fatalf("placeholder leaked into detail: %+v", payload.Item)
 	}
 }

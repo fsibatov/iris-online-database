@@ -65,15 +65,15 @@ class QualityContractTests(unittest.TestCase):
         self.assertNotIn("Характеристики предметов одинаковы", self.readme)
 
     def test_release_style_author_is_consistent(self):
-        author = "Хоуп (Original)"
+        author = "Xoyn (The Original)"
         self.assertIn(f"Автор программы: {author}", self.changelog)
         self.assertIn(f"Автор программы: {author}", self.readme)
         self.assertIn(author, self.html)
         self.assertIn(author, self.script)
         self.assertIn(author, self.wails)
-        self.assertNotIn("Хоуп (The Original)", self.html)
-        self.assertNotIn("Хоуп (The Original)", self.script)
-        self.assertNotIn("Хоуп (The Original)", self.wails)
+        self.assertNotIn("Хоуп (Original)", self.html)
+        self.assertNotIn("Хоуп (Original)", self.script)
+        self.assertNotIn("Хоуп (Original)", self.wails)
 
     def test_architecture_documents_title_route(self):
         self.assertIn("`#title/…`", self.architecture)

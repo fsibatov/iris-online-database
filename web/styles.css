@@ -1248,7 +1248,8 @@ a.link-row:hover { background: var(--surface-2); }
   line-height: 1;
   white-space: nowrap;
 }
-.battleground-status { justify-content: center; }
+.battleground-status { justify-content: center; gap: 8px; }
+.battleground-name { color: var(--text); font-weight: 600; white-space: nowrap; }
 .battleground-countdown { min-width: 38px; color: var(--good); font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; }
 .version-status {
   justify-content: flex-start;
