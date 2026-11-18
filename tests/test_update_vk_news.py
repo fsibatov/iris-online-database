@@ -223,6 +223,29 @@ class VKNewsUpdaterTests(unittest.TestCase):
         self.assertNotIn(payload, category)
         self.assertNotIn("private-user", category)
 
+    def test_update_file_does_not_follow_predictable_temp_symlink(self):
+        payload = {
+            "schema": 1,
+            "community_url": module.COMMUNITY_URL,
+            "post_id": 62336,
+            "post_url": "https://vk.ru/wall-59626511_62336",
+            "text": "Новость",
+            "published_at": "",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            protected = directory / "protected.txt"
+            protected.write_text("DO NOT CHANGE", encoding="utf-8")
+            output = directory / "latest-vk.json"
+            link = output.with_suffix(".json.tmp")
+            try:
+                link.symlink_to(protected)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks unavailable")
+            self.assertTrue(module.update_file(output, payload))
+            self.assertEqual(protected.read_text(encoding="utf-8"), "DO NOT CHANGE")
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["post_id"], 62336)
+
     def test_update_file_does_not_rewrite_unchanged_post(self):
         payload = {
             "schema": 1,
@@ -299,6 +322,20 @@ class VKNewsUpdaterTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "older post"):
                 module.update_file(path, stale)
             self.assertEqual(path.read_bytes(), original)
+
+    def test_update_file_preserves_malformed_existing_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "latest-vk.json"
+            original = '{"post_id": 999, "text":'
+            path.write_text(original, encoding="utf-8")
+            payload = {
+                "post_id": 1000,
+                "post_url": f"https://vk.ru/wall-{module.COMMUNITY_ID}_1000",
+                "text": "A valid public preview with sufficient content to display.",
+            }
+            with self.assertRaises(RuntimeError):
+                module.update_file(path, payload)
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
 
     def test_redirect_is_rejected_as_invalid_post_url(self):
         payload = {

@@ -16,7 +16,9 @@ from typing import Any
 CHANCE_SCALE = 10_000.0
 
 
-def parse_pairs(columns: list[str], start: int) -> list[dict[str, Any]]:
+def parse_pairs(
+    columns: list[str], start: int, *, strict_numeric: bool = False
+) -> list[dict[str, Any]]:
     choices: list[dict[str, Any]] = []
     for index in range(start, len(columns) - 1, 2):
         group_text = columns[index].strip()
@@ -27,6 +29,8 @@ def parse_pairs(columns: list[str], start: int) -> list[dict[str, Any]]:
             group_id = int(group_text)
             raw_chance = int(chance_text)
         except ValueError:
+            if strict_numeric:
+                raise ValueError("invalid numeric drop pair") from None
             continue
         if group_id <= 0 or raw_chance <= 0:
             continue
@@ -73,7 +77,12 @@ def parse_direct_slots(path: Path) -> dict[str, list[dict[str, Any]]]:
                     continue
             except ValueError:
                 continue
-            choices = parse_pairs(columns, 6)
+            try:
+                choices = parse_pairs(columns, 6, strict_numeric=True)
+            except ValueError:
+                raise ValueError(
+                    f"invalid direct-drop numeric pair at line {source_line}"
+                ) from None
             if choices:
                 result.setdefault(monster_id, []).append(
                     {

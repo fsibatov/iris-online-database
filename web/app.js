@@ -574,11 +574,22 @@
 
   function normalizedRecentViewedEntries() {
     if (!Array.isArray(state.recentlyViewed)) return [];
-    return state.recentlyViewed.filter(entry => {
-      if (!entry || !['item', 'recipe', 'monster', 'title', 'transformation'].includes(entry.type) || Number(entry.id) <= 0 || !hasMeaningfulText(entry.name)) return false;
-      if (entry.type === 'monster') return ['kiss', 'original'].includes(normalizeServerKey(entry.server || ''));
-      return true;
-    }).slice(0, RECENT_VIEWED_LIMIT);
+    const seen = new Set();
+    const normalized = [];
+    for (const entry of state.recentlyViewed) {
+      if (!entry || !['item', 'recipe', 'monster', 'title', 'transformation'].includes(entry.type) || typeof entry.name !== 'string' || !hasMeaningfulText(entry.name)) continue;
+      const validId = typeof entry.id === 'number' || (typeof entry.id === 'string' && /^\d+$/.test(entry.id));
+      const id = validId ? Number(entry.id) : NaN;
+      if (!Number.isSafeInteger(id) || id <= 0) continue;
+      const server = entry.type === 'monster' ? normalizeServerKey(entry.server || '') : '';
+      if (entry.type === 'monster' && !['kiss', 'original'].includes(server)) continue;
+      const key = `${entry.type}:${id}:${server}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      normalized.push({ ...entry, id, ...(server ? { server } : {}) });
+      if (normalized.length === RECENT_VIEWED_LIMIT) break;
+    }
+    return normalized;
   }
 
   function recentViewedEntries() {
@@ -589,18 +600,18 @@
     const numericID = Number(id);
     const cleanName = String(name || '').trim();
     const cleanMeta = String(meta || '').trim().slice(0, 240);
-    if (!['item', 'recipe', 'monster', 'title', 'transformation'].includes(type) || !Number.isInteger(numericID) || numericID <= 0 || !cleanName) return;
+    if (!['item', 'recipe', 'monster', 'title', 'transformation'].includes(type) || !Number.isSafeInteger(numericID) || numericID <= 0 || !cleanName) return;
     const server = type === 'monster' ? state.server : '';
     const key = `${type}:${numericID}:${server}`;
     const next = [{ type, id: numericID, name: cleanName, ...(cleanMeta ? { meta: cleanMeta } : {}), ...(server ? { server } : {}) }, ...normalizedRecentViewedEntries().filter(entry => `${entry.type}:${entry.id}:${entry.type === 'monster' ? normalizeServerKey(entry.server) : ''}` !== key)].slice(0, RECENT_VIEWED_LIMIT);
     state.recentlyViewed = next;
-    localStorage.setItem(RECENT_VIEWED_KEY, JSON.stringify(next));
+    try { localStorage.setItem(RECENT_VIEWED_KEY, JSON.stringify(next)); } catch (_) {}
     if (state.profileLoaded) scheduleProfileSave(0);
   }
 
   function clearRecentlyViewed() {
     state.recentlyViewed = [];
-    localStorage.setItem(RECENT_VIEWED_KEY, '[]');
+    try { localStorage.setItem(RECENT_VIEWED_KEY, '[]'); } catch (_) {}
     if (state.profileLoaded) scheduleProfileSave(0);
     if (routeBase() === 'home') homePage();
     showToast('Список недавно просмотренных очищен.');
@@ -2687,9 +2698,15 @@
     return `${chars.slice(0, limit).join('').trimEnd()}…`;
   }
 
+  function trustedVkPostURL(postId, postUrl) {
+    if (!Number.isSafeInteger(postId) || postId <= 0) return '';
+    const expected = `https://vk.ru/wall-59626511_${postId}`;
+    return String(postUrl || '').trim() === expected ? expected : '';
+  }
+
   function vkNewsCardHTML() {
     const postId = Number(state.vkNews.latestPostId || 0);
-    const postUrl = String(state.vkNews.latestPostUrl || '').trim();
+    const postUrl = trustedVkPostURL(postId, state.vkNews.latestPostUrl);
     const text = vkNewsPreviewText(state.vkNews.latestPostText);
     if (!postId || !postUrl) return vkNewsFallbackHTML('Не удалось определить последнюю запись. Нажмите «Проверить новую запись», чтобы повторить попытку.');
     if (!text) return vkNewsFallbackHTML('Текст записи недоступен. Нажмите «Проверить новую запись», чтобы повторить попытку.');
@@ -2853,7 +2870,7 @@
   }
 
   function scheduleProfileSave(delay = PROFILE_DEBOUNCE) {
-    localStorage.setItem('iris-history', JSON.stringify(state.history));
+    try { localStorage.setItem('iris-history', JSON.stringify(state.history)); } catch (_) {}
     profileDirty = true;
     profileRevision += 1;
     persistPendingProfile();
